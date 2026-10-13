@@ -2,10 +2,13 @@
 
 namespace mglaman\DrupalOrgCli\Command\Project;
 
+use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Yaml\Exception\ParseException;
+use Symfony\Component\Yaml\Yaml;
 
 class Publish extends Command
 {
@@ -22,23 +25,85 @@ class Publish extends Command
     {
         $modulePath = (string) $input->getArgument('module');
 
-        if (!file_exists($modulePath)) {
-            $this->stdErr->writeln(sprintf('<error>Module path does not exist: %s</error>', $modulePath));
+        try {
+            $module = (new ModuleLocator())->locate($modulePath);
+        } catch (\RuntimeException $exception) {
+            $this->stdErr->writeln(sprintf('<error>%s</error>', $exception->getMessage()));
             return self::FAILURE;
         }
 
-        if (!is_dir($modulePath)) {
-            $this->stdErr->writeln(sprintf('<error>Module path is not a directory: %s</error>', $modulePath));
+        $resolvedPath = $module['resolvedPath'];
+        $infoFile = $module['infoFile'];
+
+        try {
+            $metadata = Yaml::parseFile($infoFile);
+        } catch (ParseException $exception) {
+            $this->stdErr->writeln(sprintf(
+                '<error>Could not parse module info file: %s</error>',
+                $exception->getMessage()
+            ));
             return self::FAILURE;
         }
 
-        $resolvedPath = realpath($modulePath);
-        if ($resolvedPath === false) {
-            $this->stdErr->writeln(sprintf('<error>Could not resolve module path: %s</error>', $modulePath));
+        if (!is_array($metadata)) {
+            $this->stdErr->writeln('<error>Module info file must contain a YAML mapping.</error>');
+            return self::FAILURE;
+        }
+
+        $infoFileName = $module['moduleName'] . '.info.yml';
+        if (!array_key_exists('name', $metadata)) {
+            $this->stdErr->writeln(sprintf('<error>Missing required "name" in %s.</error>', $infoFileName));
+            return self::FAILURE;
+        }
+
+        if (!is_string($metadata['name']) || trim($metadata['name']) === '') {
+            $this->stdErr->writeln(sprintf(
+                '<error>Required "name" in %s must be a non-empty string.</error>',
+                $infoFileName
+            ));
+            return self::FAILURE;
+        }
+
+        if (!array_key_exists('type', $metadata)) {
+            $this->stdErr->writeln(sprintf('<error>Missing required "type" in %s.</error>', $infoFileName));
+            return self::FAILURE;
+        }
+
+        $type = $metadata['type'];
+        if (!is_string($type) || $type !== 'module') {
+            $actualType = is_scalar($type) ? (string) $type : get_debug_type($type);
+            $this->stdErr->writeln(sprintf(
+                '<error>Expected Drupal project type "module", got "%s".</error>',
+                $actualType
+            ));
+            return self::FAILURE;
+        }
+
+        if (!array_key_exists('core_version_requirement', $metadata)) {
+            $this->stdErr->writeln(sprintf(
+                '<error>Missing required "core_version_requirement" in %s.</error>',
+                $infoFileName
+            ));
+            return self::FAILURE;
+        }
+
+        if (!is_string($metadata['core_version_requirement']) || trim($metadata['core_version_requirement']) === '') {
+            $this->stdErr->writeln(sprintf(
+                '<error>Required "core_version_requirement" in %s must be a non-empty string.</error>',
+                $infoFileName
+            ));
             return self::FAILURE;
         }
 
         $this->stdOut->writeln(sprintf('Module path: %s', $resolvedPath));
+        $this->stdOut->writeln(sprintf('Module info file: %s', $infoFile));
+        $this->stdOut->writeln(sprintf('Module name: %s', $metadata['name']));
+        $this->stdOut->writeln(sprintf('Module type: %s', $type));
+        $this->stdOut->writeln(sprintf(
+            'Core version requirement: %s',
+            $metadata['core_version_requirement']
+        ));
+
         return self::SUCCESS;
     }
 }
