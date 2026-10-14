@@ -71,6 +71,25 @@ class ClientTest extends TestCase
         self::assertFalse($request->hasHeader('Pragma'));
     }
 
+    public function testSendsAuthorizationHeaderWhenAccessTokenIsProvided(): void
+    {
+        $this->responses = new MockHandler([self::json(['nid' => '1', 'type' => 'project_issue'])]);
+        $stack = HandlerStack::create($this->responses);
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack, 'test-access-token');
+
+        $client->getNode('1');
+
+        self::assertSame('Bearer test-access-token', $this->sentRequest()->getHeaderLine('Authorization'));
+    }
+
+    public function testSendsNoAuthorizationHeaderWithoutAccessToken(): void
+    {
+        $this->clientResponding(['nid' => '1', 'type' => 'project_issue'])->getNode('1');
+
+        self::assertFalse($this->sentRequest()->hasHeader('Authorization'));
+    }
+
     public function testSendsNoCacheHeadersWhenAsked(): void
     {
         $this->client(true, self::json(['nid' => '1', 'type' => 'project_issue']))->getNode('1');
