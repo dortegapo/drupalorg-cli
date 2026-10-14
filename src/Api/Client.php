@@ -28,8 +28,11 @@ class Client
      *   Tests pass a stack built around a MockHandler so they can assert on the
      *   requests this client sends. Production callers pass nothing.
      */
-    public function __construct(bool $noCache = false, ?HandlerStack $handler = null)
-    {
+    public function __construct(
+        bool $noCache = false,
+        ?HandlerStack $handler = null,
+        ?string $accessToken = null,
+    ) {
         $stack = $handler ?? HandlerStack::create();
         $stack->push(GuzzleRetryMiddleware::factory([
             'max_retry_attempts' => 5,
@@ -45,6 +48,9 @@ class Client
         if ($noCache) {
             $headers['Cache-Control'] = 'no-cache, no-store, max-age=0';
             $headers['Pragma'] = 'no-cache';
+        }
+        if ($accessToken !== null && $accessToken !== '') {
+            $headers['Authorization'] = 'Bearer ' . $accessToken;
         }
 
         $this->client = new \GuzzleHttp\Client(
