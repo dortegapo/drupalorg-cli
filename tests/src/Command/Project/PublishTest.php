@@ -2,10 +2,16 @@
 
 namespace mglaman\DrupalOrg\Tests\Command\Project;
 
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Response;
+use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 
 #[CoversClass(Publish::class)]
@@ -30,24 +36,57 @@ class PublishTest extends TestCase
 
     public function testExistingDirectoryPrintsResolvedModulePath(): void
     {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents(
-            $modulePath . '/my_module.info.yml',
-            "name: My Module\ntype: module\ncore_version_requirement: ^11\n"
-        );
+        $modulePath = $this->createValidModule();
+        chdir($this->workDir);
 
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
+        $tester = $this->commandTester(self::jsonResponse([
+            'list' => [
+                [
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ],
+            ],
+        ]));
 
-        $exitCode = $tester->execute(['module' => $modulePath]);
+        $exitCode = $tester->execute(['module' => 'my_module']);
 
         self::assertSame(0, $exitCode);
         $resolvedPath = realpath($modulePath);
         self::assertSame(
-            "Module path: $resolvedPath\nModule info file: $resolvedPath/my_module.info.yml\nModule name: My Module\nModule type: module\nCore version requirement: ^11\n",
+            "Module path: $resolvedPath\nModule info file: $resolvedPath/my_module.info.yml\nModule name: My Module\nModule type: module\nCore version requirement: ^11\nDrupal.org project exists: my_module\n",
             $tester->getDisplay()
         );
+    }
+
+    public function testMissingDrupalOrgProjectIsReported(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+
+        $tester = $this->commandTester(self::jsonResponse(['list' => []]));
+
+        $exitCode = $tester->execute(['module' => 'my_module']);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString(
+            'Drupal.org project does not exist: my_module',
+            $tester->getDisplay()
+        );
+    }
+
+    public function testDrupalOrgErrorIsNotReportedAsMissingProject(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+
+        $tester = $this->commandTester(new Response(500, [], 'Server error'));
+
+        $exitCode = $tester->execute(['module' => 'my_module']);
+
+        self::assertSame(1, $exitCode);
+        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getDisplay());
+        self::assertStringNotContainsString('project does not exist', $tester->getDisplay());
     }
 
     public function testInvalidYamlFails(): void
@@ -190,6 +229,49 @@ class PublishTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Not enough arguments (missing: "module").');
         $tester->execute([]);
+    }
+
+    private function createValidModule(): string
+    {
+        $modulePath = $this->workDir . '/web/modules/custom/my_module';
+        mkdir($modulePath, 0755, true);
+        file_put_contents(
+            $modulePath . '/my_module.info.yml',
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\n"
+        );
+
+        return $modulePath;
+    }
+
+    private function commandTester(Response ...$responses): CommandTester
+    {
+        $client = new Client(false, HandlerStack::create(new MockHandler($responses)));
+        $command = new class($client) extends Publish {
+            public function __construct(private readonly Client $testClient)
+            {
+                parent::__construct();
+            }
+
+            protected function initialize(InputInterface $input, OutputInterface $output): void
+            {
+                parent::initialize($input, $output);
+                $this->client = $this->testClient;
+            }
+        };
+
+        return new CommandTester($command);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private static function jsonResponse(array $body): Response
+    {
+        return new Response(
+            200,
+            ['Content-Type' => 'application/json'],
+            json_encode($body, JSON_THROW_ON_ERROR)
+        );
     }
 
     private static function removeDirectory(string $directory): void

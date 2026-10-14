@@ -5,8 +5,13 @@ namespace mglaman\DrupalOrg\Project;
 class ModuleLocator
 {
 
+    public function __construct(
+        private readonly ComposerContextLocator $composerContextLocator,
+    ) {
+    }
+
     /**
-     * Locates a module from an explicit filesystem path.
+     * Locates a module from an explicit path or machine name.
      *
      * @return array{resolvedPath: string, moduleName: string, infoFile: string}
      *   The resolved module path, module name, and info file path.
@@ -30,95 +35,17 @@ class ModuleLocator
         return str_starts_with($modulePath, '.') || str_contains($modulePath, DIRECTORY_SEPARATOR);
     }
 
-    private function resolveWebRoot(string $currentWorkingDirectory): string
-    {
-        $composerFile = $currentWorkingDirectory . DIRECTORY_SEPARATOR . 'composer.json';
-        if (!file_exists($composerFile)) {
-            return 'web';
-        }
-
-        if (!is_file($composerFile) || !is_readable($composerFile)) {
-            throw new \RuntimeException(sprintf('Could not read composer.json: %s', $composerFile));
-        }
-
-        $contents = file_get_contents($composerFile);
-        if ($contents === false) {
-            throw new \RuntimeException(sprintf('Could not read composer.json: %s', $composerFile));
-        }
-
-        try {
-            $composer = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException $exception) {
-            throw new \RuntimeException(
-                sprintf('Could not parse composer.json: %s', $exception->getMessage()),
-                0,
-                $exception
-            );
-        }
-
-        if (!is_array($composer)) {
-            return 'web';
-        }
-
-        $extra = $composer['extra'] ?? null;
-        if (!is_array($extra)) {
-            return 'web';
-        }
-
-        $drupalScaffold = $extra['drupal-scaffold'] ?? null;
-        if (!is_array($drupalScaffold)) {
-            return 'web';
-        }
-
-        $locations = $drupalScaffold['locations'] ?? null;
-        if (!is_array($locations)) {
-            return 'web';
-        }
-
-        $webRoot = $locations['web-root'] ?? null;
-        if (!is_string($webRoot) || trim($webRoot) === '') {
-            return 'web';
-        }
-
-        return $webRoot;
-    }
-
     /**
      * @return array{resolvedPath: string, moduleName: string, infoFile: string}
      */
     private function locateByMachineName(string $currentWorkingDirectory, string $moduleName): array
     {
-        $searchDirectory = $currentWorkingDirectory;
-        $composerError = null;
-
-        while (true) {
-            $composerFile = $searchDirectory . DIRECTORY_SEPARATOR . 'composer.json';
-            if (file_exists($composerFile)) {
-                try {
-                    $webRoot = $this->resolveWebRoot($searchDirectory);
-                } catch (\RuntimeException $exception) {
-                    $composerError ??= $exception;
-                    $webRoot = null;
-                }
-
-                if ($webRoot !== null) {
-                    $candidate = $this->buildModulePath($searchDirectory, $webRoot, $moduleName);
-                    if (is_dir($candidate)) {
-                        return $this->resolvePath($candidate);
-                    }
-                }
+        foreach ($this->composerContextLocator->findCandidates($currentWorkingDirectory) as $context) {
+            $candidate = $this->buildModulePath($context['projectRoot'], $context['webRoot'], $moduleName);
+            $infoFile = $candidate . DIRECTORY_SEPARATOR . $moduleName . '.info.yml';
+            if (is_dir($candidate) && is_file($infoFile)) {
+                return $this->resolvePath($candidate);
             }
-
-            $parentDirectory = dirname($searchDirectory);
-            if ($parentDirectory === $searchDirectory) {
-                break;
-            }
-
-            $searchDirectory = $parentDirectory;
-        }
-
-        if ($composerError !== null) {
-            throw $composerError;
         }
 
         return $this->resolvePath($this->buildModulePath($currentWorkingDirectory, 'web', $moduleName));

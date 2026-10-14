@@ -2,6 +2,7 @@
 
 namespace mglaman\DrupalOrg\Tests\Project;
 
+use mglaman\DrupalOrg\Project\ComposerContextLocator;
 use mglaman\DrupalOrg\Project\ModuleLocator;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -32,7 +33,7 @@ class ModuleLocatorTest extends TestCase
         mkdir($modulePath);
         file_put_contents($modulePath . '/my_module.info.yml', '');
 
-        $location = (new ModuleLocator())->locate($modulePath);
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -53,7 +54,7 @@ class ModuleLocatorTest extends TestCase
         file_put_contents($modulePath . '/my_module.info.yml', '');
         chdir($this->workDir);
 
-        $location = (new ModuleLocator())->locate('./web/modules/custom/my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('./web/modules/custom/my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -69,31 +70,13 @@ class ModuleLocatorTest extends TestCase
         file_put_contents($modulePath . '/my_module.info.yml', '');
         chdir($this->workDir);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
         self::assertSame('my_module', $location['moduleName']);
         self::assertSame($resolvedPath . '/my_module.info.yml', $location['infoFile']);
-    }
-
-    public function testConfiguredStandardWebRoot(): void
-    {
-        file_put_contents(
-            $this->workDir . '/composer.json',
-            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
-        );
-        $modulePath = $this->workDir . '/web/modules/custom/my_module';
-        mkdir($modulePath, 0755, true);
-        file_put_contents($modulePath . '/my_module.info.yml', '');
-        chdir($this->workDir);
-
-        $location = (new ModuleLocator())->locate('my_module');
-        $resolvedPath = realpath($modulePath);
-
-        self::assertIsString($resolvedPath);
-        self::assertSame($resolvedPath, $location['resolvedPath']);
     }
 
     public function testMachineNameFromWebSubdirectory(): void
@@ -107,7 +90,7 @@ class ModuleLocatorTest extends TestCase
         file_put_contents($modulePath . '/my_module.info.yml', '');
         chdir($this->workDir . '/web');
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -127,7 +110,7 @@ class ModuleLocatorTest extends TestCase
         mkdir($workingDirectory, 0755, true);
         chdir($workingDirectory);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -146,54 +129,94 @@ class ModuleLocatorTest extends TestCase
         file_put_contents($modulePath . '/my_module.info.yml', '');
         chdir($modulePath);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
     }
 
-    public function testConfiguredAlternativeWebRoot(): void
+    public function testInvalidModuleComposerJsonContinuesToParentProject(): void
     {
         file_put_contents(
             $this->workDir . '/composer.json',
-            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"docroot/"}}}}'
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
         );
-        $modulePath = $this->workDir . '/docroot/modules/custom/my_module';
+        $modulePath = $this->workDir . '/web/modules/custom/my_module';
         mkdir($modulePath, 0755, true);
+        file_put_contents($modulePath . '/composer.json', '{invalid');
         file_put_contents($modulePath . '/my_module.info.yml', '');
-        chdir($this->workDir);
+        chdir($modulePath);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
     }
 
-    public function testMissingWebRootUsesFallback(): void
+    public function testIntermediateComposerWithoutCandidateContinuesToParentProject(): void
     {
-        file_put_contents($this->workDir . '/composer.json', '{"extra":{}}');
+        file_put_contents(
+            $this->workDir . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $nestedDirectory = $this->workDir . '/tools/nested';
+        mkdir($nestedDirectory, 0755, true);
+        file_put_contents($nestedDirectory . '/composer.json', '{"name":"tools-nested"}');
         $modulePath = $this->workDir . '/web/modules/custom/my_module';
         mkdir($modulePath, 0755, true);
         file_put_contents($modulePath . '/my_module.info.yml', '');
-        chdir($this->workDir);
+        chdir($nestedDirectory);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
     }
 
-    public function testInvalidComposerJsonFails(): void
+    public function testIntermediateCandidateWithoutInfoFileContinuesToParentProject(): void
     {
-        file_put_contents($this->workDir . '/composer.json', '{invalid');
+        file_put_contents(
+            $this->workDir . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $nestedDirectory = $this->workDir . '/nested';
+        mkdir($nestedDirectory, 0755, true);
+        file_put_contents(
+            $nestedDirectory . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $intermediateModulePath = $nestedDirectory . '/web/modules/custom/my_module';
+        mkdir($intermediateModulePath, 0755, true);
+        $parentModulePath = $this->workDir . '/web/modules/custom/my_module';
+        mkdir($parentModulePath, 0755, true);
+        file_put_contents($parentModulePath . '/my_module.info.yml', '');
+        chdir($nestedDirectory);
+
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
+        $resolvedPath = realpath($parentModulePath);
+
+        self::assertIsString($resolvedPath);
+        self::assertSame($resolvedPath, $location['resolvedPath']);
+    }
+
+    public function testOnlyIncompleteCandidateFails(): void
+    {
+        file_put_contents(
+            $this->workDir . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $modulePath = $this->workDir . '/web/modules/custom/my_module';
+        mkdir($modulePath, 0755, true);
         chdir($this->workDir);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Could not parse composer.json:');
-        (new ModuleLocator())->locate('my_module');
+        $this->expectExceptionMessage(
+            'Module info file does not exist: ' . $modulePath . '/my_module.info.yml'
+        );
+        (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
     }
 
     public function testAlternativeWebRootFromArbitrarySubdirectory(): void
@@ -209,7 +232,7 @@ class ModuleLocatorTest extends TestCase
         mkdir($workingDirectory, 0755, true);
         chdir($workingDirectory);
 
-        $location = (new ModuleLocator())->locate('my_module');
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate('my_module');
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -226,7 +249,7 @@ class ModuleLocatorTest extends TestCase
         mkdir($modulePath, 0755, true);
         file_put_contents($modulePath . '/my_module.info.yml', '');
 
-        $location = (new ModuleLocator())->locate($modulePath);
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
@@ -240,7 +263,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module path does not exist: ' . $candidate);
-        (new ModuleLocator())->locate('does_not_exist');
+        (new ModuleLocator(new ComposerContextLocator()))->locate('does_not_exist');
     }
 
     public function testNonexistentPathFails(): void
@@ -249,7 +272,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module path does not exist: ' . $modulePath);
-        (new ModuleLocator())->locate($modulePath);
+        (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
     }
 
     public function testFileFails(): void
@@ -259,7 +282,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module path is not a directory: ' . $modulePath);
-        (new ModuleLocator())->locate($modulePath);
+        (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
     }
 
     public function testMissingInfoFileFails(): void
@@ -270,7 +293,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module info file does not exist: ' . $infoFile);
-        (new ModuleLocator())->locate($modulePath);
+        (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
     }
 
     public function testUnexpectedInfoFileFails(): void
@@ -282,7 +305,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module info file does not exist: ' . $infoFile);
-        (new ModuleLocator())->locate($modulePath);
+        (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
     }
 
     public function testInfoFileDirectoryFails(): void
@@ -294,7 +317,7 @@ class ModuleLocatorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Module info file does not exist: ' . $infoFile);
-        (new ModuleLocator())->locate($modulePath);
+        (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
     }
 
     private static function removeDirectory(string $directory): void
