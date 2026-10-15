@@ -58,6 +58,7 @@ final class Login extends Command
         $force = (bool) $input->getOption('force');
         $noBrowser = (bool) $input->getOption('no-browser');
 
+        // workaround until we have a way to configure the oauth client in drupalorg
         if (!(bool) $input->getOption('local')) {
             $this->stdOut->writeln(
                 'drupal.org oauth is not configured yet. Use --local to use the development Keycloak environment.'
