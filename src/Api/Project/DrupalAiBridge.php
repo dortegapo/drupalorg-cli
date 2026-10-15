@@ -10,6 +10,8 @@ final class DrupalAiBridge
 {
     private const OUTPUT_MARKER = '__DRUPALORG_CLI_AI_CONTEXT__=';
 
+    private const CHAT_OUTPUT_MARKER = '__DRUPALORG_CLI_AI_RESULT__=';
+
     /**
      * Inspects the Drupal AI configuration through the resolved runtime.
      *
@@ -53,6 +55,68 @@ final class DrupalAiBridge
         return $this->parseOutput($process->getOutput());
     }
 
+    /**
+     * Executes a structured Drupal AI chat request.
+     *
+     * @param array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
+     * @param array<string, mixed> $jsonSchema
+     *
+     * @return array{
+     *     providerId: string,
+     *     modelId: string,
+     *     result: array<string, mixed>,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * }
+     */
+    public function structuredChat(array $runtime, string $prompt, array $jsonSchema): array
+    {
+        if (trim($prompt) === '') {
+            throw new \InvalidArgumentException('The Drupal AI prompt cannot be empty.');
+        }
+
+        if ($jsonSchema === []) {
+            throw new \InvalidArgumentException('The Drupal AI JSON schema cannot be empty.');
+        }
+
+        try {
+            $encodedPayload = base64_encode(json_encode([
+                'prompt' => $prompt,
+                'schema' => $jsonSchema,
+            ], JSON_THROW_ON_ERROR));
+        } catch (\JsonException $exception) {
+            throw new \InvalidArgumentException('The Drupal AI request payload is invalid.', 0, $exception);
+        }
+
+        $process = new Process(
+            [...$runtime['command'], 'php:script', '-'],
+            $runtime['workingDirectory']
+        );
+        $process->setInput($this->buildStructuredChatScript($encodedPayload));
+        $process->setTimeout(120.0);
+
+        try {
+            $process->run();
+        } catch (\Throwable) {
+            throw new \RuntimeException('Could not execute the structured Drupal AI request.');
+        }
+
+        if (!$process->isSuccessful()) {
+            $exitCode = $process->getExitCode();
+            $message = 'Could not execute the structured Drupal AI request.';
+            if ($exitCode !== null) {
+                $message = sprintf('%s (exit code %d).', rtrim($message, '.'), $exitCode);
+            }
+
+            throw new \RuntimeException($message);
+        }
+
+        return $this->parseStructuredOutput($process->getOutput());
+    }
+
     private function buildScript(): string
     {
         return <<<'PHP'
@@ -76,6 +140,87 @@ echo '__DRUPALORG_CLI_AI_CONTEXT__=' . json_encode([
     'model_id' => $modelId,
 ], JSON_THROW_ON_ERROR) . PHP_EOL;
 PHP;
+    }
+
+    private function buildStructuredChatScript(string $encodedPayload): string
+    {
+        return sprintf(
+            <<<'PHP'
+$payloadJson = base64_decode(%s, true);
+if ($payloadJson === false) {
+    throw new \RuntimeException('Could not decode the Drupal AI request payload.');
+}
+
+$payload = json_decode($payloadJson, true, 512, JSON_THROW_ON_ERROR);
+$emit = static function (array $envelope): void {
+    echo %s . json_encode($envelope, JSON_THROW_ON_ERROR) . PHP_EOL;
+};
+
+$aiEnabled = \Drupal::moduleHandler()->moduleExists('ai');
+if (!$aiEnabled) {
+    $emit([
+        'ok' => false,
+        'error' => 'ai_disabled',
+    ]);
+    return;
+}
+
+$manager = \Drupal::service('ai.provider');
+$default = $manager->getDefaultProviderForOperationType('chat_with_structured_response');
+if (!is_array($default)
+    || !isset($default['provider_id'], $default['model_id'])
+    || !is_string($default['provider_id'])
+    || $default['provider_id'] === ''
+    || !is_string($default['model_id'])
+    || $default['model_id'] === ''
+) {
+    $emit([
+        'ok' => false,
+        'error' => 'no_structured_provider',
+    ]);
+    return;
+}
+
+$provider = $manager->createInstance($default['provider_id']);
+$schema = new \Drupal\ai\Dto\StructuredOutputSchema(
+    name: 'drupalorg_cli_response',
+    description: 'Structured response requested by drupalorg-cli.',
+    strict: true,
+    json_schema: $payload['schema'],
+);
+$input = new \Drupal\ai\OperationType\Chat\ChatInput([
+    new \Drupal\ai\OperationType\Chat\ChatMessage(
+        'user',
+        $payload['prompt']
+    ),
+]);
+$input->setChatStructuredJsonSchema($schema);
+$response = $provider->chat(
+    $input,
+    $default['model_id'],
+    ['drupalorg_cli']
+);
+$result = json_decode($response->getNormalized()->getText(), true, 512, JSON_THROW_ON_ERROR);
+if (!is_array($result)) {
+    throw new \RuntimeException('Drupal AI returned an invalid structured result.');
+}
+
+$usage = $response->getTokenUsage();
+$emit([
+    'ok' => true,
+    'provider_id' => $default['provider_id'],
+    'model_id' => $default['model_id'],
+    'result' => $result,
+    'token_usage' => [
+        'input' => $usage->input ?? null,
+        'output' => $usage->output ?? null,
+        'total' => $usage->total ?? null,
+    ],
+]);
+PHP,
+            var_export($encodedPayload, true),
+            var_export(self::CHAT_OUTPUT_MARKER, true)
+        );
     }
 
     /**
@@ -127,5 +272,105 @@ PHP;
         }
 
         throw new \RuntimeException('Drupal AI bridge returned an invalid response.');
+    }
+
+    /**
+     * @return array{
+     *     providerId: string,
+     *     modelId: string,
+     *     result: array<string, mixed>,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * }
+     */
+    private function parseStructuredOutput(string $output): array
+    {
+        $lines = preg_split('/\R/', $output);
+        if ($lines === false) {
+            throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+        }
+
+        foreach ($lines as $line) {
+            if (!str_starts_with($line, self::CHAT_OUTPUT_MARKER)) {
+                continue;
+            }
+
+            try {
+                $payload = json_decode(
+                    substr($line, strlen(self::CHAT_OUTPUT_MARKER)),
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR
+                );
+            } catch (\JsonException) {
+                throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+            }
+
+            if (!is_array($payload) || !array_key_exists('ok', $payload) || !is_bool($payload['ok'])) {
+                throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+            }
+
+            if (!$payload['ok']) {
+                $error = $payload['error'] ?? null;
+                if ($error === 'ai_disabled') {
+                    throw new \RuntimeException('Drupal AI is not enabled in the target Drupal project.');
+                }
+                if ($error === 'no_structured_provider') {
+                    throw new \RuntimeException(
+                        'Drupal AI has no default structured chat provider/model configured.'
+                    );
+                }
+
+                throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+            }
+
+            if (!$this->isValidStructuredSuccess($payload)) {
+                throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+            }
+
+            /** @var array<string, mixed> $result */
+            $result = $payload['result'];
+            /** @var array{input: ?int, output: ?int, total: ?int} $tokenUsage */
+            $tokenUsage = $payload['token_usage'];
+
+            return [
+                'providerId' => $payload['provider_id'],
+                'modelId' => $payload['model_id'],
+                'result' => $result,
+                'tokenUsage' => $tokenUsage,
+            ];
+        }
+
+        throw new \RuntimeException('Drupal AI bridge returned an invalid structured response.');
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function isValidStructuredSuccess(array $payload): bool
+    {
+        if (!array_key_exists('provider_id', $payload)
+            || !is_string($payload['provider_id'])
+            || $payload['provider_id'] === ''
+            || !array_key_exists('model_id', $payload)
+            || !is_string($payload['model_id'])
+            || $payload['model_id'] === ''
+            || !array_key_exists('result', $payload)
+            || !is_array($payload['result'])
+            || !array_key_exists('token_usage', $payload)
+            || !is_array($payload['token_usage'])
+        ) {
+            return false;
+        }
+
+        $tokenUsage = $payload['token_usage'];
+        foreach (['input', 'output', 'total'] as $key) {
+            if (!array_key_exists($key, $tokenUsage)
+                || (!is_int($tokenUsage[$key]) && $tokenUsage[$key] !== null)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
