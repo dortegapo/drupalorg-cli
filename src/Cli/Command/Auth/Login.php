@@ -60,7 +60,7 @@ final class Login extends Command
 
         if (!(bool) $input->getOption('local')) {
             $this->stdOut->writeln(
-                'Drupal.org OAuth is not configured yet. Use --local to use the development Keycloak environment.'
+                'drupal.org oauth is not configured yet. Use --local to use the development Keycloak environment.'
             );
             return self::FAILURE;
         }
