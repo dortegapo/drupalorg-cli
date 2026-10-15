@@ -42,6 +42,8 @@ class ModuleLocatorTest extends TestCase
                 'resolvedPath' => $resolvedPath,
                 'moduleName' => 'my_module',
                 'infoFile' => $resolvedPath . '/my_module.info.yml',
+                'projectRoot' => null,
+                'webRoot' => null,
             ],
             $location
         );
@@ -61,6 +63,8 @@ class ModuleLocatorTest extends TestCase
         self::assertSame($resolvedPath, $location['resolvedPath']);
         self::assertSame('my_module', $location['moduleName']);
         self::assertSame($resolvedPath . '/my_module.info.yml', $location['infoFile']);
+        self::assertNull($location['projectRoot']);
+        self::assertNull($location['webRoot']);
     }
 
     public function testMachineNameUsesCurrentWorkingDirectory(): void
@@ -77,6 +81,8 @@ class ModuleLocatorTest extends TestCase
         self::assertSame($resolvedPath, $location['resolvedPath']);
         self::assertSame('my_module', $location['moduleName']);
         self::assertSame($resolvedPath . '/my_module.info.yml', $location['infoFile']);
+        self::assertNull($location['projectRoot']);
+        self::assertNull($location['webRoot']);
     }
 
     public function testMachineNameFromWebSubdirectory(): void
@@ -95,6 +101,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testMachineNameFromArbitrarySubdirectory(): void
@@ -115,6 +123,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testModuleComposerJsonDoesNotStopParentSearch(): void
@@ -134,6 +144,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testInvalidModuleComposerJsonContinuesToParentProject(): void
@@ -153,6 +165,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testIntermediateComposerWithoutCandidateContinuesToParentProject(): void
@@ -174,6 +188,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testIntermediateCandidateWithoutInfoFileContinuesToParentProject(): void
@@ -200,6 +216,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testOnlyIncompleteCandidateFails(): void
@@ -237,6 +255,8 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('docroot/', $location['webRoot']);
     }
 
     public function testExplicitPathIgnoresConfiguredWebRoot(): void
@@ -254,6 +274,41 @@ class ModuleLocatorTest extends TestCase
 
         self::assertIsString($resolvedPath);
         self::assertSame($resolvedPath, $location['resolvedPath']);
+        self::assertNull($location['projectRoot']);
+        self::assertNull($location['webRoot']);
+    }
+
+    public function testExplicitPathWithinComposerProjectReturnsContext(): void
+    {
+        file_put_contents(
+            $this->workDir . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $modulePath = $this->workDir . '/web/modules/custom/my_module';
+        mkdir($modulePath, 0755, true);
+        file_put_contents($modulePath . '/my_module.info.yml', '');
+
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
+
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
+    }
+
+    public function testExplicitPathIgnoresModuleComposerJson(): void
+    {
+        file_put_contents(
+            $this->workDir . '/composer.json',
+            '{"extra":{"drupal-scaffold":{"locations":{"web-root":"web/"}}}}'
+        );
+        $modulePath = $this->workDir . '/web/modules/custom/my_module';
+        mkdir($modulePath, 0755, true);
+        file_put_contents($modulePath . '/composer.json', '{"name":"my_module"}');
+        file_put_contents($modulePath . '/my_module.info.yml', '');
+
+        $location = (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
+
+        self::assertSame($this->workDir, $location['projectRoot']);
+        self::assertSame('web/', $location['webRoot']);
     }
 
     public function testMachineNameNotFoundFails(): void
