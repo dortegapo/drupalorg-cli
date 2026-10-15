@@ -4,12 +4,14 @@ namespace mglaman\DrupalOrg\Tests\Command\Project;
 
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\RequestInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -17,6 +19,11 @@ use Symfony\Component\Console\Tester\CommandTester;
 #[CoversClass(Publish::class)]
 class PublishTest extends TestCase
 {
+    /**
+     * @var array<int, array{request: RequestInterface}>
+     */
+    private array $history = [];
+
     private string $originalCwd;
 
     private string $workDir;
@@ -87,6 +94,96 @@ class PublishTest extends TestCase
         self::assertSame(1, $exitCode);
         self::assertStringContainsString('Could not check Drupal.org project:', $tester->getDisplay());
         self::assertStringNotContainsString('project does not exist', $tester->getDisplay());
+    }
+
+    public function testDryRunOptionIsRegisteredAsValueNone(): void
+    {
+        $command = (new Application())->find('project:publish');
+
+        self::assertTrue($command->getDefinition()->hasOption('dry-run'));
+        self::assertFalse($command->getDefinition()->getOption('dry-run')->acceptValue());
+    }
+
+    public function testDryRunReportsPlanForMissingDrupalOrgProject(): void
+    {
+        $modulePath = $this->createValidModule();
+        chdir($this->workDir);
+
+        $tester = $this->commandTester(self::jsonResponse(['list' => []]));
+
+        $exitCode = $tester->execute([
+            'module' => 'my_module',
+            '--dry-run' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+        $resolvedPath = realpath($modulePath);
+        self::assertSame(
+            "Dry run: no changes will be made.\n\n"
+            . "Module path: $resolvedPath\n"
+            . "Machine name: my_module\n"
+            . "Module info file: $resolvedPath/my_module.info.yml\n"
+            . "Module name: My Module\n"
+            . "Module type: module\n"
+            . "Core version requirement: ^11\n"
+            . "Drupal.org project exists: no\n\n"
+            . "Planned actions:\n"
+            . "  1. Authenticate with Drupal.org automatically if required.\n"
+            . "  2. Create Drupal.org project \"my_module\".\n"
+            . "  3. Wait for repository provisioning.\n"
+            . "  4. Prepare an isolated temporary workspace.\n"
+            . "  5. Copy the module into the temporary workspace.\n"
+            . "  6. Initialize the publication Git repository.\n"
+            . "  7. Create the initial commit.\n"
+            . "  8. Configure the Drupal.org Git remote.\n"
+            . "  9. Push the initial branch.\n\n"
+            . "Publication execution is not implemented yet.\n"
+            . "Dry run complete. No changes were made.\n",
+            $tester->getDisplay()
+        );
+
+        self::assertCount(1, $this->history);
+        self::assertSame('GET', $this->sentRequest()->getMethod());
+        self::assertSame(
+            'https://www.drupal.org/api-d7/node.json?field_project_machine_name=my_module',
+            (string) $this->sentRequest()->getUri()
+        );
+    }
+
+    public function testDryRunReportsPlanForExistingDrupalOrgProject(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+
+        $tester = $this->commandTester(self::jsonResponse([
+            'list' => [
+                [
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ],
+            ],
+        ]));
+
+        $exitCode = $tester->execute([
+            'module' => 'my_module',
+            '--dry-run' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Drupal.org project exists: yes', $tester->getDisplay());
+        self::assertStringContainsString(
+            'Use the existing Drupal.org project "my_module".',
+            $tester->getDisplay()
+        );
+        self::assertStringNotContainsString(
+            'Create Drupal.org project "my_module".',
+            $tester->getDisplay()
+        );
+        self::assertStringContainsString(
+            'Publication execution is not implemented yet.',
+            $tester->getDisplay()
+        );
     }
 
     public function testInvalidYamlFails(): void
@@ -245,7 +342,10 @@ class PublishTest extends TestCase
 
     private function commandTester(Response ...$responses): CommandTester
     {
-        $client = new Client(false, HandlerStack::create(new MockHandler($responses)));
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler($responses));
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack);
         $command = new class($client) extends Publish {
             public function __construct(private readonly Client $testClient)
             {
@@ -260,6 +360,13 @@ class PublishTest extends TestCase
         };
 
         return new CommandTester($command);
+    }
+
+    private function sentRequest(): RequestInterface
+    {
+        self::assertArrayHasKey(0, $this->history);
+
+        return $this->history[0]['request'];
     }
 
     /**
