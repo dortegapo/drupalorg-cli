@@ -22,6 +22,7 @@ final class BrowserTraitTestDouble
     public function __construct(
         private readonly array $availableBrowsers,
         private readonly bool $windowsSubsystemForLinux,
+        private readonly bool $launchResult = true,
     ) {
     }
 
@@ -48,6 +49,6 @@ final class BrowserTraitTestDouble
     protected function launchBrowser(string $browser, string $url): bool
     {
         $this->launches[] = [$browser, $url];
-        return true;
+        return $this->launchResult;
     }
 }
