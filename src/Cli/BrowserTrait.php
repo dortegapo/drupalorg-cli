@@ -55,8 +55,10 @@ trait BrowserTrait
         $command = $browser === 'cmd.exe'
             ? sprintf('%s /c start "" %s', escapeshellcmd($browser), escapeshellarg($url))
             : sprintf('%s %s', escapeshellcmd($browser), escapeshellarg($url));
-        $output = shell_exec($command . ' 2>&1; echo $?');
+        $output = [];
+        $exitCode = 1;
+        exec($command . ' 2>&1', $output, $exitCode);
 
-        return (int) $output === 0;
+        return $exitCode === 0;
     }
 }
