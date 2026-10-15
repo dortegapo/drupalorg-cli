@@ -1,0 +1,41 @@
+{
+    "realm": "drupalorg-cli-dev",
+    "enabled": true,
+    "sslRequired": "none",
+    "oauth2DeviceCodeLifespan": 600,
+    "oauth2DevicePollingInterval": 5,
+    "registrationAllowed": false,
+    "verifyEmail": false,
+    "resetPasswordAllowed": false,
+    "rememberMe": false,
+    "clients": [
+        {
+            "clientId": "drupalorg-cli",
+            "protocol": "openid-connect",
+            "enabled": true,
+            "publicClient": true,
+            "bearerOnly": false,
+            "standardFlowEnabled": false,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": false,
+            "serviceAccountsEnabled": false,
+            "authorizationServicesEnabled": false,
+            "attributes": {
+                "oauth2.device.authorization.grant.enabled": "true"
+            }
+        }
+    ],
+    "users": [
+        {
+            "username": "test-user",
+            "enabled": true,
+            "credentials": [
+                {
+                    "type": "password",
+                    "value": "test-password",
+                    "temporary": false
+                }
+            ]
+        }
+    ]
+}
