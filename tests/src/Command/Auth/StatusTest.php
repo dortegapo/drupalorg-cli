@@ -33,7 +33,7 @@ class StatusTest extends TestCase
     {
         $tester = new CommandTester($this->command());
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true]);
 
         self::assertSame(1, $exitCode);
         self::assertSame("Not authenticated.\n", $tester->getDisplay());
@@ -47,7 +47,7 @@ class StatusTest extends TestCase
         ]);
         $tester = new CommandTester($this->command());
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true]);
 
         self::assertSame(0, $exitCode);
         self::assertSame(
@@ -65,7 +65,7 @@ class StatusTest extends TestCase
         ]);
         $tester = new CommandTester($this->command(1790000000));
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true]);
 
         self::assertSame(0, $exitCode);
         self::assertSame("Authenticated with stored credentials.\n", $tester->getDisplay());
@@ -79,7 +79,7 @@ class StatusTest extends TestCase
         ]);
         $tester = new CommandTester($this->command(1790000000));
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true]);
 
         self::assertSame(1, $exitCode);
         self::assertSame("Stored credentials are expired.\n", $tester->getDisplay());
@@ -93,7 +93,7 @@ class StatusTest extends TestCase
         ]);
         $tester = new CommandTester($this->command(1790000000));
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true]);
 
         self::assertSame(1, $exitCode);
         self::assertSame("Stored credentials are expired.\n", $tester->getDisplay());
@@ -110,11 +110,32 @@ class StatusTest extends TestCase
         ]);
         $tester = new CommandTester($this->command(1790000000));
 
-        $tester->execute([], ['capture_stderr_separately' => true]);
+        $tester->execute(['--local' => true], ['capture_stderr_separately' => true]);
 
         self::assertStringNotContainsString('secret-access-test', $tester->getDisplay());
         self::assertStringNotContainsString('secret-refresh-test', $tester->getDisplay());
         self::assertSame('', $tester->getErrorOutput());
+    }
+
+    public function testStatusRequiresTheLocalOption(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'access-test',
+            'token_type' => 'Bearer',
+        ]);
+        $tester = new CommandTester($this->command());
+
+        $exitCode = $tester->execute([]);
+
+        self::assertSame(1, $exitCode);
+        self::assertSame(
+            "Drupal.org OAuth is not configured yet. Use --local to use the development Keycloak environment.\n",
+            $tester->getDisplay()
+        );
+        self::assertSame([
+            'access_token' => 'access-test',
+            'token_type' => 'Bearer',
+        ], $this->storage()->read());
     }
 
     private function command(?int $time = null): Status

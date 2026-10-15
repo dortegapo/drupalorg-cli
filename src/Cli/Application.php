@@ -90,6 +90,9 @@ class Application extends ParentApplication
         $commands[] = new Command\MergeRequest\GetLogs();
         $commands[] = new Command\Mcp\Serve();
         $commands[] = new Command\Mcp\Config();
+
+        $commands = array_merge($commands, (new Command\Auth\AuthCommandFactory())->create());
+
         return $commands;
     }
 
