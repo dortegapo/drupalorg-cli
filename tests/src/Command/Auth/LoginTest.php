@@ -6,6 +6,7 @@ namespace mglaman\DrupalOrg\Tests\Command\Auth;
 
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Auth\DeviceAuthorizationClient;
 use mglaman\DrupalOrg\Auth\OAuthConfiguration;
@@ -18,6 +19,11 @@ use Symfony\Component\Console\Tester\CommandTester;
 #[CoversClass(Login::class)]
 class LoginTest extends TestCase
 {
+    /**
+     * @var list<array<string, mixed>>
+     */
+    private array $history = [];
+
     private string $configDirectory;
 
     private string $workDirectory;
@@ -59,7 +65,10 @@ class LoginTest extends TestCase
         );
         $tester = new CommandTester($command);
 
-        $exitCode = $tester->execute([], ['capture_stderr_separately' => true]);
+        $exitCode = $tester->execute(
+            ['--local' => true, '--no-browser' => true],
+            ['capture_stderr_separately' => true]
+        );
 
         self::assertSame(0, $exitCode);
         self::assertSame('auth:login', $command->getName());
@@ -107,7 +116,7 @@ class LoginTest extends TestCase
         );
         $tester = new CommandTester($command);
 
-        $exitCode = $tester->execute([]);
+        $exitCode = $tester->execute(['--local' => true, '--no-browser' => true]);
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('https://accounts.example.test/device', $tester->getDisplay());
@@ -130,7 +139,7 @@ class LoginTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Device authorization was denied.');
         try {
-            $tester->execute([]);
+            $tester->execute(['--local' => true, '--no-browser' => true]);
         } finally {
             self::assertNull($this->storage()->read());
         }
@@ -148,15 +157,111 @@ class LoginTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Device authorization expired.');
         try {
-            $tester->execute([]);
+            $tester->execute(['--local' => true, '--no-browser' => true]);
         } finally {
             self::assertNull($this->storage()->read());
         }
     }
 
-    public function testFailedLoginPreservesExistingCredentials(): void
+    public function testAlreadyAuthenticatedCredentialsSkipTheDeviceFlow(): void
     {
-        $this->storage()->write(['access_token' => 'existing-token']);
+        $this->storage()->write([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ]);
+        $tester = new CommandTester($this->command(
+            $this->deviceAuthorization(),
+            ['access_token' => 'access-test', 'token_type' => 'Bearer'],
+        ));
+
+        $exitCode = $tester->execute(['--local' => true]);
+
+        self::assertSame(0, $exitCode);
+        self::assertSame('Already authenticated with stored credentials.' . PHP_EOL, $tester->getDisplay());
+        self::assertStringNotContainsString('Waiting for authorization...', $tester->getDisplay());
+        self::assertSame([], $this->history);
+        self::assertSame([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ], $this->storage()->read());
+    }
+
+    public function testCredentialsWithUnknownExpirationSkipTheDeviceFlow(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+        ]);
+        $tester = new CommandTester($this->command(
+            $this->deviceAuthorization(),
+            ['access_token' => 'access-test', 'token_type' => 'Bearer'],
+        ));
+
+        $exitCode = $tester->execute(['--local' => true]);
+
+        self::assertSame(0, $exitCode);
+        self::assertSame('Already authenticated with stored credentials.' . PHP_EOL, $tester->getDisplay());
+        self::assertSame([], $this->history);
+    }
+
+    public function testExpiredCredentialsStartANewDeviceFlow(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'old-token',
+            'expires_at' => 1789999999,
+        ]);
+        $tester = new CommandTester($this->command(
+            $this->deviceAuthorization(),
+            ['access_token' => 'new-token', 'token_type' => 'Bearer'],
+        ));
+
+        $exitCode = $tester->execute(['--local' => true, '--no-browser' => true]);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Waiting for authorization...', $tester->getDisplay());
+        self::assertCount(2, $this->history);
+        self::assertSame([
+            'access_token' => 'new-token',
+            'token_type' => 'Bearer',
+        ], $this->storage()->read());
+    }
+
+    public function testForceStartsANewDeviceFlowWithUsableCredentials(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ]);
+        $tester = new CommandTester($this->command(
+            $this->deviceAuthorization(),
+            ['access_token' => 'new-token', 'token_type' => 'Bearer'],
+        ));
+
+        $exitCode = $tester->execute([
+            '--local' => true,
+            '--force' => true,
+            '--no-browser' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Waiting for authorization...', $tester->getDisplay());
+        self::assertCount(2, $this->history);
+        self::assertSame([
+            'access_token' => 'new-token',
+            'token_type' => 'Bearer',
+        ], $this->storage()->read());
+    }
+
+    public function testForceFailurePreservesExistingCredentials(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ]);
         $tester = new CommandTester($this->command(
             $this->deviceAuthorization(),
             ['error' => 'access_denied'],
@@ -166,10 +271,46 @@ class LoginTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         try {
-            $tester->execute([]);
+            $tester->execute([
+                '--local' => true,
+                '--force' => true,
+                '--no-browser' => true,
+            ]);
         } finally {
-            self::assertSame(['access_token' => 'existing-token'], $this->storage()->read());
+            self::assertSame([
+                'access_token' => 'existing-token',
+                'token_type' => 'Bearer',
+                'expires_at' => 1790003600,
+            ], $this->storage()->read());
+            self::assertCount(2, $this->history);
         }
+    }
+
+    public function testLoginRequiresTheLocalOptionBeforeStartingTheDeviceFlow(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ]);
+        $tester = new CommandTester($this->command(
+            $this->deviceAuthorization(),
+            ['access_token' => 'access-test', 'token_type' => 'Bearer'],
+        ));
+
+        $exitCode = $tester->execute([]);
+
+        self::assertSame(1, $exitCode);
+        self::assertSame(
+            "Drupal.org OAuth is not configured yet. Use --local to use the development Keycloak environment.\n",
+            $tester->getDisplay()
+        );
+        self::assertSame([], $this->history);
+        self::assertSame([
+            'access_token' => 'existing-token',
+            'token_type' => 'Bearer',
+            'expires_at' => 1790003600,
+        ], $this->storage()->read());
     }
 
     /**
@@ -183,10 +324,12 @@ class LoginTest extends TestCase
         ?\Closure $sleep = null,
         int $tokenStatus = 200,
     ): Login {
+        $this->history = [];
         $stack = HandlerStack::create(new MockHandler([
             self::json($deviceAuthorization),
             self::json($tokenResponse, $tokenStatus),
         ]));
+        $stack->push(Middleware::history($this->history));
         $time = 1790000000.0;
 
         return new Login(
