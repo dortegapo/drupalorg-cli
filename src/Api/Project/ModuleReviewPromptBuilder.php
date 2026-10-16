@@ -6,6 +6,8 @@ namespace mglaman\DrupalOrg\Project;
 
 final class ModuleReviewPromptBuilder
 {
+    private const MAX_SOURCE_BYTES = 131072;
+
     /**
      * @param array{
      *     files: list<array{path: string, bytes: int, content: string}>,
@@ -27,6 +29,14 @@ final class ModuleReviewPromptBuilder
 
         if ($collection['files'] === []) {
             throw new \InvalidArgumentException('Module review collection must contain at least one file.');
+        }
+
+        $sourceBytes = 0;
+        foreach ($collection['files'] as $file) {
+            $sourceBytes += strlen($file['content']);
+        }
+        if ($sourceBytes > self::MAX_SOURCE_BYTES) {
+            throw new \RuntimeException('Module review source exceeds the AI context budget.');
         }
 
         $formattedFiles = [];
