@@ -16,6 +16,7 @@ final class ModuleReviewAnalyzer
     private const LIMITATION_MESSAGES = [
         'collection' => 'Module source collection could not be completed.',
         'sanitization' => 'Module source sanitization could not be completed.',
+        'source_empty' => 'No analyzable module source files were found.',
         'review_prompt' => 'The module review prompt could not be built.',
         'review_ai' => 'The module review could not be completed by Drupal AI.',
         'review_validation' => 'The Drupal AI module review result was invalid.',
@@ -55,8 +56,12 @@ final class ModuleReviewAnalyzer
      *
      * @return array<string, mixed>
      */
-    public function analyze(string $modulePath, string $machineName, array $runtime): array
-    {
+    public function analyze(
+        string $modulePath,
+        string $machineName,
+        array $runtime,
+        ?callable $progress = null,
+    ): array {
         $module = [
             'machineName' => $machineName,
             'path' => $modulePath,
@@ -89,6 +94,15 @@ final class ModuleReviewAnalyzer
         ];
         $source['bytes'] = $sanitizedCollection['totalBytes'];
         $source['redactions'] = $sanitized['redactions'];
+        $this->emitProgress($progress, 'source_prepared', [
+            'files' => count($sanitized['files']),
+            'bytes' => $source['bytes'],
+            'redactions' => count($source['redactions']),
+        ]);
+
+        if ($sanitized['files'] === []) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'source_empty');
+        }
 
         try {
             $reviewPrompt = $this->reviewPromptBuilder->build($machineName, $sanitizedCollection);
@@ -96,16 +110,24 @@ final class ModuleReviewAnalyzer
             return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_prompt');
         }
 
+        $this->emitProgress($progress, 'review_ai_started');
         try {
             $reviewAi = $this->aiBridge->structuredChat(
                 $runtime,
                 $reviewPrompt['systemPrompt'],
                 $reviewPrompt['userPrompt'],
                 $reviewPrompt['schema'],
+                $this->waitCallback($progress, 'review_ai_tick'),
             );
         } catch (\RuntimeException) {
+            $this->emitProgress($progress, 'review_ai_failed');
             return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_ai');
         }
+
+        $this->emitProgress($progress, 'review_ai_completed', [
+            'providerId' => $reviewAi['providerId'],
+            'modelId' => $reviewAi['modelId'],
+        ]);
 
         $ai['review'] = $this->aiMetadata($reviewAi);
         try {
@@ -117,36 +139,29 @@ final class ModuleReviewAnalyzer
         $searches = [];
         $primaryRankings = [];
         $secondaryRankings = [];
+        $searchPlan = [];
         foreach ($this->searchTerms($review, 'primary_search_terms') as $term) {
-            try {
-                $projects = $this->projectSearch->search($term, self::SEARCH_LIMIT, 0);
-            } catch (\RuntimeException) {
-                return $this->incomplete(
-                    $module,
-                    $source,
-                    $review,
-                    $searches,
-                    [],
-                    null,
-                    $ai,
-                    'project_search',
-                );
-            }
-
-            $searches[] = [
-                'type' => 'primary',
-                'term' => $term,
-                'results' => $projects,
-            ];
-            $primaryRankings[] = [
-                'term' => $term,
-                'projects' => $projects,
-            ];
+            $searchPlan[] = ['type' => 'primary', 'term' => $term];
         }
         foreach ($this->searchTerms($review, 'secondary_search_terms') as $term) {
+            $searchPlan[] = ['type' => 'secondary', 'term' => $term];
+        }
+
+        $searchTotal = count($searchPlan);
+        $this->emitProgress($progress, 'project_search_started', ['total' => $searchTotal]);
+        $searchCurrent = 0;
+        foreach ($searchPlan as $searchItem) {
+            $term = $searchItem['term'];
+            $type = $searchItem['type'];
             try {
                 $projects = $this->projectSearch->search($term, self::SEARCH_LIMIT, 0);
             } catch (\RuntimeException) {
+                $this->emitProgress($progress, 'project_search_failed', [
+                    'current' => $searchCurrent + 1,
+                    'total' => $searchTotal,
+                    'term' => $term,
+                    'type' => $type,
+                ]);
                 return $this->incomplete(
                     $module,
                     $source,
@@ -159,16 +174,31 @@ final class ModuleReviewAnalyzer
                 );
             }
 
+            ++$searchCurrent;
             $searches[] = [
-                'type' => 'secondary',
+                'type' => $type,
                 'term' => $term,
                 'results' => $projects,
             ];
-            $secondaryRankings[] = [
+            $ranking = [
                 'term' => $term,
                 'projects' => $projects,
             ];
+            if ($type === 'primary') {
+                $primaryRankings[] = $ranking;
+            } else {
+                $secondaryRankings[] = $ranking;
+            }
+            $this->emitProgress($progress, 'project_search_progress', [
+                'current' => $searchCurrent,
+                'total' => $searchTotal,
+                'term' => $term,
+                'type' => $type,
+            ]);
         }
+        $this->emitProgress($progress, 'project_search_completed', [
+            'total' => $searchTotal,
+        ]);
 
         try {
             $candidates = $this->candidateRanker->rank(
@@ -188,6 +218,9 @@ final class ModuleReviewAnalyzer
                 'candidate_ranking',
             );
         }
+        $this->emitProgress($progress, 'candidate_ranking_completed', [
+            'candidateCount' => count($candidates),
+        ]);
 
         try {
             $comparisonPrompt = $this->comparisonPromptBuilder->build($review, $candidates);
@@ -204,14 +237,19 @@ final class ModuleReviewAnalyzer
             );
         }
 
+        $this->emitProgress($progress, 'comparison_ai_started', [
+            'candidateCount' => count($candidates),
+        ]);
         try {
             $comparisonAi = $this->aiBridge->structuredChat(
                 $runtime,
                 $comparisonPrompt['systemPrompt'],
                 $comparisonPrompt['userPrompt'],
                 $comparisonPrompt['schema'],
+                $this->waitCallback($progress, 'comparison_ai_tick'),
             );
         } catch (\RuntimeException) {
+            $this->emitProgress($progress, 'comparison_ai_failed');
             return $this->incomplete(
                 $module,
                 $source,
@@ -223,6 +261,10 @@ final class ModuleReviewAnalyzer
                 'comparison_ai',
             );
         }
+        $this->emitProgress($progress, 'comparison_ai_completed', [
+            'providerId' => $comparisonAi['providerId'],
+            'modelId' => $comparisonAi['modelId'],
+        ]);
 
         $ai['comparison'] = $this->aiMetadata($comparisonAi);
         try {
@@ -255,7 +297,11 @@ final class ModuleReviewAnalyzer
             );
         }
 
-        return [
+        $this->emitProgress($progress, 'assessment_completed', [
+            'status' => $assessment['status'],
+        ]);
+
+        $result = [
             'complete' => true,
             'module' => $module,
             'source' => $source,
@@ -267,6 +313,11 @@ final class ModuleReviewAnalyzer
             'ai' => $ai,
             'limitations' => [],
         ];
+        $this->emitProgress($progress, 'analysis_completed', [
+            'complete' => true,
+        ]);
+
+        return $result;
     }
 
     /**
@@ -363,5 +414,26 @@ final class ModuleReviewAnalyzer
             'modelId' => $response['modelId'],
             'tokenUsage' => $response['tokenUsage'],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function emitProgress(?callable $progress, string $event, array $context = []): void
+    {
+        if ($progress !== null) {
+            $progress($event, $context);
+        }
+    }
+
+    private function waitCallback(?callable $progress, string $event): ?callable
+    {
+        if ($progress === null) {
+            return null;
+        }
+
+        return function () use ($progress, $event): void {
+            $this->emitProgress($progress, $event);
+        };
     }
 }

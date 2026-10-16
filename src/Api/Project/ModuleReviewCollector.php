@@ -92,8 +92,16 @@ final class ModuleReviewCollector
         array &$files,
         array &$skipped
     ): void {
-        $entries = scandir($directory);
+        $entries = @scandir($directory);
         if ($entries === false) {
+            if ($relativeDirectory === '') {
+                throw new \RuntimeException('Could not read the module directory.');
+            }
+
+            $skipped[] = [
+                'path' => $relativeDirectory,
+                'reason' => 'unreadable',
+            ];
             return;
         }
 

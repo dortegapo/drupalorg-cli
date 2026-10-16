@@ -84,7 +84,8 @@ final class DrupalAiBridge
         array $runtime,
         string $systemPrompt,
         string $userPrompt,
-        array $jsonSchema
+        array $jsonSchema,
+        ?callable $onWait = null,
     ): array {
         if (trim($systemPrompt) === '') {
             throw new \InvalidArgumentException('The Drupal AI system prompt cannot be empty.');
@@ -116,7 +117,15 @@ final class DrupalAiBridge
         $process->setTimeout(120.0);
 
         try {
-            $process->run();
+            $process->start();
+            while ($process->isRunning()) {
+                $process->checkTimeout();
+                if ($onWait !== null) {
+                    $onWait();
+                }
+                usleep(100000);
+            }
+            $process->wait();
         } catch (\Throwable) {
             throw new \RuntimeException(self::INVALID_RESPONSE_MESSAGE);
         }
@@ -260,14 +269,23 @@ if (!is_object($result)) {
     return;
 }
 
+$tokenUsage = [
+    'input' => null,
+    'output' => null,
+    'total' => null,
+];
+
 try {
     $usage = $response->getTokenUsage();
+    if (is_object($usage)) {
+        $tokenUsage = [
+            'input' => is_int($usage->input ?? null) ? $usage->input : null,
+            'output' => is_int($usage->output ?? null) ? $usage->output : null,
+            'total' => is_int($usage->total ?? null) ? $usage->total : null,
+        ];
+    }
 } catch (\Throwable) {
-    $emit([
-        'ok' => false,
-        'error' => 'provider_failure',
-    ]);
-    return;
+    // Token usage is observability metadata and must not invalidate a valid response.
 }
 
 $emit([
@@ -275,11 +293,7 @@ $emit([
     'provider_id' => $default['provider_id'],
     'model_id' => $default['model_id'],
     'result' => $result,
-    'token_usage' => [
-        'input' => $usage->input ?? null,
-        'output' => $usage->output ?? null,
-        'total' => $usage->total ?? null,
-    ],
+    'token_usage' => $tokenUsage,
 ]);
 PHP,
             var_export($encodedPayload, true),
