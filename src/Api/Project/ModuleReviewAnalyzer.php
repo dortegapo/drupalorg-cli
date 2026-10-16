@@ -1,0 +1,367 @@
+<?php
+
+declare(strict_types=1);
+
+namespace mglaman\DrupalOrg\Project;
+
+final class ModuleReviewAnalyzer
+{
+    private const SEARCH_LIMIT = 10;
+
+    private const MAXIMUM_RANKED_CANDIDATES = 100;
+
+    /**
+     * @var array<string, string>
+     */
+    private const LIMITATION_MESSAGES = [
+        'collection' => 'Module source collection could not be completed.',
+        'sanitization' => 'Module source sanitization could not be completed.',
+        'review_prompt' => 'The module review prompt could not be built.',
+        'review_ai' => 'The module review could not be completed by Drupal AI.',
+        'review_validation' => 'The Drupal AI module review result was invalid.',
+        'project_search' => 'Drupal.org project search could not be completed.',
+        'candidate_ranking' => 'Module review candidate ranking could not be completed.',
+        'comparison_prompt' => 'The module review comparison prompt could not be built.',
+        'comparison_ai' => 'The module review comparison could not be completed by Drupal AI.',
+        'comparison_validation' => 'The Drupal AI module comparison result was invalid.',
+        'assessment' => 'The module contribution assessment could not be completed.',
+    ];
+
+    public function __construct(
+        private readonly ModuleReviewCollector $collector,
+        private readonly ModuleReviewSensitiveDataSanitizer $sanitizer,
+        private readonly ModuleReviewPromptBuilder $reviewPromptBuilder,
+        private readonly ModuleReviewResultValidator $reviewValidator,
+        private readonly DrupalAiBridge $aiBridge,
+        private readonly DrupalOrgProjectSearch $projectSearch,
+        private readonly ModuleReviewCandidateRanker $candidateRanker,
+        private readonly ModuleReviewComparisonPromptBuilder $comparisonPromptBuilder,
+        private readonly ModuleReviewComparisonResultValidator $comparisonValidator,
+        private readonly ModuleContributionAssessmentResolver $assessmentResolver,
+    ) {
+    }
+
+    /**
+     * Analyze a module already located by the caller.
+     *
+     * Expected operational failures are returned as an incomplete analysis.
+     * Invalid arguments and programming errors are intentionally not hidden.
+     *
+     * @param array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
+     *
+     * @return array<string, mixed>
+     */
+    public function analyze(string $modulePath, string $machineName, array $runtime): array
+    {
+        $module = [
+            'machineName' => $machineName,
+            'path' => $modulePath,
+        ];
+        $source = $this->emptySource();
+        $ai = [
+            'review' => null,
+            'comparison' => null,
+        ];
+
+        try {
+            $collection = $this->collector->collect($modulePath);
+        } catch (\RuntimeException) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'collection');
+        }
+
+        $source['files'] = count($collection['files']);
+        $source['skipped'] = $collection['skipped'];
+
+        try {
+            $sanitized = $this->sanitizer->sanitize($collection['files']);
+        } catch (\RuntimeException) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'sanitization');
+        }
+
+        $sanitizedCollection = [
+            'files' => $sanitized['files'],
+            'skipped' => $collection['skipped'],
+            'totalBytes' => array_sum(array_column($sanitized['files'], 'bytes')),
+        ];
+        $source['bytes'] = $sanitizedCollection['totalBytes'];
+        $source['redactions'] = $sanitized['redactions'];
+
+        try {
+            $reviewPrompt = $this->reviewPromptBuilder->build($machineName, $sanitizedCollection);
+        } catch (\RuntimeException) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_prompt');
+        }
+
+        try {
+            $reviewAi = $this->aiBridge->structuredChat(
+                $runtime,
+                $reviewPrompt['systemPrompt'],
+                $reviewPrompt['userPrompt'],
+                $reviewPrompt['schema'],
+            );
+        } catch (\RuntimeException) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_ai');
+        }
+
+        $ai['review'] = $this->aiMetadata($reviewAi);
+        try {
+            $review = $this->reviewValidator->validate($reviewAi['result'], $sanitized['files']);
+        } catch (\RuntimeException) {
+            return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_validation');
+        }
+
+        $searches = [];
+        $primaryRankings = [];
+        $secondaryRankings = [];
+        foreach ($this->searchTerms($review, 'primary_search_terms') as $term) {
+            try {
+                $projects = $this->projectSearch->search($term, self::SEARCH_LIMIT, 0);
+            } catch (\RuntimeException) {
+                return $this->incomplete(
+                    $module,
+                    $source,
+                    $review,
+                    $searches,
+                    [],
+                    null,
+                    $ai,
+                    'project_search',
+                );
+            }
+
+            $searches[] = [
+                'type' => 'primary',
+                'term' => $term,
+                'results' => $projects,
+            ];
+            $primaryRankings[] = [
+                'term' => $term,
+                'projects' => $projects,
+            ];
+        }
+        foreach ($this->searchTerms($review, 'secondary_search_terms') as $term) {
+            try {
+                $projects = $this->projectSearch->search($term, self::SEARCH_LIMIT, 0);
+            } catch (\RuntimeException) {
+                return $this->incomplete(
+                    $module,
+                    $source,
+                    $review,
+                    $searches,
+                    [],
+                    null,
+                    $ai,
+                    'project_search',
+                );
+            }
+
+            $searches[] = [
+                'type' => 'secondary',
+                'term' => $term,
+                'results' => $projects,
+            ];
+            $secondaryRankings[] = [
+                'term' => $term,
+                'projects' => $projects,
+            ];
+        }
+
+        try {
+            $candidates = $this->candidateRanker->rank(
+                $primaryRankings,
+                $secondaryRankings,
+                self::MAXIMUM_RANKED_CANDIDATES,
+            );
+        } catch (\RuntimeException) {
+            return $this->incomplete(
+                $module,
+                $source,
+                $review,
+                $searches,
+                [],
+                null,
+                $ai,
+                'candidate_ranking',
+            );
+        }
+
+        try {
+            $comparisonPrompt = $this->comparisonPromptBuilder->build($review, $candidates);
+        } catch (\RuntimeException) {
+            return $this->incomplete(
+                $module,
+                $source,
+                $review,
+                $searches,
+                $candidates,
+                null,
+                $ai,
+                'comparison_prompt',
+            );
+        }
+
+        try {
+            $comparisonAi = $this->aiBridge->structuredChat(
+                $runtime,
+                $comparisonPrompt['systemPrompt'],
+                $comparisonPrompt['userPrompt'],
+                $comparisonPrompt['schema'],
+            );
+        } catch (\RuntimeException) {
+            return $this->incomplete(
+                $module,
+                $source,
+                $review,
+                $searches,
+                $candidates,
+                null,
+                $ai,
+                'comparison_ai',
+            );
+        }
+
+        $ai['comparison'] = $this->aiMetadata($comparisonAi);
+        try {
+            $comparison = $this->comparisonValidator->validate($comparisonAi['result'], $candidates);
+        } catch (\RuntimeException) {
+            return $this->incomplete(
+                $module,
+                $source,
+                $review,
+                $searches,
+                $candidates,
+                null,
+                $ai,
+                'comparison_validation',
+            );
+        }
+
+        try {
+            $assessment = $this->assessmentResolver->resolve($review, $comparison);
+        } catch (\RuntimeException) {
+            return $this->incomplete(
+                $module,
+                $source,
+                $review,
+                $searches,
+                $candidates,
+                $comparison,
+                $ai,
+                'assessment',
+            );
+        }
+
+        return [
+            'complete' => true,
+            'module' => $module,
+            'source' => $source,
+            'review' => $review,
+            'searches' => $searches,
+            'candidates' => $candidates,
+            'comparison' => $comparison,
+            'assessment' => $assessment,
+            'ai' => $ai,
+            'limitations' => [],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $module
+     * @param array<string, mixed> $source
+     * @param array<string, mixed>|null $review
+     * @param list<array<string, mixed>> $searches
+     * @param list<array<string, mixed>> $candidates
+     * @param array<string, mixed>|null $comparison
+     * @param array<string, mixed> $ai
+     *
+     * @return array<string, mixed>
+     */
+    private function incomplete(
+        array $module,
+        array $source,
+        ?array $review,
+        array $searches,
+        array $candidates,
+        ?array $comparison,
+        array $ai,
+        string $stage,
+    ): array {
+        return [
+            'complete' => false,
+            'module' => $module,
+            'source' => $source,
+            'review' => $review,
+            'searches' => $searches,
+            'candidates' => $candidates,
+            'comparison' => $comparison,
+            'assessment' => null,
+            'ai' => $ai,
+            'limitations' => [
+                [
+                    'stage' => $stage,
+                    'message' => self::LIMITATION_MESSAGES[$stage],
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array{
+     *     files: int,
+     *     bytes: int,
+     *     skipped: list<array{path: string, reason: string}>,
+     *     redactions: list<array{path: string, line: int, type: string}>
+     * }
+     */
+    private function emptySource(): array
+    {
+        return [
+            'files' => 0,
+            'bytes' => 0,
+            'skipped' => [],
+            'redactions' => [],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $review
+     *
+     * @return list<string>
+     */
+    private function searchTerms(array $review, string $key): array
+    {
+        $terms = [];
+        foreach ($review[$key] as $term) {
+            $terms[] = $term['term'];
+        }
+
+        return $terms;
+    }
+
+    /**
+     * @param array{
+     *     providerId: string,
+     *     modelId: string,
+     *     result: array<string, mixed>,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * } $response
+     *
+     * @return array{
+     *     providerId: string,
+     *     modelId: string,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * }
+     */
+    private function aiMetadata(array $response): array
+    {
+        return [
+            'providerId' => $response['providerId'],
+            'modelId' => $response['modelId'],
+            'tokenUsage' => $response['tokenUsage'],
+        ];
+    }
+}
