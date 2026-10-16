@@ -32,9 +32,9 @@ class ModuleReviewPromptBuilderTest extends TestCase
     public function testAcceptsSourceAtExactBudgetAndPreservesSentinel(): void
     {
         $sentinel = 'END_OF_MODULE_SOURCE';
-        $content = str_repeat('a', 65536 - strlen($sentinel)) . $sentinel;
+        $content = str_repeat('a', 131072 - strlen($sentinel)) . $sentinel;
 
-        self::assertSame(65536, strlen($content));
+        self::assertSame(131072, strlen($content));
 
         $result = (new ModuleReviewPromptBuilder())->build('example_module', self::collection([
             [
