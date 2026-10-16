@@ -14,12 +14,16 @@ final class ModuleReviewResultValidator
      *
      * @return array<string, mixed>
      */
-    public function validate(array $result, array $files): array
+    public function validate(array $result, array $files, ?string $machineName = null): array
     {
         $lineCounts = $this->buildLineCounts($files);
-        $primaryTerms = $this->validateSearchTerms($result['primary_search_terms'] ?? null, 1, 5);
-        $secondaryTerms = $this->validateSearchTerms($result['secondary_search_terms'] ?? null, 0, 5);
+        $primaryTerms = $this->validateSearchTerms($result['primary_search_terms'] ?? null, 2, 4);
+        $secondaryTerms = $this->validateSearchTerms($result['secondary_search_terms'] ?? null, 0, 3);
         $this->validateNoOverlappingTerms($primaryTerms, $secondaryTerms);
+        $functionalQueries = $this->validateFunctionalSearchQueries(
+            $result['functional_search_queries'] ?? null,
+            $machineName,
+        );
 
         return [
             'purpose' => $this->requiredString($result['purpose'] ?? null),
@@ -28,6 +32,7 @@ final class ModuleReviewResultValidator
             'integrations' => $this->validateTextList($result['integrations'] ?? null),
             'primary_search_terms' => $primaryTerms,
             'secondary_search_terms' => $secondaryTerms,
+            'functional_search_queries' => $functionalQueries,
             'reusability' => $this->validateReusability($result['reusability'] ?? null, $lineCounts),
             'contrib_readiness' => $this->validateContribReadiness(
                 $result['contrib_readiness'] ?? null,
@@ -70,7 +75,7 @@ final class ModuleReviewResultValidator
 
             $term = $this->requiredString($item['term'] ?? null);
             $reason = $this->requiredString($item['reason'] ?? null);
-            if (preg_match('/^[a-z]+$/D', $term) !== 1 || $term === 'client') {
+            if (preg_match('/^[a-z]+$/D', $term) !== 1 || in_array($term, ['client', 'clients'], true)) {
                 $this->invalid();
             }
 
@@ -104,6 +109,60 @@ final class ModuleReviewResultValidator
                 $this->invalid();
             }
         }
+    }
+
+    /**
+     * @return list<array{query: string, reason: string}>
+     */
+    private function validateFunctionalSearchQueries(mixed $value, ?string $machineName): array
+    {
+        if (!is_array($value) || !array_is_list($value) || count($value) < 1 || count($value) > 2) {
+            $this->invalid();
+        }
+
+        $normalizedMachineName = strtolower(trim((string) $machineName));
+        $machineNameAsWords = str_replace('_', ' ', $normalizedMachineName);
+        $queries = [];
+        $seen = [];
+        foreach ($value as $item) {
+            if (!is_array($item)) {
+                $this->invalid();
+            }
+
+            $query = $this->requiredString($item['query'] ?? null);
+            $query = preg_replace('/\s+/u', ' ', $query) ?? $query;
+            $reason = $this->requiredString($item['reason'] ?? null);
+            if ($query !== strtolower($query)
+                || strlen($query) > 80
+                || preg_match('/(?:https?:\/\/|www\.)/i', $query) === 1
+                || preg_match('/[?*\'"`]/', $query) === 1
+            ) {
+                $this->invalid();
+            }
+
+            $words = preg_split('/\s+/', $query);
+            if (!is_array($words) || count($words) < 2 || count($words) > 4) {
+                $this->invalid();
+            }
+            foreach ($words as $word) {
+                if (in_array($word, ['and', 'or', 'not'], true)) {
+                    $this->invalid();
+                }
+            }
+
+            $queryKey = strtolower($query);
+            if ($queryKey === $normalizedMachineName || $queryKey === $machineNameAsWords || isset($seen[$queryKey])) {
+                $this->invalid();
+            }
+
+            $seen[$queryKey] = true;
+            $queries[] = [
+                'query' => $query,
+                'reason' => $reason,
+            ];
+        }
+
+        return $queries;
     }
 
     /**

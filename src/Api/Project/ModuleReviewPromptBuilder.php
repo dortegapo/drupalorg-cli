@@ -70,9 +70,20 @@ Avoid a search term when it has a common unrelated Drupal or software meaning th
 
 For example, if a module uses project-specific terminology for managing appointments, a retrieval term such as "booking" may be valid even if the literal word "booking" does not occur in the source, provided the behavior clearly represents booking functionality.
 
-Each term must be exactly one English lowercase word, preferably a functionally discriminating noun. Do not return phrases. Use approximately 2-5 primary terms and 0-5 secondary terms, preferring fewer strong terms over invented weak terms. Terms must be semantically supported by the source, must be unique within each list, and must not appear in both lists.
+Each primary and secondary term must be exactly one English lowercase word, preferably a functionally discriminating noun. Do not return phrases for those term lists. Use 2-4 primary terms and 0-3 secondary terms, preferring fewer strong terms over invented weak terms. Terms must be semantically supported by the source, must be unique within each list, and must not appear in both lists.
 
-Do not use generic Drupal or framework words as primary terms, including drupal, module, extension, entity, content, field, form, admin, crud, plugin, service, configuration, controller, manager, or similar implementation vocabulary. Do not use "client" as a primary or secondary search term. Do not derive search terms from the module machine name itself. A machine-name word is valid only when independently justified by the module's behavior.
+In addition to the single-word retrieval terms, provide one or two short functional search queries containing 2-4 natural English words. These queries should describe the reusable interaction or problem more specifically than individual keywords and should use wording likely to appear in Drupal.org project titles or descriptions. Prefer combinations that reduce ambiguity while preserving the module's core function.
+
+Examples of the strategy, not required outputs:
+
+keyboard navigation
+appointment scheduling
+content moderation
+media migration
+
+Do not derive these queries from the module machine name. Do not invent Drupal.org projects. Do not claim that any project exists. Each query must be lowercase, contain 2-4 words, and be unique. Do not use URLs, wildcards, boolean operators, or quoted search syntax.
+
+Do not use generic Drupal or framework words as primary terms, including drupal, module, extension, entity, content, field, form, admin, crud, plugin, service, configuration, controller, manager, or similar implementation vocabulary. Do not use "client" or "clients" as primary or secondary search terms because these words are highly ambiguous in software ecosystems and frequently describe technical API/protocol clients rather than customer/person records. Use a more functionally specific retrieval term when supported by the source, such as profile, records, customers, contacts, directory, membership, or another appropriate term. Do not derive search terms from the module machine name itself. A machine-name word is valid only when independently justified by the module's behavior.
 
 PRIMARY terms describe what reusable capability would remain if the implementation and current project details were removed. SECONDARY terms describe the specific domain or specialization in which the module is currently used.
 
@@ -145,6 +156,10 @@ PROMPT,
                     'type' => 'array',
                     'items' => $this->buildSearchTermSchema(),
                 ],
+                'functional_search_queries' => [
+                    'type' => 'array',
+                    'items' => $this->buildFunctionalSearchQuerySchema(),
+                ],
                 'reusability' => [
                     'type' => 'object',
                     'additionalProperties' => false,
@@ -209,6 +224,7 @@ PROMPT,
                 'integrations',
                 'primary_search_terms',
                 'secondary_search_terms',
+                'functional_search_queries',
                 'reusability',
                 'contrib_readiness',
                 'analysis_limits',
@@ -234,6 +250,29 @@ PROMPT,
             ],
             'required' => [
                 'term',
+                'reason',
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildFunctionalSearchQuerySchema(): array
+    {
+        return [
+            'type' => 'object',
+            'additionalProperties' => false,
+            'properties' => [
+                'query' => [
+                    'type' => 'string',
+                ],
+                'reason' => [
+                    'type' => 'string',
+                ],
+            ],
+            'required' => [
+                'query',
                 'reason',
             ],
         ];

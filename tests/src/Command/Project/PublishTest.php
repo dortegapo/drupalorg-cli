@@ -63,7 +63,14 @@ class PublishTest extends TestCase
         self::assertSame(0, $exitCode);
         $resolvedPath = realpath($modulePath);
         self::assertSame(
-            "Module path: $resolvedPath\nModule info file: $resolvedPath/my_module.info.yml\nModule name: My Module\nModule type: module\nCore version requirement: ^11\nDrupal.org project exists: my_module\n",
+            "\nModule\n\n"
+            . "Module path: $resolvedPath\n"
+            . "Machine name: my_module\n"
+            . "Module info file: $resolvedPath/my_module.info.yml\n"
+            . "Module name: My Module\n"
+            . "Module type: module\n"
+            . "Core version requirement: ^11\n\n"
+            . "Drupal.org project exists: my_module\n",
             $tester->getDisplay()
         );
     }
@@ -78,6 +85,7 @@ class PublishTest extends TestCase
         $exitCode = $tester->execute(['module' => 'my_module']);
 
         self::assertSame(0, $exitCode);
+        self::assertStringContainsString('Machine name: my_module', $tester->getDisplay());
         self::assertStringContainsString(
             'Drupal.org project does not exist: my_module',
             $tester->getDisplay()
@@ -108,6 +116,8 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->runtimeCalls);
         self::assertSame(0, $command->inspectCalls);
         self::assertSame(0, $command->analyzeCalls);
+        self::assertStringNotContainsString('Full report:', $tester->getDisplay());
+        self::assertSame(0, $command->pdfCalls);
     }
 
     public function testDryRunDoesNotInspectOrRunTheAnalyzer(): void
@@ -129,6 +139,7 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->runtimeCalls);
         self::assertSame(0, $command->inspectCalls);
         self::assertSame(0, $command->analyzeCalls);
+        self::assertSame(0, $command->pdfCalls);
     }
 
     public function testNonInteractiveNewProjectDoesNotInspectOrRunTheAnalyzer(): void
@@ -150,6 +161,7 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->runtimeCalls);
         self::assertSame(0, $command->inspectCalls);
         self::assertSame(0, $command->analyzeCalls);
+        self::assertSame(0, $command->pdfCalls);
     }
 
     public function testUnavailableRuntimeContinuesWithoutReview(): void
@@ -236,8 +248,9 @@ class PublishTest extends TestCase
         $tester->setInputs(['']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString('Run AI module review? [y/N]', $tester->getDisplay());
+        self::assertStringContainsString('Run AI-assisted contribution review? [y/N]', $tester->getDisplay());
         self::assertSame(0, $command->analyzeCalls);
+        self::assertSame(0, $command->pdfCalls);
     }
 
     public function testAcceptedReviewRunsOnceShowsSummaryAndContinues(): void
@@ -251,6 +264,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
+        $command->pdfPath = $this->workDir . '/my_module-drupalorg-contribution-review.pdf';
         $tester->setInputs(['y', 'y']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
@@ -258,13 +272,21 @@ class PublishTest extends TestCase
         self::assertSame(1, $command->analyzeCalls);
         self::assertSame(realpath($this->workDir . '/web/modules/custom/my_module'), $command->analyzeModulePath);
         self::assertSame('my_module', $command->analyzeMachineName);
+        self::assertSame('My Module', $command->analyzeHumanName);
         self::assertSame(self::runtime(), $command->analyzeRuntime);
+        self::assertSame(1, $command->pdfCalls);
+        self::assertStringContainsString('Optional AI-assisted contribution review', $display);
         self::assertStringContainsString('Provider: local-provider', $display);
         self::assertStringContainsString('Model: local-model', $display);
         self::assertStringContainsString(
-            'The CLI performs best-effort local redaction of common sensitive values before the request.',
+            'best-effort local redaction',
             $display,
         );
+        self::assertStringContainsString('similar functionality', $display);
+        self::assertStringContainsString('possible functional overlap', $display);
+        self::assertStringContainsString('generate a PDF report', $display);
+        self::assertStringContainsString('Only the selected module is analyzed.', $display);
+        self::assertStringContainsString('The review is advisory only.', $display);
         self::assertStringContainsString('Module source prepared.', $display);
         self::assertStringContainsString('Analyzing module with AI...', $display);
         self::assertStringContainsString('Module analysis completed.', $display);
@@ -284,11 +306,13 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Tokens used: input 20, output 10, total 30', $display);
         self::assertStringContainsString('Potential overlaps:', $display);
         self::assertStringContainsString('  - existing_profiles (possible_overlap)', $display);
+        self::assertStringContainsString('PDF report generated.', $display);
+        self::assertStringContainsString('Full report: ' . $command->pdfPath, $display);
         self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
         self::assertStringContainsString('Drupal.org project does not exist: my_module', $display);
-        self::assertLessThan(
-            (int) strpos($display, 'AI module review'),
-            (int) strpos($display, 'Run AI module review? [y/N]'),
+        self::assertTrue(
+            (int) strpos($display, 'Drupal.org project does not exist: my_module')
+            < (int) strpos($display, 'Optional AI-assisted contribution review'),
         );
     }
 
@@ -303,12 +327,15 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
+        $command->pdfPath = $this->workDir . '/my_module-drupalorg-contribution-review.pdf';
         $tester->setInputs(['y', 'n']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertSame(1, $command->analyzeCalls);
         self::assertStringContainsString('Project publishing cancelled.', $tester->getDisplay());
-        self::assertStringNotContainsString('Drupal.org project does not exist: my_module', $tester->getDisplay());
+        self::assertStringContainsString('Drupal.org project does not exist: my_module', $tester->getDisplay());
+        self::assertStringContainsString('Full report: ' . $command->pdfPath, $tester->getDisplay());
+        self::assertSame(1, $command->pdfCalls);
     }
 
     public function testNotCandidateYetStillAsksToContinue(): void
@@ -355,10 +382,35 @@ class PublishTest extends TestCase
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         $display = $tester->getDisplay();
         self::assertSame(1, $command->analyzeCalls);
+        self::assertStringContainsString('AI-assisted contribution review', $display);
         self::assertStringContainsString('AI module review could not be completed.', $display);
         self::assertStringContainsString('Stage: project_search', $display);
         self::assertStringNotContainsString('Assessment:', $display);
         self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
+    }
+
+    public function testPdfFailureDoesNotInvalidateReviewOrBlockContinuation(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+            null,
+            new \RuntimeException('PDF failed.'),
+        );
+        $tester->setInputs(['y', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertSame(1, $command->pdfCalls);
+        self::assertStringContainsString('Could not generate the PDF review report.', $display);
+        self::assertStringContainsString('The AI review results are still available in the terminal summary.', $display);
+        self::assertStringContainsString('Assessment: Candidate with changes', $display);
+        self::assertStringContainsString('Project publishing cancelled.', $display);
     }
 
     public function testReviewConsentIsRequiredBeforeAnalyzerExecution(): void
@@ -376,9 +428,9 @@ class PublishTest extends TestCase
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         $display = $tester->getDisplay();
-        self::assertLessThan(
-            (int) strpos($display, 'AI module review'),
-            (int) strpos($display, 'Run AI module review? [y/N]'),
+        self::assertTrue(
+            (int) strpos($display, 'Optional AI-assisted contribution review')
+            < (int) strpos($display, 'Run AI-assisted contribution review? [y/N]'),
         );
         self::assertSame(1, $command->analyzeCalls);
     }
@@ -471,14 +523,15 @@ class PublishTest extends TestCase
             . "Drupal.org project exists: no\n\n"
             . "Planned actions:\n"
             . "  1. Authenticate with Drupal.org automatically if required.\n"
-            . "  2. Create Drupal.org project \"my_module\".\n"
-            . "  3. Wait for repository provisioning.\n"
-            . "  4. Prepare an isolated temporary workspace.\n"
-            . "  5. Copy the module into the temporary workspace.\n"
-            . "  6. Initialize the publication Git repository.\n"
-            . "  7. Create the initial commit.\n"
-            . "  8. Configure the Drupal.org Git remote.\n"
-            . "  9. Push the initial branch.\n\n"
+            . "  2. Offer an optional AI-assisted contribution review and local PDF report.\n"
+            . "  3. Create Drupal.org project \"my_module\".\n"
+            . "  4. Wait for repository provisioning.\n"
+            . "  5. Prepare an isolated temporary workspace.\n"
+            . "  6. Copy the module into the temporary workspace.\n"
+            . "  7. Initialize the publication Git repository.\n"
+            . "  8. Create the initial commit.\n"
+            . "  9. Configure the Drupal.org Git remote.\n"
+            . "  10. Push the initial branch.\n\n"
             . "Publication execution is not implemented yet.\n"
             . "Dry run complete. No changes were made.\n",
             $tester->getDisplay()
@@ -717,6 +770,7 @@ class PublishTest extends TestCase
      * @param array<string, mixed> $aiContext
      * @param array<string, mixed> $analysisResult
      * @param \RuntimeException|null $inspectFailure
+     * @param \RuntimeException|null $pdfFailure
      *
      * @return array{0: CommandTester, 1: object}
      */
@@ -726,21 +780,28 @@ class PublishTest extends TestCase
         array $aiContext,
         array $analysisResult,
         ?\RuntimeException $inspectFailure = null,
+        ?\RuntimeException $pdfFailure = null,
     ): array {
         $this->history = [];
         $stack = HandlerStack::create(new MockHandler([$response]));
         $stack->push(Middleware::history($this->history));
         $client = new Client(false, $stack);
-        $command = new class($client, $runtime, $aiContext, $analysisResult, $inspectFailure) extends Publish {
+        $command = new class($client, $runtime, $aiContext, $analysisResult, $inspectFailure, $pdfFailure) extends Publish {
             public int $runtimeCalls = 0;
 
             public int $inspectCalls = 0;
 
             public int $analyzeCalls = 0;
 
+            public int $pdfCalls = 0;
+
+            public string $pdfPath = '/tmp/module-review.pdf';
+
             public ?string $analyzeModulePath = null;
 
             public ?string $analyzeMachineName = null;
+
+            public ?string $analyzeHumanName = null;
 
             /** @var array<string, mixed>|null */
             public ?array $analyzeRuntime = null;
@@ -756,11 +817,14 @@ class PublishTest extends TestCase
 
             private ?\RuntimeException $inspectFailure;
 
+            private ?\RuntimeException $pdfFailure;
+
             /**
              * @param array<string, mixed>|null $runtime
              * @param array<string, mixed> $aiContext
              * @param array<string, mixed> $analysisResult
              * @param \RuntimeException|null $inspectFailure
+             * @param \RuntimeException|null $pdfFailure
              */
             public function __construct(
                 private readonly Client $testClient,
@@ -768,12 +832,14 @@ class PublishTest extends TestCase
                 array $aiContext,
                 array $analysisResult,
                 ?\RuntimeException $inspectFailure,
+                ?\RuntimeException $pdfFailure,
             ) {
                 parent::__construct();
                 $this->runtime = $runtime;
                 $this->aiContext = $aiContext;
                 $this->analysisResult = $analysisResult;
                 $this->inspectFailure = $inspectFailure;
+                $this->pdfFailure = $pdfFailure;
             }
 
             protected function initialize(InputInterface $input, OutputInterface $output): void
@@ -803,10 +869,12 @@ class PublishTest extends TestCase
                 string $machineName,
                 array $runtime,
                 ?callable $progress = null,
+                ?string $humanName = null,
             ): array {
                 ++$this->analyzeCalls;
                 $this->analyzeModulePath = $modulePath;
                 $this->analyzeMachineName = $machineName;
+                $this->analyzeHumanName = $humanName;
                 $this->analyzeRuntime = $runtime;
                 if ($progress !== null && ($this->analysisResult['complete'] ?? false) === true) {
                     $progress('source_prepared', ['files' => 1]);
@@ -832,6 +900,16 @@ class PublishTest extends TestCase
                 }
 
                 return $this->analysisResult;
+            }
+
+            protected function writeModuleReviewPdf(array $result, array $module, array $moduleInfo): string
+            {
+                ++$this->pdfCalls;
+                if ($this->pdfFailure !== null) {
+                    throw $this->pdfFailure;
+                }
+
+                return $this->pdfPath;
             }
         };
 
