@@ -129,16 +129,26 @@ final class ModuleReviewSensitiveDataSanitizer
     private function detectPrivateKeys(string $content, array &$matches): void
     {
         preg_match_all(
-            '/-----BEGIN ((?:[A-Z]+ )*PRIVATE KEY)-----(?:\r\n|\r|\n).*?-----END \\1-----/s',
+            '/-----BEGIN ((?:[A-Z]+ )*PRIVATE KEY)-----(?:\r\n|\r|\n|$)/',
             $content,
             $found,
             PREG_OFFSET_CAPTURE,
         );
 
-        foreach ($found[0] as [$value, $offset]) {
+        foreach ($found[0] as $index => [$header, $offset]) {
+            $keyType = $found[1][$index][0];
+            $endPattern = '/-----END ' . preg_quote($keyType, '/') . '-----/';
+            $searchOffset = $offset + strlen($header);
+            $end = [];
+            $hasEnd = preg_match($endPattern, $content, $end, PREG_OFFSET_CAPTURE, $searchOffset) === 1;
+            $length = $hasEnd
+                ? $end[0][1] + strlen($end[0][0]) - $offset
+                : strlen($content) - $offset;
+            $value = substr($content, $offset, $length);
+
             $matches[] = [
                 'offset' => $offset,
-                'length' => strlen($value),
+                'length' => $length,
                 'replacement' => $this->replacePrivateKeyBlock($value),
                 'line' => $this->lineAtOffset($content, $offset),
                 'type' => 'private_key',
@@ -167,7 +177,11 @@ final class ModuleReviewSensitiveDataSanitizer
                 $valueOffset = $this->capturedOffset($found, 'bare', $index);
             }
 
-            if ($value === null || $value === '' || $this->isSafeReference($value)) {
+            if ($value === null
+                || $value === ''
+                || $this->isSafeReference($value)
+                || $this->isRedactionMarker($value)
+            ) {
                 continue;
             }
 
@@ -207,7 +221,11 @@ final class ModuleReviewSensitiveDataSanitizer
     {
         preg_match_all('/\bBearer\s+([^\s,;\'"\]]+)/i', $content, $found, PREG_OFFSET_CAPTURE);
         foreach ($found[1] as $index => [$value, $offset]) {
-            if (str_starts_with($value, '[REDACTED_') || $this->overlaps($offset, strlen($value), $matches)) {
+            if ($this->isSafeReference($value)
+                || $this->isRedactionMarker($value)
+                || str_starts_with($value, '[REDACTED_')
+                || $this->overlaps($offset, strlen($value), $matches)
+            ) {
                 continue;
             }
 
@@ -233,7 +251,10 @@ final class ModuleReviewSensitiveDataSanitizer
             PREG_OFFSET_CAPTURE,
         );
         foreach ($found[2] as $index => [$value, $offset]) {
-            if ($this->isSafeReference($value) || $this->overlaps($offset, strlen($value), $matches)) {
+            if ($this->isSafeReference($value)
+                || $this->isRedactionMarker($value)
+                || $this->overlaps($offset, strlen($value), $matches)
+            ) {
                 continue;
             }
 
@@ -256,7 +277,6 @@ final class ModuleReviewSensitiveDataSanitizer
             '/\bsk-[A-Za-z0-9_-]{20,}\b/',
             '/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/',
             '/\bgithub_pat_[A-Za-z0-9_]{20,}\b/',
-            '/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/',
         ];
 
         foreach ($patterns as $pattern) {
@@ -275,6 +295,56 @@ final class ModuleReviewSensitiveDataSanitizer
                 ];
             }
         }
+
+        preg_match_all(
+            '/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/',
+            $content,
+            $found,
+            PREG_OFFSET_CAPTURE,
+        );
+        foreach ($found[0] as [$value, $offset]) {
+            if (!$this->isJwt($value) || $this->overlaps($offset, strlen($value), $matches)) {
+                continue;
+            }
+
+            $matches[] = [
+                'offset' => $offset,
+                'length' => strlen($value),
+                'replacement' => self::TOKEN_MARKER,
+                'line' => $this->lineAtOffset($content, $offset),
+                'type' => 'token',
+            ];
+        }
+    }
+
+    private function isJwt(string $value): bool
+    {
+        $headerSegment = explode('.', $value, 2)[0];
+        $remainder = strlen($headerSegment) % 4;
+        if ($remainder === 1) {
+            return false;
+        }
+
+        $base64 = strtr($headerSegment, '-_', '+/');
+        if ($remainder !== 0) {
+            $base64 .= str_repeat('=', 4 - $remainder);
+        }
+
+        $headerJson = base64_decode($base64, true);
+        if ($headerJson === false) {
+            return false;
+        }
+
+        try {
+            $header = json_decode($headerJson, false, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return false;
+        }
+
+        return is_object($header)
+            && (property_exists($header, 'alg')
+                || property_exists($header, 'typ')
+                || property_exists($header, 'kid'));
     }
 
     private function replacePrivateKeyBlock(string $value): string
@@ -315,6 +385,17 @@ final class ModuleReviewSensitiveDataSanitizer
             '/^(?:%env\([^)]*\)%|\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*;?|(?:getenv|env)\s*\()/',
             $value,
         ) === 1;
+    }
+
+    private function isRedactionMarker(string $value): bool
+    {
+        return in_array($value, [
+            self::SECRET_MARKER,
+            self::TOKEN_MARKER,
+            self::AUTHORIZATION_MARKER,
+            self::PRIVATE_KEY_MARKER,
+            self::URL_CREDENTIAL_MARKER,
+        ], true);
     }
 
     /**
