@@ -56,6 +56,30 @@ class ModuleReviewComparisonPromptBuilderTest extends TestCase
         self::assertStringContainsString('"description": "' . $expected . '"', $result['prompt']);
     }
 
+    public function testAllowsEmptyAndWhitespaceOnlyDescriptions(): void
+    {
+        $result = $this->build([
+            self::candidate('empty', 'Empty', ''),
+            self::candidate('whitespace', 'Whitespace', "  \n\t "),
+        ]);
+
+        self::assertStringContainsString('"machine_name": "empty"', $result['prompt']);
+        self::assertStringContainsString('"machine_name": "whitespace"', $result['prompt']);
+        self::assertSame(2, substr_count($result['prompt'], '"description": ""'));
+    }
+
+    public function testContinuesToNormalizeNonEmptyDescriptions(): void
+    {
+        $result = $this->build([
+            self::candidate('example', 'Example', "Generic\n\n customer   profile\tmanagement"),
+        ]);
+
+        self::assertStringContainsString(
+            '"description": "Generic customer profile management"',
+            $result['prompt'],
+        );
+    }
+
     public function testStatesInjectionAndComparisonBoundariesBeforeInput(): void
     {
         $result = $this->build([
@@ -175,6 +199,10 @@ class ModuleReviewComparisonPromptBuilderTest extends TestCase
             self::localReview(),
             [self::candidate('example', 1, 'Description')],
         ];
+        yield 'invalid candidate description' => [
+            self::localReview(),
+            [self::candidate('example', 'Example', null)],
+        ];
     }
 
     /**
@@ -211,7 +239,7 @@ class ModuleReviewComparisonPromptBuilderTest extends TestCase
     /**
      * @return array<string, mixed>
      */
-    private static function candidate(string $machineName, mixed $title, string $description): array
+    private static function candidate(string $machineName, mixed $title, mixed $description): array
     {
         return [
             'machineName' => $machineName,

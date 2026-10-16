@@ -109,7 +109,7 @@ PROMPT;
                 $this->invalid();
             }
 
-            $description = $this->requiredString($candidate, 'description');
+            $description = $this->stringValue($candidate, 'description');
             $input[] = [
                 'machine_name' => $this->requiredString($candidate, 'machineName'),
                 'title' => $this->requiredString($candidate, 'title'),
@@ -126,7 +126,20 @@ PROMPT;
      */
     private function requiredString(array $input, string $key): string
     {
-        if (!array_key_exists($key, $input) || !is_string($input[$key]) || trim($input[$key]) === '') {
+        $value = $this->stringValue($input, $key);
+        if (trim($value) === '') {
+            $this->invalid();
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     */
+    private function stringValue(array $input, string $key): string
+    {
+        if (!array_key_exists($key, $input) || !is_string($input[$key])) {
             $this->invalid();
         }
 
