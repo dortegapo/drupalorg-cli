@@ -12,6 +12,8 @@ use mglaman\DrupalOrgCli\Command\Project\Publish;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
+use Symfony\Component\Console\Helper\HelperSet;
+use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -80,6 +82,301 @@ class PublishTest extends TestCase
             'Drupal.org project does not exist: my_module',
             $tester->getDisplay()
         );
+    }
+
+    public function testExistingProjectDoesNotInspectDrupalAi(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse([
+                'list' => [
+                    [
+                        'nid' => '123',
+                        'title' => 'My Module',
+                        'field_project_machine_name' => 'my_module',
+                    ],
+                ],
+            ]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testDryRunDoesNotInspectOrRunTheAnalyzer(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module',
+            '--dry-run' => true,
+        ]));
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testNonInteractiveNewProjectDoesNotInspectOrRunTheAnalyzer(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute(
+            ['module' => 'my_module'],
+            ['interactive' => false],
+        ));
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testUnavailableRuntimeContinuesWithoutReview(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            null,
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString(
+            'Drupal AI review is not available for this project environment.',
+            $tester->getDisplay(),
+        );
+        self::assertSame(1, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testUnavailableAiContinuesWithoutReview(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            [
+                'aiEnabled' => false,
+                'providerId' => null,
+                'modelId' => null,
+            ],
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString(
+            'Drupal AI review is not available for this project environment.',
+            $tester->getDisplay(),
+        );
+        self::assertSame(1, $command->runtimeCalls);
+        self::assertSame(1, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testAiInspectionFailureContinuesWithoutReview(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+            new \RuntimeException('Inspection failed.'),
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString(
+            'Drupal AI review is not available for this project environment.',
+            $tester->getDisplay(),
+        );
+        self::assertSame(1, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testRejectingReviewDoesNotRunTheAnalyzer(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString('Run AI module review? [y/N]', $tester->getDisplay());
+        self::assertSame(0, $command->analyzeCalls);
+    }
+
+    public function testAcceptedReviewRunsOnceShowsSummaryAndContinues(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', 'y']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertSame(realpath($this->workDir . '/web/modules/custom/my_module'), $command->analyzeModulePath);
+        self::assertSame('my_module', $command->analyzeMachineName);
+        self::assertSame(self::runtime(), $command->analyzeRuntime);
+        self::assertStringContainsString('Provider: local-provider', $display);
+        self::assertStringContainsString('Model: local-model', $display);
+        self::assertStringContainsString('Assessment: Candidate with changes', $display);
+        self::assertStringContainsString('Reusability: reusable', $display);
+        self::assertStringContainsString('Contrib readiness: ready', $display);
+        self::assertStringContainsString('Drupal.org overlap: possible_overlap', $display);
+        self::assertStringContainsString('Candidate projects evaluated: 1', $display);
+        self::assertStringContainsString('Sensitive values redacted locally: 2', $display);
+        self::assertStringContainsString('AI #1: local-provider / local-model', $display);
+        self::assertStringContainsString('AI #2: local-provider / local-model', $display);
+        self::assertStringContainsString('Tokens used: input 20, output 10, total 30', $display);
+        self::assertStringContainsString('Potential overlaps:', $display);
+        self::assertStringContainsString('  - existing_profiles (possible_overlap)', $display);
+        self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
+        self::assertStringContainsString('Drupal.org project does not exist: my_module', $display);
+        self::assertLessThan(
+            (int) strpos($display, 'AI module review'),
+            (int) strpos($display, 'Run AI module review? [y/N]'),
+        );
+    }
+
+    public function testCancellingAfterReviewStopsBeforeTheCurrentFlow(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertStringContainsString('Project publishing cancelled.', $tester->getDisplay());
+        self::assertStringNotContainsString('Drupal.org project does not exist: my_module', $tester->getDisplay());
+    }
+
+    public function testNotCandidateYetStillAsksToContinue(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult('not_candidate_yet'),
+        );
+        $tester->setInputs(['y', 'y']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertStringContainsString('Assessment: Not a candidate yet', $tester->getDisplay());
+        self::assertStringContainsString('Continue with project publishing? [y/N]', $tester->getDisplay());
+    }
+
+    public function testIncompleteReviewHasNoAssessmentAndStillAsksToContinue(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            [
+                'complete' => false,
+                'source' => ['redactions' => []],
+                'limitations' => [
+                    [
+                        'stage' => 'project_search',
+                        'message' => 'Drupal.org project search could not be completed.',
+                    ],
+                ],
+            ],
+        );
+        $tester->setInputs(['y', 'y']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertStringContainsString('AI module review could not be completed.', $display);
+        self::assertStringContainsString('Stage: project_search', $display);
+        self::assertStringNotContainsString('Assessment:', $display);
+        self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
+    }
+
+    public function testReviewConsentIsRequiredBeforeAnalyzerExecution(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertLessThan(
+            (int) strpos($display, 'AI module review'),
+            (int) strpos($display, 'Run AI module review? [y/N]'),
+        );
+        self::assertSame(1, $command->analyzeCalls);
+    }
+
+    public function testPublishDoesNotRegisterReviewOptions(): void
+    {
+        $command = (new Application())->find('project:publish');
+
+        self::assertFalse($command->getDefinition()->hasOption('review'));
+        self::assertFalse($command->getDefinition()->hasOption('ai-metadata'));
     }
 
     public function testDrupalOrgErrorIsNotReportedAsMissingProject(): void
@@ -340,6 +637,14 @@ class PublishTest extends TestCase
         return $modulePath;
     }
 
+    private function createDiscoverableModule(): string
+    {
+        $modulePath = $this->createValidModule();
+        file_put_contents($this->workDir . '/composer.json', '{}');
+
+        return $modulePath;
+    }
+
     private function commandTester(Response ...$responses): CommandTester
     {
         $this->history = [];
@@ -360,6 +665,180 @@ class PublishTest extends TestCase
         };
 
         return new CommandTester($command);
+    }
+
+    /**
+     * @param array<string, mixed>|null $runtime
+     * @param array<string, mixed> $aiContext
+     * @param array<string, mixed> $analysisResult
+     * @param \RuntimeException|null $inspectFailure
+     *
+     * @return array{0: CommandTester, 1: object}
+     */
+    private function commandTesterWithReview(
+        Response $response,
+        ?array $runtime,
+        array $aiContext,
+        array $analysisResult,
+        ?\RuntimeException $inspectFailure = null,
+    ): array {
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler([$response]));
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack);
+        $command = new class($client, $runtime, $aiContext, $analysisResult, $inspectFailure) extends Publish {
+            public int $runtimeCalls = 0;
+
+            public int $inspectCalls = 0;
+
+            public int $analyzeCalls = 0;
+
+            public ?string $analyzeModulePath = null;
+
+            public ?string $analyzeMachineName = null;
+
+            /** @var array<string, mixed>|null */
+            public ?array $analyzeRuntime = null;
+
+            /** @var array<string, mixed>|null */
+            private ?array $runtime;
+
+            /** @var array<string, mixed> */
+            private array $aiContext;
+
+            /** @var array<string, mixed> */
+            private array $analysisResult;
+
+            private ?\RuntimeException $inspectFailure;
+
+            /**
+             * @param array<string, mixed>|null $runtime
+             * @param array<string, mixed> $aiContext
+             * @param array<string, mixed> $analysisResult
+             * @param \RuntimeException|null $inspectFailure
+             */
+            public function __construct(
+                private readonly Client $testClient,
+                ?array $runtime,
+                array $aiContext,
+                array $analysisResult,
+                ?\RuntimeException $inspectFailure,
+            ) {
+                parent::__construct();
+                $this->runtime = $runtime;
+                $this->aiContext = $aiContext;
+                $this->analysisResult = $analysisResult;
+                $this->inspectFailure = $inspectFailure;
+            }
+
+            protected function initialize(InputInterface $input, OutputInterface $output): void
+            {
+                parent::initialize($input, $output);
+                $this->client = $this->testClient;
+            }
+
+            protected function resolveDrupalRuntime(?string $projectRoot): ?array
+            {
+                ++$this->runtimeCalls;
+                return $this->runtime;
+            }
+
+            protected function inspectDrupalAi(array $runtime): array
+            {
+                ++$this->inspectCalls;
+                if ($this->inspectFailure !== null) {
+                    throw $this->inspectFailure;
+                }
+
+                return $this->aiContext;
+            }
+
+            protected function analyzeModule(string $modulePath, string $machineName, array $runtime): array
+            {
+                ++$this->analyzeCalls;
+                $this->analyzeModulePath = $modulePath;
+                $this->analyzeMachineName = $machineName;
+                $this->analyzeRuntime = $runtime;
+                return $this->analysisResult;
+            }
+        };
+
+        $command->setHelperSet(new HelperSet(['question' => new QuestionHelper()]));
+
+        return [new CommandTester($command), $command];
+    }
+
+    /**
+     * @return array{
+     *     type: 'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * }
+     */
+    private static function runtime(): array
+    {
+        return [
+            'type' => 'local-drush',
+            'workingDirectory' => '/tmp',
+            'command' => ['drush'],
+        ];
+    }
+
+    /**
+     * @return array{aiEnabled: bool, providerId: string, modelId: string}
+     */
+    private static function availableAiContext(): array
+    {
+        return [
+            'aiEnabled' => true,
+            'providerId' => 'local-provider',
+            'modelId' => 'local-model',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function completeReviewResult(string $assessmentStatus = 'candidate_with_changes'): array
+    {
+        return [
+            'complete' => true,
+            'source' => [
+                'redactions' => [
+                    ['type' => 'credential'],
+                    ['type' => 'token'],
+                ],
+            ],
+            'review' => [
+                'reusability' => ['status' => 'reusable'],
+                'contrib_readiness' => ['status' => 'ready'],
+            ],
+            'candidates' => [
+                ['machineName' => 'existing_profiles'],
+            ],
+            'comparison' => [
+                'verdict' => 'possible_overlap',
+                'candidates' => [
+                    [
+                        'machine_name' => 'existing_profiles',
+                        'assessment' => 'possible_overlap',
+                    ],
+                ],
+            ],
+            'assessment' => ['status' => $assessmentStatus],
+            'ai' => [
+                'review' => [
+                    'providerId' => 'local-provider',
+                    'modelId' => 'local-model',
+                    'tokenUsage' => ['input' => 10, 'output' => 5, 'total' => 15],
+                ],
+                'comparison' => [
+                    'providerId' => 'local-provider',
+                    'modelId' => 'local-model',
+                    'tokenUsage' => ['input' => 10, 'output' => 5, 'total' => 15],
+                ],
+            ],
+        ];
     }
 
     private function sentRequest(): RequestInterface
