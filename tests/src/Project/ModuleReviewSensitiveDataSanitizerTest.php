@@ -107,6 +107,35 @@ class ModuleReviewSensitiveDataSanitizerTest extends TestCase
         ], $result['redactions']);
     }
 
+    public function testSanitizesUnterminatedPemUntilEndOfFile(): void
+    {
+        $content = "line 1\n-----BEGIN PRIVATE KEY-----\nSECRET-A\nSECRET-B";
+
+        $result = $this->sanitize($content);
+        $sanitized = $result['files'][0]['content'];
+
+        self::assertStringNotContainsString('SECRET-A', $sanitized);
+        self::assertStringNotContainsString('SECRET-B', $sanitized);
+        self::assertSame(4, substr_count($sanitized, "\n") + 1);
+        self::assertSame([
+            ['path' => 'module.php', 'line' => 2, 'type' => 'private_key'],
+        ], $result['redactions']);
+    }
+
+    public function testPreservesDynamicBearerReferences(): void
+    {
+        $content = implode("\n", [
+            'Authorization: Bearer $token',
+            'Authorization: Bearer ${ACCESS_TOKEN}',
+            'Authorization: Bearer %env(ACCESS_TOKEN)%',
+        ]);
+
+        $result = $this->sanitize($content);
+
+        self::assertSame($content, $result['files'][0]['content']);
+        self::assertSame([], $result['redactions']);
+    }
+
     public function testSanitizesKnownTokensButNotGenericHashes(): void
     {
         $content = implode("\n", [
@@ -139,7 +168,28 @@ class ModuleReviewSensitiveDataSanitizerTest extends TestCase
 
     public function testIsIdempotentForRedactionMarkers(): void
     {
-        $content = "secret = '[REDACTED_SECRET]'\ntoken = '[REDACTED_TOKEN]'";
+        $content = implode("\n", [
+            "\$apiKey = '[REDACTED_SECRET]';",
+            "\$password = '[REDACTED_SECRET]';",
+            "\$accessToken = '[REDACTED_TOKEN]';",
+            'https://user:[REDACTED_URL_CREDENTIAL]@example.com',
+            'Authorization: Bearer [REDACTED_AUTHORIZATION]',
+        ]);
+
+        $result = $this->sanitize($content);
+
+        self::assertSame($content, $result['files'][0]['content']);
+        self::assertSame([], $result['redactions']);
+    }
+
+    public function testDoesNotSanitizeJwtLikeIdentifier(): void
+    {
+        $content = implode("\n", [
+            'longordinaryidentifier.partoneidentifier.parttwoidentifier',
+            '1.2.3',
+            '192.168.1.1',
+            'version.2024.release',
+        ]);
 
         $result = $this->sanitize($content);
 
