@@ -4,13 +4,18 @@ namespace mglaman\DrupalOrgCli\Command\Project;
 
 use GuzzleHttp\Exception\RequestException;
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
+use mglaman\DrupalOrg\Project\DrupalAiBridge;
+use mglaman\DrupalOrg\Project\DrupalRuntimeResolver;
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
+use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrgCli\Command\Command;
+use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 class Publish extends Command
 {
@@ -121,6 +126,12 @@ class Publish extends Command
             return self::SUCCESS;
         }
 
+        if ($project === null && $input->isInteractive()) {
+            if (!$this->offerModuleReview($input, $output, $module)) {
+                return self::SUCCESS;
+            }
+        }
+
         $this->stdOut->writeln(sprintf('Module path: %s', $resolvedPath));
         $this->stdOut->writeln(sprintf('Module info file: %s', $infoFile));
         $this->stdOut->writeln(sprintf('Module name: %s', $moduleInfo['name']));
@@ -136,5 +147,257 @@ class Publish extends Command
         ));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Offer the advisory AI review for a new Drupal.org project candidate.
+     *
+     * @param array{
+     *     resolvedPath: string,
+     *     moduleName: string,
+     *     projectRoot: ?string
+     * } $module
+     */
+    protected function offerModuleReview(InputInterface $input, OutputInterface $output, array $module): bool
+    {
+        $runtime = $this->resolveDrupalRuntime($module['projectRoot']);
+        if ($runtime === null) {
+            $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
+            return true;
+        }
+
+        try {
+            $aiContext = $this->inspectDrupalAi($runtime);
+        } catch (\RuntimeException) {
+            $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
+            return true;
+        }
+
+        if (!$aiContext['aiEnabled'] || $aiContext['providerId'] === null || $aiContext['modelId'] === null) {
+            $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
+            return true;
+        }
+
+        $this->stdOut->writeln('Drupal AI is available.');
+        $this->stdOut->writeln(sprintf('Provider: %s', $aiContext['providerId']));
+        $this->stdOut->writeln(sprintf('Model: %s', $aiContext['modelId']));
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Source code from the selected module will be sent to the configured Drupal AI provider.');
+        $this->stdOut->writeln('Potential sensitive values are redacted locally before the request.');
+        $this->stdOut->writeln('This may consume tokens from the configured provider.');
+
+        if (!$this->askConfirmation($input, $output, 'Run AI module review? [y/N] ', false)) {
+            return true;
+        }
+
+        $result = $this->analyzeModule($module['resolvedPath'], $module['moduleName'], $runtime);
+        $this->writeModuleReviewSummary($result);
+
+        if (!$this->askConfirmation($input, $output, 'Continue with project publishing? [y/N] ', false)) {
+            $this->stdOut->writeln('Project publishing cancelled.');
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
+     *
+     * @return array{
+     *     aiEnabled: bool,
+     *     providerId: ?string,
+     *     modelId: ?string
+     * }
+     */
+    protected function inspectDrupalAi(array $runtime): array
+    {
+        return (new DrupalAiBridge())->inspect($runtime);
+    }
+
+    /**
+     * @return array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * }|null
+     */
+    protected function resolveDrupalRuntime(?string $projectRoot): ?array
+    {
+        return (new DrupalRuntimeResolver())->resolve($projectRoot);
+    }
+
+    /**
+     * @param array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
+     *
+     * @return array<string, mixed>
+     */
+    protected function analyzeModule(string $modulePath, string $machineName, array $runtime): array
+    {
+        return (new ModuleReviewAnalyzerFactory($this->client))
+            ->create()
+            ->analyze($modulePath, $machineName, $runtime);
+    }
+
+    protected function askConfirmation(
+        InputInterface $input,
+        OutputInterface $output,
+        string $question,
+        bool $default
+    ): bool {
+        $helper = $this->getHelper('question');
+        if (!$helper instanceof QuestionHelper) {
+            throw new \LogicException('The question helper is not available.');
+        }
+
+        return (bool) $helper->ask($input, $output, new ConfirmationQuestion($question, $default));
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function writeModuleReviewSummary(array $result): void
+    {
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('AI module review');
+
+        if (($result['complete'] ?? false) !== true) {
+            $limitation = $result['limitations'][0] ?? [];
+            $stage = is_array($limitation) && is_string($limitation['stage'] ?? null)
+                ? $limitation['stage']
+                : 'unknown';
+            $message = is_array($limitation) && is_string($limitation['message'] ?? null)
+                ? $limitation['message']
+                : 'The AI module review could not be completed.';
+            $this->stdOut->writeln('AI module review could not be completed.');
+            $this->stdOut->writeln(sprintf('Stage: %s', $stage));
+            $this->stdOut->writeln($message);
+            $this->stdOut->writeln('The publication flow can continue without the AI review.');
+            return;
+        }
+
+        $assessment = is_array($result['assessment'] ?? null) ? $result['assessment'] : [];
+        $assessmentStatus = is_string($assessment['status'] ?? null) ? $assessment['status'] : 'unknown';
+        $assessmentLabels = [
+            'candidate' => 'Candidate for contribution',
+            'candidate_with_changes' => 'Candidate with changes',
+            'not_candidate_yet' => 'Not a candidate yet',
+        ];
+        $this->stdOut->writeln(sprintf(
+            'Assessment: %s',
+            $assessmentLabels[$assessmentStatus] ?? $assessmentStatus
+        ));
+
+        $review = is_array($result['review'] ?? null) ? $result['review'] : [];
+        $reusability = is_array($review['reusability'] ?? null) ? $review['reusability'] : [];
+        $readiness = is_array($review['contrib_readiness'] ?? null) ? $review['contrib_readiness'] : [];
+        $this->stdOut->writeln(sprintf('Reusability: %s', (string) ($reusability['status'] ?? 'unknown')));
+        $this->stdOut->writeln(sprintf('Contrib readiness: %s', (string) ($readiness['status'] ?? 'unknown')));
+
+        $comparison = is_array($result['comparison'] ?? null) ? $result['comparison'] : [];
+        $this->stdOut->writeln(sprintf('Drupal.org overlap: %s', (string) ($comparison['verdict'] ?? 'unknown')));
+        $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
+        $this->stdOut->writeln(sprintf('Candidate projects evaluated: %d', count($candidates)));
+        $source = is_array($result['source'] ?? null) ? $result['source'] : [];
+        $redactions = is_array($source['redactions'] ?? null) ? $source['redactions'] : [];
+        $this->stdOut->writeln(sprintf('Sensitive values redacted locally: %d', count($redactions)));
+
+        $this->writeAiMetadata('AI #1', $result['ai']['review'] ?? null);
+        $this->writeAiMetadata('AI #2', $result['ai']['comparison'] ?? null);
+
+        $tokenUsage = $this->sumTokenUsage($result['ai'] ?? null);
+        if ($tokenUsage === null) {
+            $this->stdOut->writeln('Tokens used: unavailable');
+        } else {
+            $this->stdOut->writeln(sprintf(
+                'Tokens used: input %d, output %d, total %d',
+                $tokenUsage['input'],
+                $tokenUsage['output'],
+                $tokenUsage['total'],
+            ));
+        }
+
+        $this->writePotentialOverlaps($comparison);
+    }
+
+    /**
+     * @param mixed $metadata
+     */
+    private function writeAiMetadata(string $label, mixed $metadata): void
+    {
+        if (!is_array($metadata)) {
+            return;
+        }
+
+        $provider = is_string($metadata['providerId'] ?? null) ? $metadata['providerId'] : 'unknown';
+        $model = is_string($metadata['modelId'] ?? null) ? $metadata['modelId'] : 'unknown';
+        $this->stdOut->writeln(sprintf('%s: %s / %s', $label, $provider, $model));
+    }
+
+    /**
+     * @param mixed $ai
+     *
+     * @return array{input: int, output: int, total: int}|null
+     */
+    private function sumTokenUsage(mixed $ai): ?array
+    {
+        if (!is_array($ai)) {
+            return null;
+        }
+
+        $totals = ['input' => 0, 'output' => 0, 'total' => 0];
+        $found = false;
+        foreach (['review', 'comparison'] as $stage) {
+            $usage = $ai[$stage]['tokenUsage'] ?? null;
+            if (!is_array($usage)) {
+                continue;
+            }
+            foreach (array_keys($totals) as $key) {
+                if (is_int($usage[$key] ?? null)) {
+                    $totals[$key] += $usage[$key];
+                    $found = true;
+                }
+            }
+        }
+
+        return $found ? $totals : null;
+    }
+
+    /**
+     * @param array<string, mixed> $comparison
+     */
+    private function writePotentialOverlaps(array $comparison): void
+    {
+        $matches = $comparison['candidates'] ?? [];
+        if (!is_array($matches) || $matches === []) {
+            return;
+        }
+
+        $this->stdOut->writeln('Potential overlaps:');
+        $shown = 0;
+        foreach ($matches as $match) {
+            if (!is_array($match) || !is_string($match['machine_name'] ?? null)) {
+                continue;
+            }
+
+            $assessment = is_string($match['assessment'] ?? null) ? $match['assessment'] : 'unknown';
+            if (!in_array($assessment, ['likely_duplicate', 'possible_overlap'], true)) {
+                continue;
+            }
+
+            $this->stdOut->writeln(sprintf('  - %s (%s)', $match['machine_name'], $assessment));
+            ++$shown;
+            if ($shown === 5) {
+                break;
+            }
+        }
     }
 }
