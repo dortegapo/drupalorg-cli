@@ -247,7 +247,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsInvalidJson(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
 
         $this->runStructuredBridge('__DRUPALORG_CLI_AI_RESULT__={broken');
     }
@@ -255,7 +255,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsMissingMarker(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
 
         $this->runStructuredBridge('normal drush output');
     }
@@ -263,7 +263,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsInvalidEnvelopeTypes(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
 
         $this->runStructuredBridge(
             self::structuredOutput([
@@ -283,7 +283,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsMissingProviderOrModel(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
 
         $this->runStructuredBridge(
             self::structuredOutput([
@@ -301,7 +301,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsNonArrayResult(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
 
         $this->runStructuredBridge(
             self::structuredOutput([
@@ -321,7 +321,7 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsInvalidTokenUsageTypes(): void
     {
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Drupal AI bridge returned an invalid structured response.');
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
 
         $this->runStructuredBridge(
             self::structuredOutput([
@@ -341,25 +341,111 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatReportsProcessFailureWithoutExposingOutput(): void
     {
         try {
-            $this->runStructuredBridge('', 'test prompt', ['type' => 'object'], 7, null, 'private stderr');
+            $this->runStructuredBridge(
+                '',
+                'trusted system prompt',
+                'untrusted user prompt',
+                ['type' => 'object'],
+                7,
+                null,
+                'private stderr'
+            );
             self::fail('Expected the bridge to report the process failure.');
         } catch (\RuntimeException $exception) {
             self::assertSame(
-                'Could not execute the structured Drupal AI request (exit code 7).',
+                'Drupal AI bridge returned an invalid response.',
                 $exception->getMessage()
             );
             self::assertStringNotContainsString('private stderr', $exception->getMessage());
         }
     }
 
+    public function testStructuredChatRejectsEmptyListResult(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsNonEmptyListResult(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [
+                    ['purpose' => 'example'],
+                ],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatReportsProviderFailureWithoutExposingDetails(): void
+    {
+        try {
+            $this->runStructuredBridge(
+                "SUPER_SECRET_PROVIDER_ERROR\n" . self::structuredOutput([
+                    'ok' => false,
+                    'error' => 'provider_failure',
+                ]),
+                'trusted system prompt',
+                'untrusted user prompt',
+                ['type' => 'object'],
+                0,
+                null,
+                'SUPER_SECRET_PROVIDER_ERROR'
+            );
+            self::fail('Expected the bridge to report the provider failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Drupal AI provider invocation failed.', $exception->getMessage());
+            self::assertStringNotContainsString('SUPER_SECRET_PROVIDER_ERROR', $exception->getMessage());
+        }
+    }
+
+    public function testStructuredChatReportsInvalidStructuredOutput(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => false,
+                'error' => 'invalid_structured_output',
+            ])
+        );
+    }
+
     public function testStructuredChatRejectsEmptyPromptBeforeStartingProcess(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('The Drupal AI prompt cannot be empty.');
+        $this->expectExceptionMessage('The Drupal AI system prompt cannot be empty.');
 
         (new DrupalAiBridge())->structuredChat(
             $this->invalidRuntime(),
             '',
+            'test user prompt',
             ['type' => 'object']
         );
     }
@@ -367,10 +453,11 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatRejectsWhitespacePromptBeforeStartingProcess(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage('The Drupal AI prompt cannot be empty.');
+        $this->expectExceptionMessage('The Drupal AI user prompt cannot be empty.');
 
         (new DrupalAiBridge())->structuredChat(
             $this->invalidRuntime(),
+            'test system prompt',
             " \t\n",
             ['type' => 'object']
         );
@@ -384,6 +471,7 @@ class DrupalAiBridgeTest extends TestCase
         (new DrupalAiBridge())->structuredChat(
             $this->invalidRuntime(),
             'test prompt',
+            'test user prompt',
             []
         );
     }
@@ -391,7 +479,8 @@ class DrupalAiBridgeTest extends TestCase
     public function testStructuredChatPassesSafePayloadAndExpectedScriptThroughStdin(): void
     {
         $capturedInput = $this->workDir . '/structured-stdin.txt';
-        $prompt = 'SECRET-TEST-PROMPT-\'"\\PHP';
+        $systemPrompt = 'SECRET-TEST-SYSTEM-PROMPT-\'"\\PHP';
+        $userPrompt = 'SECRET-TEST-USER-PROMPT-\'"\\PHP';
         $schema = [
             'type' => 'object',
             'properties' => [
@@ -411,7 +500,8 @@ class DrupalAiBridgeTest extends TestCase
                     'total' => null,
                 ],
             ]),
-            $prompt,
+            $systemPrompt,
+            $userPrompt,
             $schema,
             0,
             $capturedInput
@@ -425,7 +515,14 @@ class DrupalAiBridgeTest extends TestCase
         self::assertStringContainsString('->chat(', $script);
         self::assertStringContainsString('getTokenUsage', $script);
         self::assertStringNotContainsString('<?php', $script);
-        self::assertStringNotContainsString($prompt, $script);
+        self::assertStringNotContainsString($systemPrompt, $script);
+        self::assertStringNotContainsString($userPrompt, $script);
+        self::assertStringContainsString("'system'", $script);
+        self::assertStringContainsString("'user'", $script);
+        self::assertLessThan(
+            (int) strpos($script, "'user'"),
+            (int) strpos($script, "'system'")
+        );
 
         $matches = [];
         self::assertSame(
@@ -438,7 +535,8 @@ class DrupalAiBridgeTest extends TestCase
         self::assertIsString($decodedPayload);
         self::assertSame(
             [
-                'prompt' => $prompt,
+                'system_prompt' => $systemPrompt,
+                'user_prompt' => $userPrompt,
                 'schema' => $schema,
             ],
             json_decode($decodedPayload, true, 512, JSON_THROW_ON_ERROR)
@@ -463,7 +561,8 @@ class DrupalAiBridgeTest extends TestCase
      */
     private function runStructuredBridge(
         string $stdout,
-        string $prompt = 'test prompt',
+        string $systemPrompt = 'test system prompt',
+        string $userPrompt = 'test user prompt',
         array $jsonSchema = ['type' => 'object'],
         int $exitCode = 0,
         ?string $captureInput = null,
@@ -471,7 +570,8 @@ class DrupalAiBridgeTest extends TestCase
     ): array {
         return (new DrupalAiBridge())->structuredChat(
             $this->createFakeRuntime($stdout, $exitCode, $captureInput, $stderr),
-            $prompt,
+            $systemPrompt,
+            $userPrompt,
             $jsonSchema
         );
     }
