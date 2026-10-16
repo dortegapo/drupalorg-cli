@@ -246,6 +246,10 @@ class ModuleReviewPromptBuilderTest extends TestCase
         self::assertStringContainsString('Do not search Drupal.org.', $prompt);
         self::assertStringContainsString('Do not claim that a duplicate project exists.', $prompt);
         self::assertStringContainsString('Do not perform duplicate assessment.', $prompt);
+        self::assertStringContainsString('functional search queries', $prompt);
+        self::assertStringContainsString('2-4 natural English words', $prompt);
+        self::assertStringContainsString('keyboard navigation', $prompt);
+        self::assertStringContainsString('Do not derive these queries from the module machine name.', $prompt);
         self::assertStringContainsString('PRIMARY terms describe', $prompt);
         self::assertStringContainsString('SECONDARY terms describe', $prompt);
         self::assertStringContainsString('exactly one English lowercase word', $prompt);
@@ -254,7 +258,7 @@ class ModuleReviewPromptBuilderTest extends TestCase
             $prompt
         );
         self::assertStringContainsString(
-            'Do not use "client" as a primary or secondary search term.',
+            'Do not use "client" or "clients" as primary or secondary search terms because these words are highly ambiguous in software ecosystems',
             $prompt
         );
         self::assertStringContainsString('generic Drupal or framework words', $prompt);
@@ -328,6 +332,7 @@ class ModuleReviewPromptBuilderTest extends TestCase
                 'integrations',
                 'primary_search_terms',
                 'secondary_search_terms',
+                'functional_search_queries',
                 'reusability',
                 'contrib_readiness',
                 'analysis_limits',
@@ -342,6 +347,7 @@ class ModuleReviewPromptBuilderTest extends TestCase
                 'integrations',
                 'primary_search_terms',
                 'secondary_search_terms',
+                'functional_search_queries',
                 'reusability',
                 'contrib_readiness',
                 'analysis_limits',
@@ -365,6 +371,20 @@ class ModuleReviewPromptBuilderTest extends TestCase
         self::assertArrayNotHasKey('minItems', $primary);
         self::assertArrayNotHasKey('maxItems', $primary);
         self::assertArrayNotHasKey('pattern', $primary['items']['properties']['term']);
+    }
+
+    public function testBuildsStrictFunctionalSearchQuerySchema(): void
+    {
+        $schema = $this->build()['schema']['properties']['functional_search_queries'];
+
+        self::assertSame('array', $schema['type']);
+        self::assertSame('object', $schema['items']['type']);
+        self::assertFalse($schema['items']['additionalProperties']);
+        self::assertSame(['query', 'reason'], $schema['items']['required']);
+        self::assertSame(['query', 'reason'], array_keys($schema['items']['properties']));
+        self::assertArrayNotHasKey('minItems', $schema);
+        self::assertArrayNotHasKey('maxItems', $schema);
+        self::assertArrayNotHasKey('pattern', $schema['items']['properties']['query']);
     }
 
     public function testBuildsReusabilitySchema(): void

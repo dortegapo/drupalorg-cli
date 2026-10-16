@@ -9,8 +9,8 @@ use mglaman\DrupalOrg\Project\DrupalRuntimeResolver;
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
+use mglaman\DrupalOrg\Project\ModuleReviewPdfReportWriter;
 use mglaman\DrupalOrgCli\Command\Command;
-use mglaman\DrupalOrgCli\Command\Project\ModuleReviewProgressRenderer;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -46,7 +46,6 @@ class Publish extends Command
             return self::FAILURE;
         }
 
-        $resolvedPath = $module['resolvedPath'];
         $infoFile = $module['infoFile'];
 
         try {
@@ -78,15 +77,7 @@ class Publish extends Command
         if ((bool) $input->getOption('dry-run')) {
             $this->stdOut->writeln('Dry run: no changes will be made.');
             $this->stdOut->writeln('');
-            $this->stdOut->writeln(sprintf('Module path: %s', $resolvedPath));
-            $this->stdOut->writeln(sprintf('Machine name: %s', $module['moduleName']));
-            $this->stdOut->writeln(sprintf('Module info file: %s', $infoFile));
-            $this->stdOut->writeln(sprintf('Module name: %s', $moduleInfo['name']));
-            $this->stdOut->writeln(sprintf('Module type: %s', $moduleInfo['type']));
-            $this->stdOut->writeln(sprintf(
-                'Core version requirement: %s',
-                $moduleInfo['coreVersionRequirement']
-            ));
+            $this->writeModuleContext($module, $moduleInfo);
             $this->stdOut->writeln(sprintf(
                 'Drupal.org project exists: %s',
                 $project === null ? 'no' : 'yes'
@@ -97,6 +88,7 @@ class Publish extends Command
             $plannedActions = $project === null
                 ? [
                     'Authenticate with Drupal.org automatically if required.',
+                    'Offer an optional AI-assisted contribution review and local PDF report.',
                     sprintf('Create Drupal.org project "%s".', $module['moduleName']),
                     'Wait for repository provisioning.',
                     'Prepare an isolated temporary workspace.',
@@ -127,25 +119,22 @@ class Publish extends Command
             return self::SUCCESS;
         }
 
-        if ($project === null && $input->isInteractive()) {
-            if (!$this->offerModuleReview($input, $output, $module)) {
-                return self::SUCCESS;
-            }
-        }
-
-        $this->stdOut->writeln(sprintf('Module path: %s', $resolvedPath));
-        $this->stdOut->writeln(sprintf('Module info file: %s', $infoFile));
-        $this->stdOut->writeln(sprintf('Module name: %s', $moduleInfo['name']));
-        $this->stdOut->writeln(sprintf('Module type: %s', $moduleInfo['type']));
-        $this->stdOut->writeln(sprintf(
-            'Core version requirement: %s',
-            $moduleInfo['coreVersionRequirement']
-        ));
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Module');
+        $this->stdOut->writeln('');
+        $this->writeModuleContext($module, $moduleInfo);
+        $this->stdOut->writeln('');
         $this->stdOut->writeln(sprintf(
             'Drupal.org project %s: %s',
             $project === null ? 'does not exist' : 'exists',
             $module['moduleName']
         ));
+
+        if ($project === null && $input->isInteractive()) {
+            if (!$this->offerModuleReview($input, $output, $module, $moduleInfo)) {
+                return self::SUCCESS;
+            }
+        }
 
         return self::SUCCESS;
     }
@@ -156,11 +145,18 @@ class Publish extends Command
      * @param array{
      *     resolvedPath: string,
      *     moduleName: string,
-     *     projectRoot: ?string
+     *     infoFile: string,
+     *     projectRoot: ?string,
+     *     webRoot: ?string
      * } $module
+     * @param array{name: string, type: string, coreVersionRequirement: string} $moduleInfo
      */
-    protected function offerModuleReview(InputInterface $input, OutputInterface $output, array $module): bool
-    {
+    protected function offerModuleReview(
+        InputInterface $input,
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+    ): bool {
         $runtime = $this->resolveDrupalRuntime($module['projectRoot']);
         if ($runtime === null) {
             $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
@@ -179,17 +175,9 @@ class Publish extends Command
             return true;
         }
 
-        $this->stdOut->writeln('Drupal AI is available.');
-        $this->stdOut->writeln(sprintf('Provider: %s', $aiContext['providerId']));
-        $this->stdOut->writeln(sprintf('Model: %s', $aiContext['modelId']));
-        $this->stdOut->writeln('');
-        $this->stdOut->writeln('Source code from the selected module will be sent to the configured Drupal AI provider.');
-        $this->stdOut->writeln(
-            'The CLI performs best-effort local redaction of common sensitive values before the request.'
-        );
-        $this->stdOut->writeln('This may consume tokens from the configured provider.');
+        $this->writeModuleReviewConsent($aiContext);
 
-        if (!$this->askConfirmation($input, $output, 'Run AI module review? [y/N] ', false)) {
+        if (!$this->askConfirmation($input, $output, 'Run AI-assisted contribution review? [y/N] ', false)) {
             return true;
         }
 
@@ -198,11 +186,27 @@ class Publish extends Command
             $renderer->handle($event, $context);
         };
         try {
-            $result = $this->analyzeModule($module['resolvedPath'], $module['moduleName'], $runtime, $progress);
+            $result = $this->analyzeModule(
+                $module['resolvedPath'],
+                $module['moduleName'],
+                $runtime,
+                $progress,
+                $moduleInfo['name'],
+            );
         } finally {
             $renderer->finishOnFailure();
         }
-        $this->writeModuleReviewSummary($result);
+
+        $pdfPath = null;
+        $this->stdOut->writeln('Generating PDF report...');
+        try {
+            $pdfPath = $this->writeModuleReviewPdf($result, $module, $moduleInfo);
+            $this->stdOut->writeln('PDF report generated.');
+        } catch (\Throwable) {
+            $this->stdOut->writeln('<comment>Could not generate the PDF review report.</comment>');
+            $this->stdOut->writeln('The AI review results are still available in the terminal summary.');
+        }
+        $this->writeModuleReviewSummary($result, $pdfPath);
 
         if (!$this->askConfirmation($input, $output, 'Continue with project publishing? [y/N] ', false)) {
             $this->stdOut->writeln('Project publishing cancelled.');
@@ -256,10 +260,39 @@ class Publish extends Command
         string $machineName,
         array $runtime,
         ?callable $progress = null,
+        ?string $humanName = null,
     ): array {
         return (new ModuleReviewAnalyzerFactory($this->client))
             ->create()
-            ->analyze($modulePath, $machineName, $runtime, $progress);
+            ->analyze($modulePath, $machineName, $runtime, $progress, $humanName);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @param array{
+     *     resolvedPath: string,
+     *     moduleName: string,
+     *     infoFile: string,
+     *     projectRoot: ?string,
+     *     webRoot: ?string
+     * } $module
+     * @param array{
+     *     name: string,
+     *     type: string,
+     *     coreVersionRequirement: string
+     * } $moduleInfo
+     */
+    protected function writeModuleReviewPdf(array $result, array $module, array $moduleInfo): string
+    {
+        $targetPath = $this->moduleReviewPdfPath($module);
+        (new ModuleReviewPdfReportWriter())->write($targetPath, $result, [
+            'machineName' => $module['moduleName'],
+            'name' => $moduleInfo['name'],
+            'type' => $moduleInfo['type'],
+            'coreVersionRequirement' => $moduleInfo['coreVersionRequirement'],
+        ]);
+
+        return $targetPath;
     }
 
     protected function askConfirmation(
@@ -279,10 +312,10 @@ class Publish extends Command
     /**
      * @param array<string, mixed> $result
      */
-    private function writeModuleReviewSummary(array $result): void
+    private function writeModuleReviewSummary(array $result, ?string $pdfPath = null): void
     {
         $this->stdOut->writeln('');
-        $this->stdOut->writeln('AI module review');
+        $this->stdOut->writeln('AI-assisted contribution review');
 
         if (($result['complete'] ?? false) !== true) {
             $limitation = $result['limitations'][0] ?? [];
@@ -296,6 +329,7 @@ class Publish extends Command
             $this->stdOut->writeln(sprintf('Stage: %s', $stage));
             $this->stdOut->writeln($message);
             $this->stdOut->writeln('The publication flow can continue without the AI review.');
+            $this->writePdfPath($pdfPath);
             return;
         }
 
@@ -341,6 +375,105 @@ class Publish extends Command
         }
 
         $this->writePotentialOverlaps($comparison);
+        $this->writePdfPath($pdfPath);
+    }
+
+    /**
+     * @param array{
+     *     resolvedPath: string,
+     *     moduleName: string,
+     *     infoFile: string,
+     *     projectRoot: ?string,
+     *     webRoot: ?string
+     * } $module
+     * @param array{name: string, type: string, coreVersionRequirement: string} $moduleInfo
+     */
+    private function writeModuleContext(array $module, array $moduleInfo): void
+    {
+        $this->stdOut->writeln(sprintf('Module path: %s', $module['resolvedPath']));
+        $this->stdOut->writeln(sprintf('Machine name: %s', $module['moduleName']));
+        $this->stdOut->writeln(sprintf('Module info file: %s', $module['infoFile']));
+        $this->stdOut->writeln(sprintf('Module name: %s', $moduleInfo['name']));
+        $this->stdOut->writeln(sprintf('Module type: %s', $moduleInfo['type']));
+        $this->stdOut->writeln(sprintf(
+            'Core version requirement: %s',
+            $moduleInfo['coreVersionRequirement']
+        ));
+    }
+
+    /**
+     * @param array{aiEnabled: bool, providerId: ?string, modelId: ?string} $aiContext
+     */
+    private function writeModuleReviewConsent(array $aiContext): void
+    {
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Optional AI-assisted contribution review');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Before publishing, drupalorg-cli can analyze this module to:');
+        $this->stdOut->writeln('  - understand its purpose and reusable capabilities;');
+        $this->stdOut->writeln('  - assess whether it is reusable enough for Drupal.org contribution;');
+        $this->stdOut->writeln('  - identify changes that may be needed before contributing it;');
+        $this->stdOut->writeln('  - search Drupal.org for existing projects with similar functionality;');
+        $this->stdOut->writeln('  - compare those projects with this module for possible functional overlap;');
+        $this->stdOut->writeln('  - generate a PDF report with the findings.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('The review normally uses two AI requests:');
+        $this->stdOut->writeln('  1. Module analysis.');
+        $this->stdOut->writeln('  2. Semantic comparison against Drupal.org candidates.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Drupal.org project searches are performed directly against Drupal.org.');
+        $this->stdOut->writeln('The AI does not browse Drupal.org or invent the candidate project list.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Only the selected module is analyzed.');
+        $this->stdOut->writeln('Its source code will be sent to the configured Drupal AI provider:');
+        $this->stdOut->writeln(sprintf('  Provider: %s', $aiContext['providerId']));
+        $this->stdOut->writeln(sprintf('  Model: %s', $aiContext['modelId']));
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('The CLI excludes known sensitive files and performs best-effort local redaction');
+        $this->stdOut->writeln('of common secrets before sending source code. Files from other modules, vendor,');
+        $this->stdOut->writeln('or unrelated project directories are not intentionally included.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('The PDF is generated locally from the structured review results.');
+        $this->stdOut->writeln('Generating the PDF itself does not make an additional AI request.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('The analysis may consume tokens from your configured AI provider.');
+        $this->stdOut->writeln('The review is advisory only. Its result will not prevent you from continuing with project publishing.');
+    }
+
+    private function writePdfPath(?string $pdfPath): void
+    {
+        if ($pdfPath !== null) {
+            $this->stdOut->writeln('');
+            $this->stdOut->writeln(sprintf('Full report: %s', $pdfPath));
+        }
+    }
+
+    /**
+     * @param array{
+     *     resolvedPath: string,
+     *     moduleName: string,
+     *     infoFile: string,
+     *     projectRoot: ?string,
+     *     webRoot: ?string
+     * } $module
+     */
+    private function moduleReviewPdfPath(array $module): string
+    {
+        $directory = $module['projectRoot'];
+        if ($directory === null || !is_dir($directory)) {
+            $directory = getcwd();
+        }
+        if ($directory === false || $directory === '') {
+            $directory = dirname($module['resolvedPath']);
+        }
+
+        $directory = rtrim($directory, '/\\');
+        if ($directory === '') {
+            $directory = DIRECTORY_SEPARATOR;
+        }
+
+        return $directory . DIRECTORY_SEPARATOR . $module['moduleName']
+            . '-drupalorg-contribution-review.pdf';
     }
 
     /**

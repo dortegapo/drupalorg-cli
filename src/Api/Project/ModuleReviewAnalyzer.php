@@ -26,6 +26,8 @@ final class ModuleReviewAnalyzer
         'comparison_ai' => 'The module review comparison could not be completed by Drupal AI.',
         'comparison_validation' => 'The Drupal AI module comparison result was invalid.',
         'assessment' => 'The module contribution assessment could not be completed.',
+        'core_version' => 'The Drupal runtime core version could not be determined.',
+        'compatibility' => 'Drupal.org core compatibility could not be verified for one or more candidates.',
     ];
 
     public function __construct(
@@ -39,6 +41,8 @@ final class ModuleReviewAnalyzer
         private readonly ModuleReviewComparisonPromptBuilder $comparisonPromptBuilder,
         private readonly ModuleReviewComparisonResultValidator $comparisonValidator,
         private readonly ModuleContributionAssessmentResolver $assessmentResolver,
+        private readonly ?DrupalCoreVersionInspector $coreVersionInspector = null,
+        private readonly ?DrupalOrgProjectCompatibilityResolver $compatibilityResolver = null,
     ) {
     }
 
@@ -61,6 +65,7 @@ final class ModuleReviewAnalyzer
         string $machineName,
         array $runtime,
         ?callable $progress = null,
+        ?string $humanName = null,
     ): array {
         $module = [
             'machineName' => $machineName,
@@ -131,7 +136,7 @@ final class ModuleReviewAnalyzer
 
         $ai['review'] = $this->aiMetadata($reviewAi);
         try {
-            $review = $this->reviewValidator->validate($reviewAi['result'], $sanitized['files']);
+            $review = $this->reviewValidator->validate($reviewAi['result'], $sanitized['files'], $machineName);
         } catch (\RuntimeException) {
             return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_validation');
         }
@@ -139,13 +144,7 @@ final class ModuleReviewAnalyzer
         $searches = [];
         $primaryRankings = [];
         $secondaryRankings = [];
-        $searchPlan = [];
-        foreach ($this->searchTerms($review, 'primary_search_terms') as $term) {
-            $searchPlan[] = ['type' => 'primary', 'term' => $term];
-        }
-        foreach ($this->searchTerms($review, 'secondary_search_terms') as $term) {
-            $searchPlan[] = ['type' => 'secondary', 'term' => $term];
-        }
+        $searchPlan = $this->buildSearchPlan($review, $humanName);
 
         $searchTotal = count($searchPlan);
         $this->emitProgress($progress, 'project_search_started', ['total' => $searchTotal]);
@@ -184,7 +183,7 @@ final class ModuleReviewAnalyzer
                 'term' => $term,
                 'projects' => $projects,
             ];
-            if ($type === 'primary') {
+            if (in_array($type, ['name', 'core', 'functional'], true)) {
                 $primaryRankings[] = $ranking;
             } else {
                 $secondaryRankings[] = $ranking;
@@ -301,6 +300,52 @@ final class ModuleReviewAnalyzer
             'status' => $assessment['status'],
         ]);
 
+        $core = [
+            'runtimeVersion' => null,
+            'targetMajor' => null,
+        ];
+        $compatibility = [];
+        $compatibilityLimitations = [];
+        if ($this->coreVersionInspector !== null) {
+            try {
+                $inspectedCore = $this->coreVersionInspector->inspect($runtime);
+                if ($inspectedCore !== null) {
+                    $core = [
+                        'runtimeVersion' => $inspectedCore['version'],
+                        'targetMajor' => $inspectedCore['major'],
+                    ];
+                } else {
+                    $compatibilityLimitations[] = [
+                        'stage' => 'core_version',
+                        'message' => self::LIMITATION_MESSAGES['core_version'],
+                    ];
+                }
+            } catch (\Throwable) {
+                $compatibilityLimitations[] = [
+                    'stage' => 'core_version',
+                    'message' => self::LIMITATION_MESSAGES['core_version'],
+                ];
+            }
+        }
+
+        if ($this->compatibilityResolver !== null) {
+            foreach ($comparison['candidates'] as $comparisonCandidate) {
+                $candidateMachineName = $comparisonCandidate['machine_name'];
+                try {
+                    $compatibility[$candidateMachineName] = $this->compatibilityResolver->resolve(
+                        $candidateMachineName,
+                        $core,
+                    );
+                } catch (\Throwable) {
+                    $compatibility[$candidateMachineName] = $this->compatibilityResolver->unknown($core);
+                    $compatibilityLimitations[] = [
+                        'stage' => 'compatibility',
+                        'message' => self::LIMITATION_MESSAGES['compatibility'],
+                    ];
+                }
+            }
+        }
+
         $result = [
             'complete' => true,
             'module' => $module,
@@ -310,8 +355,10 @@ final class ModuleReviewAnalyzer
             'candidates' => $candidates,
             'comparison' => $comparison,
             'assessment' => $assessment,
+            'core' => $core,
+            'candidateCompatibility' => $compatibility,
             'ai' => $ai,
-            'limitations' => [],
+            'limitations' => $compatibilityLimitations,
         ];
         $this->emitProgress($progress, 'analysis_completed', [
             'complete' => true,
@@ -381,16 +428,60 @@ final class ModuleReviewAnalyzer
     /**
      * @param array<string, mixed> $review
      *
-     * @return list<string>
+     * @return list<array{type: 'name'|'core'|'functional'|'domain', term: string}>
      */
-    private function searchTerms(array $review, string $key): array
+    private function buildSearchPlan(array $review, ?string $humanName): array
     {
-        $terms = [];
-        foreach ($review[$key] as $term) {
-            $terms[] = $term['term'];
+        $plan = [];
+        $seen = [];
+        if (is_string($humanName) && trim($humanName) !== '') {
+            $this->addSearchPlanItem($plan, $seen, 'name', $humanName);
+        }
+        foreach ($review['primary_search_terms'] as $term) {
+            $this->addSearchPlanItem($plan, $seen, 'core', $term['term']);
+        }
+        foreach ($review['functional_search_queries'] as $query) {
+            $this->addSearchPlanItem($plan, $seen, 'functional', $query['query']);
+        }
+        foreach ($review['secondary_search_terms'] as $term) {
+            $this->addSearchPlanItem($plan, $seen, 'domain', $term['term']);
         }
 
-        return $terms;
+        return $plan;
+    }
+
+    /**
+     * @param list<array{type: 'name'|'core'|'functional'|'domain', term: string}> $plan
+     * @param array<string, int> $seen
+     * @param 'name'|'core'|'functional'|'domain' $type
+     */
+    private function addSearchPlanItem(array &$plan, array &$seen, string $type, string $term): void
+    {
+        $term = preg_replace('/\s+/u', ' ', trim($term)) ?? trim($term);
+        if ($term === '') {
+            return;
+        }
+
+        $key = strtolower($term);
+        $priority = [
+            'domain' => 0,
+            'core' => 1,
+            'functional' => 2,
+            'name' => 3,
+        ];
+        if (isset($seen[$key])) {
+            $index = $seen[$key];
+            if ($priority[$type] > $priority[$plan[$index]['type']]) {
+                $plan[$index]['type'] = $type;
+            }
+            return;
+        }
+
+        $seen[$key] = count($plan);
+        $plan[] = [
+            'type' => $type,
+            'term' => $term,
+        ];
     }
 
     /**
