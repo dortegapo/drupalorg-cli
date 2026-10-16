@@ -29,6 +29,95 @@ class ModuleReviewPromptBuilderTest extends TestCase
         self::assertStringContainsString('3|final class Example {}', $result['prompt']);
     }
 
+    public function testAcceptsSourceAtExactBudgetAndPreservesSentinel(): void
+    {
+        $sentinel = 'END_OF_MODULE_SOURCE';
+        $content = str_repeat('a', 65536 - strlen($sentinel)) . $sentinel;
+
+        self::assertSame(65536, strlen($content));
+
+        $result = (new ModuleReviewPromptBuilder())->build('example_module', self::collection([
+            [
+                'path' => 'large.php',
+                'bytes' => 1,
+                'content' => $content,
+            ],
+        ]));
+
+        self::assertIsString($result['prompt']);
+        self::assertIsArray($result['schema']);
+        self::assertStringContainsString($sentinel, $result['prompt']);
+    }
+
+    public function testRejectsSourceOneByteOverBudget(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Module review source exceeds the AI context budget.');
+
+        (new ModuleReviewPromptBuilder())->build('example_module', self::collection([
+            [
+                'path' => 'large.php',
+                'bytes' => 65537,
+                'content' => str_repeat('a', 65537),
+            ],
+        ]));
+    }
+
+    public function testRejectsSourceBudgetAccumulatedAcrossFiles(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Module review source exceeds the AI context budget.');
+
+        (new ModuleReviewPromptBuilder())->build('example_module', self::collection([
+            [
+                'path' => 'first.php',
+                'bytes' => 40000,
+                'content' => str_repeat('a', 40000),
+            ],
+            [
+                'path' => 'second.php',
+                'bytes' => 30000,
+                'content' => str_repeat('b', 30000),
+            ],
+        ]));
+    }
+
+    public function testUsesContentLengthInsteadOfBytesMetadataWhenRejecting(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Module review source exceeds the AI context budget.');
+
+        (new ModuleReviewPromptBuilder())->build('example_module', [
+            'files' => [
+                [
+                    'path' => 'large.php',
+                    'bytes' => 1,
+                    'content' => str_repeat('a', 65537),
+                ],
+            ],
+            'skipped' => [],
+            'totalBytes' => 1,
+        ]);
+    }
+
+    public function testUsesCurrentContentLengthInsteadOfHistoricalBytesMetadata(): void
+    {
+        $content = 'small sanitized content';
+        $result = (new ModuleReviewPromptBuilder())->build('example_module', [
+            'files' => [
+                [
+                    'path' => 'sanitized.php',
+                    'bytes' => 200000,
+                    'content' => $content,
+                ],
+            ],
+            'skipped' => [],
+            'totalBytes' => 200000,
+        ]);
+
+        self::assertStringContainsString($content, $result['prompt']);
+    }
+
     public function testPreservesFileOrderAndNumbersLines(): void
     {
         $result = (new ModuleReviewPromptBuilder())->build('example_module', self::collection([
