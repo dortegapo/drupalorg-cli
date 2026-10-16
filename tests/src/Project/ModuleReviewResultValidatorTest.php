@@ -30,6 +30,7 @@ class ModuleReviewResultValidatorTest extends TestCase
         self::assertSame(['Registers profiles.'], $validated['capabilities']);
         self::assertSame('profile', $validated['primary_search_terms'][0]['term']);
         self::assertSame('Reusable profile capability.', $validated['primary_search_terms'][0]['reason']);
+        self::assertSame('profile management', $validated['functional_search_queries'][0]['query']);
         self::assertSame('src/Profile.php', $validated['reusability']['findings'][0]['file']);
         self::assertSame('A profile is registered.', $validated['reusability']['findings'][0]['evidence']);
         self::assertSame('The evidence is relevant.', $validated['reusability']['findings'][0]['reason']);
@@ -47,7 +48,7 @@ class ModuleReviewResultValidatorTest extends TestCase
             array_column($validated['primary_search_terms'], 'term'),
         );
         self::assertSame(
-            ['nutrition', 'fitness', 'allergy', 'medication'],
+            ['nutrition', 'fitness', 'allergy'],
             array_column($validated['secondary_search_terms'], 'term'),
         );
     }
@@ -60,6 +61,41 @@ class ModuleReviewResultValidatorTest extends TestCase
 
         $this->expectInvalidResult();
         $this->validator()->validate($result, self::files());
+    }
+
+    #[DataProvider('invalidFunctionalQueryProvider')]
+    public function testRejectsInvalidFunctionalSearchQueries(string $query): void
+    {
+        $result = self::validResult();
+        $result['functional_search_queries'][0]['query'] = $query;
+
+        $this->expectInvalidResult();
+        $this->validator()->validate($result, self::files(), 'original_module');
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidFunctionalQueryProvider(): iterable
+    {
+        yield 'single word' => ['profiles'];
+        yield 'too many words' => ['one two three four five'];
+        yield 'uppercase' => ['Profile management'];
+        yield 'url' => ['https://example.com'];
+        yield 'quoted syntax' => ['"profile management"'];
+        yield 'boolean operator' => ['profile or management'];
+        yield 'wildcard' => ['profile * management'];
+        yield 'machine name' => ['original module'];
+    }
+
+    public function testNormalizesFunctionalSearchQueryWhitespace(): void
+    {
+        $result = self::validResult();
+        $result['functional_search_queries'][0]['query'] = " profile\t management ";
+
+        $validated = $this->validator()->validate($result, self::files());
+
+        self::assertSame('profile management', $validated['functional_search_queries'][0]['query']);
     }
 
     /**
@@ -76,6 +112,8 @@ class ModuleReviewResultValidatorTest extends TestCase
         yield 'phrase secondary' => ['secondary_search_terms', 'customer profile'];
         yield 'client primary' => ['primary_search_terms', 'client'];
         yield 'client secondary' => ['secondary_search_terms', 'client'];
+        yield 'clients primary' => ['primary_search_terms', 'clients'];
+        yield 'clients secondary' => ['secondary_search_terms', 'clients'];
     }
 
     public function testTrimsTermAndReasonBeforeValidation(): void
@@ -149,7 +187,7 @@ class ModuleReviewResultValidatorTest extends TestCase
         $this->validator()->validate($result, self::files());
     }
 
-    public function testRejectsMoreThanFiveSecondaryTerms(): void
+    public function testRejectsMoreThanThreeSecondaryTerms(): void
     {
         $result = self::validResult();
         $result['secondary_search_terms'] = self::terms(['one', 'two', 'three', 'four', 'five', 'six']);
@@ -356,7 +394,13 @@ class ModuleReviewResultValidatorTest extends TestCase
             'drupal_concepts' => ['content entities'],
             'integrations' => [],
             'primary_search_terms' => self::terms(['profile', 'intake', 'registry']),
-            'secondary_search_terms' => self::terms(['nutrition', 'fitness', 'allergy', 'medication']),
+            'secondary_search_terms' => self::terms(['nutrition', 'fitness', 'allergy']),
+            'functional_search_queries' => [
+                [
+                    'query' => 'profile management',
+                    'reason' => 'Describes the reusable interaction.',
+                ],
+            ],
             'reusability' => [
                 'status' => 'reusable',
                 'confidence' => 0.77,

@@ -12,7 +12,9 @@ use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\DrupalAiBridge;
+use mglaman\DrupalOrg\Project\DrupalCoreVersionInspector;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectSearch;
+use mglaman\DrupalOrg\Project\DrupalOrgProjectCompatibilityResolver;
 use mglaman\DrupalOrg\Project\ModuleContributionAssessmentResolver;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzer;
 use mglaman\DrupalOrg\Project\ModuleReviewCandidateRanker;
@@ -77,6 +79,7 @@ class ModuleReviewAnalyzerTest extends TestCase
                 self::searchResponse([
                     self::project('directory_project', 'Directory project', 'Directory management.'),
                 ]),
+                self::searchResponse([]),
             ],
             [
                 self::aiSuccess(self::reviewResult()),
@@ -120,13 +123,13 @@ class ModuleReviewAnalyzerTest extends TestCase
         );
         self::assertSame('Manages reusable profiles.', $result['review']['purpose']);
         self::assertSame(
-            ['profile', 'records', 'directory'],
+            ['profile', 'records', 'profile management', 'directory'],
             array_column($result['searches'], 'term'),
         );
-        self::assertCount(3, $this->history);
+        self::assertCount(4, $this->history);
         foreach ($this->history as $index => $entry) {
             parse_str($entry['request']->getUri()->getQuery(), $query);
-            self::assertSame(['profile', 'records', 'directory'][$index], $query['filter']['fulltext']);
+            self::assertSame(['profile', 'records', 'profile management', 'directory'][$index], $query['filter']['fulltext']);
             self::assertSame('10', $query['page']['limit']);
             self::assertSame('0', $query['page']['offset']);
         }
@@ -153,6 +156,7 @@ class ModuleReviewAnalyzerTest extends TestCase
                 'project_search_progress',
                 'project_search_progress',
                 'project_search_progress',
+                'project_search_progress',
                 'project_search_completed',
                 'candidate_ranking_completed',
                 'comparison_ai_started',
@@ -169,9 +173,9 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertSame(
             [
                 'current' => 1,
-                'total' => 3,
+                'total' => 4,
                 'term' => 'profile',
-                'type' => 'primary',
+                'type' => 'core',
             ],
             $searchProgressEvents[0][1],
         );
@@ -200,6 +204,8 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertStringNotContainsString('score', $comparisonPayload['user_prompt']);
         self::assertStringNotContainsString('primaryMatches', $comparisonPayload['user_prompt']);
         self::assertStringNotContainsString('secondaryMatches', $comparisonPayload['user_prompt']);
+        self::assertStringNotContainsString('functional_search_queries', $comparisonPayload['user_prompt']);
+        self::assertStringNotContainsString('profile management', $comparisonPayload['user_prompt']);
     }
 
     public function testReturnsReviewAiFailureWithoutSearching(): void
@@ -214,6 +220,193 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertSame([], $this->history);
         self::assertNull($result['comparison']);
         self::assertNull($result['assessment']);
+    }
+
+    public function testUsesHumanNameAndFunctionalQueriesAsDiscoverySignals(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['primary_search_terms'] = [
+            ['term' => 'navigation', 'reason' => 'Navigation capability.'],
+            ['term' => 'shortcuts', 'reason' => 'Keyboard shortcut capability.'],
+        ];
+        $review['functional_search_queries'] = [
+            ['query' => 'keyboard navigation', 'reason' => 'Keyboard navigation interaction.'],
+            ['query' => 'command palette', 'reason' => 'Command palette interaction.'],
+        ];
+        $review['secondary_search_terms'] = [
+            ['term' => 'toolbar', 'reason' => 'Toolbar integration.'],
+        ];
+        $analyzer = $this->analyzer([
+            self::searchResponse([self::project('original_palette', 'Original Palette', 'Palette navigation.')]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([self::project('original_palette', 'Original Palette', 'Palette navigation.')]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+        ], [
+            self::aiSuccess($review),
+            self::aiSuccess(self::comparisonResult([
+                self::comparisonCandidate('original_palette', 'likely_duplicate', ['keyboard navigation']),
+            ], 'likely_duplicate')),
+        ]);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'renamed_palette_module',
+            $this->runtime,
+            null,
+            'Original Palette',
+        );
+
+        self::assertTrue($result['complete']);
+        self::assertSame(
+            ['Original Palette', 'navigation', 'shortcuts', 'keyboard navigation', 'command palette', 'toolbar'],
+            array_column($result['searches'], 'term'),
+        );
+        self::assertSame(
+            ['name', 'core', 'core', 'functional', 'functional', 'domain'],
+            array_column($result['searches'], 'type'),
+        );
+        self::assertSame('original_palette', $result['candidates'][0]['machineName']);
+    }
+
+    public function testAddsCoreCompatibilityAfterSemanticComparisonWithoutChangingItsVerdict(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $analyzer = $this->analyzer([
+            self::searchResponse([self::project('profile_project', 'Profile project', 'Profile management.')]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::compatibilityResponse([
+                [
+                    'version' => '1.0.0',
+                    'require' => ['drupal/core' => '^10'],
+                ],
+            ]),
+        ], [
+            self::aiSuccess(self::reviewResult()),
+            self::aiSuccess(self::comparisonResult([
+                self::comparisonCandidate('profile_project', 'likely_duplicate', ['profiles']),
+            ], 'likely_duplicate')),
+        ], null, true);
+
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+
+        self::assertTrue($result['complete']);
+        self::assertSame('11.4.8', $result['core']['runtimeVersion']);
+        self::assertSame(11, $result['core']['targetMajor']);
+        self::assertSame('outdated', $result['candidateCompatibility']['profile_project']['status']);
+        self::assertSame('likely_duplicate', $result['comparison']['verdict']);
+        self::assertSame('not_candidate_yet', $result['assessment']['status']);
+        self::assertCount(5, $this->history);
+    }
+
+    public function testFunctionalSearchRecoversCandidateWhenHumanNameDoesNot(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['primary_search_terms'] = [
+            ['term' => 'navigation', 'reason' => 'Navigation capability.'],
+            ['term' => 'shortcuts', 'reason' => 'Keyboard shortcut capability.'],
+        ];
+        $review['functional_search_queries'] = [
+            ['query' => 'keyboard navigation', 'reason' => 'Keyboard navigation interaction.'],
+        ];
+        $review['secondary_search_terms'] = [
+            ['term' => 'toolbar', 'reason' => 'Toolbar integration.'],
+        ];
+        $analyzer = $this->analyzer([
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([self::project('original_palette', 'Original Palette', 'Palette navigation.')]),
+            self::searchResponse([]),
+        ], [
+            self::aiSuccess($review),
+            self::aiSuccess(self::comparisonResult([
+                self::comparisonCandidate('original_palette', 'likely_duplicate', ['keyboard navigation']),
+            ], 'likely_duplicate')),
+        ]);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'renamed_palette_module',
+            $this->runtime,
+            null,
+            'Admin Quickjump POC',
+        );
+
+        self::assertTrue($result['complete']);
+        self::assertSame('original_palette', $result['candidates'][0]['machineName']);
+    }
+
+    public function testDeduplicatesHumanNameAndCoreTermCaseInsensitively(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['primary_search_terms'][0]['term'] = 'reservations';
+        $review['functional_search_queries'] = [
+            ['query' => 'reservation management', 'reason' => 'Reservation interaction.'],
+        ];
+        $review['secondary_search_terms'] = [];
+        $analyzer = $this->analyzer([
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+        ], [
+            self::aiSuccess($review),
+            self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
+        ]);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'reservations_module',
+            $this->runtime,
+            null,
+            'Reservations',
+        );
+
+        self::assertTrue($result['complete']);
+        self::assertSame(['Reservations', 'records', 'reservation management'], array_column($result['searches'], 'term'));
+        self::assertCount(3, $this->history);
+    }
+
+    public function testCapsTheSearchPlanAtTheTenTheoreticalSearches(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['primary_search_terms'] = self::terms(['alpha', 'bravo', 'charlie', 'delta']);
+        $review['functional_search_queries'] = [
+            ['query' => 'alpha capability', 'reason' => 'First functional query.'],
+            ['query' => 'bravo workflow', 'reason' => 'Second functional query.'],
+        ];
+        $review['secondary_search_terms'] = self::terms(['fitness', 'nutrition', 'wellness']);
+        $responses = array_map(
+            static fn (): Response => self::searchResponse([]),
+            range(1, 10),
+        );
+        $analyzer = $this->analyzer($responses, [
+            self::aiSuccess($review),
+            self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
+        ]);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            null,
+            'Example Module',
+        );
+
+        self::assertTrue($result['complete']);
+        self::assertCount(10, $result['searches']);
+        foreach ($this->history as $entry) {
+            parse_str($entry['request']->getUri()->getQuery(), $query);
+            self::assertSame('10', $query['page']['limit']);
+            self::assertSame('0', $query['page']['offset']);
+        }
     }
 
     public function testReturnsReviewPromptFailureWhenSourceExceedsTheBuilderBudget(): void
@@ -252,7 +445,7 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer(
-            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
+            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
             [
                 self::aiSuccess(self::reviewResult()),
                 self::aiFailure('provider_failure'),
@@ -282,7 +475,7 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer(
-            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
+            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
             [
                 self::aiSuccess(self::reviewResult()),
                 self::aiSuccess(self::comparisonResult([], 'likely_duplicate')),
@@ -300,7 +493,7 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer(
-            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
+            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
             [
                 self::aiSuccess(self::reviewResult()),
                 self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
@@ -349,14 +542,19 @@ class ModuleReviewAnalyzerTest extends TestCase
      * @param list<Response|\Throwable> $searchResponses
      * @param list<string> $aiOutputs
      */
-    private function analyzer(array $searchResponses, array $aiOutputs, ?string $captureDir = null): ModuleReviewAnalyzer
-    {
+    private function analyzer(
+        array $searchResponses,
+        array $aiOutputs,
+        ?string $captureDir = null,
+        bool $withCompatibility = false,
+    ): ModuleReviewAnalyzer {
         $this->history = [];
         $responses = new MockHandler($searchResponses);
         $stack = HandlerStack::create($responses);
         $stack->push(Middleware::history($this->history));
 
         $this->runtime = $this->createRuntime($aiOutputs, $captureDir);
+        $client = new Client(false, $stack);
 
         return new ModuleReviewAnalyzer(
             new ModuleReviewCollector(),
@@ -364,11 +562,13 @@ class ModuleReviewAnalyzerTest extends TestCase
             new ModuleReviewPromptBuilder(),
             new ModuleReviewResultValidator(),
             new DrupalAiBridge(),
-            new DrupalOrgProjectSearch(new Client(false, $stack)),
+            new DrupalOrgProjectSearch($client),
             new ModuleReviewCandidateRanker(),
             new ModuleReviewComparisonPromptBuilder(),
             new ModuleReviewComparisonResultValidator(),
             new ModuleContributionAssessmentResolver(),
+            $withCompatibility ? new DrupalCoreVersionInspector() : null,
+            $withCompatibility ? new DrupalOrgProjectCompatibilityResolver($client) : null,
         );
     }
 
@@ -399,6 +599,10 @@ class ModuleReviewAnalyzerTest extends TestCase
 $countFile = $argv[1];
 $captureDir = $argv[2];
 $responseFiles = array_slice($argv, 3);
+if (in_array('php:eval', $argv, true)) {
+    fwrite(STDOUT, "11.4.8\n");
+    exit(0);
+}
 $index = is_file($countFile) ? (int) file_get_contents($countFile) : 0;
 file_put_contents($countFile, (string) ($index + 1));
 $input = stream_get_contents(STDIN);
@@ -465,6 +669,9 @@ PHP
             'secondary_search_terms' => [
                 ['term' => 'directory', 'reason' => 'Directory specialization.'],
             ],
+            'functional_search_queries' => [
+                ['query' => 'profile management', 'reason' => 'Profile management interaction.'],
+            ],
             'reusability' => [
                 'status' => 'reusable',
                 'confidence' => 0.9,
@@ -476,6 +683,22 @@ PHP
             ],
             'analysis_limits' => [],
         ];
+    }
+
+    /**
+     * @param list<string> $terms
+     *
+     * @return list<array{term: string, reason: string}>
+     */
+    private static function terms(array $terms): array
+    {
+        return array_map(
+            static fn (string $term): array => [
+                'term' => $term,
+                'reason' => 'Supported by the supplied source.',
+            ],
+            $terms,
+        );
     }
 
     /**
@@ -536,6 +759,18 @@ PHP
             200,
             ['Content-Type' => 'application/vnd.api+json'],
             json_encode(['data' => $projects], JSON_THROW_ON_ERROR),
+        );
+    }
+
+    /**
+     * @param list<array<string, mixed>> $packages
+     */
+    private static function compatibilityResponse(array $packages): Response
+    {
+        return new Response(
+            200,
+            ['Content-Type' => 'application/json'],
+            json_encode(['packages' => ['drupal/profile_project' => $packages]], JSON_THROW_ON_ERROR),
         );
     }
 
