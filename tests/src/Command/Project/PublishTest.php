@@ -261,6 +261,18 @@ class PublishTest extends TestCase
         self::assertSame(self::runtime(), $command->analyzeRuntime);
         self::assertStringContainsString('Provider: local-provider', $display);
         self::assertStringContainsString('Model: local-model', $display);
+        self::assertStringContainsString(
+            'The CLI performs best-effort local redaction of common sensitive values before the request.',
+            $display,
+        );
+        self::assertStringContainsString('Module source prepared.', $display);
+        self::assertStringContainsString('Analyzing module with AI...', $display);
+        self::assertStringContainsString('Module analysis completed.', $display);
+        self::assertStringContainsString('Searching Drupal.org projects... 1/1 (primary: profile)', $display);
+        self::assertStringContainsString('Candidate projects found: 1', $display);
+        self::assertStringContainsString('Comparing 1 Drupal.org candidates with AI...', $display);
+        self::assertStringContainsString('Candidate comparison completed.', $display);
+        self::assertStringContainsString('Contribution assessment completed.', $display);
         self::assertStringContainsString('Assessment: Candidate with changes', $display);
         self::assertStringContainsString('Reusability: reusable', $display);
         self::assertStringContainsString('Contrib readiness: ready', $display);
@@ -369,6 +381,39 @@ class PublishTest extends TestCase
             (int) strpos($display, 'Run AI module review? [y/N]'),
         );
         self::assertSame(1, $command->analyzeCalls);
+    }
+
+    public function testPartialTokenUsageIsReportedAsUnavailable(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        $reviewResult = self::completeReviewResult();
+        $reviewResult['ai']['review']['tokenUsage'] = [
+            'input' => 100,
+            'output' => null,
+            'total' => null,
+        ];
+        $reviewResult['ai']['comparison']['tokenUsage'] = [
+            'input' => 200,
+            'output' => null,
+            'total' => null,
+        ];
+        [$tester] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            $reviewResult,
+        );
+        $tester->setInputs(['y', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString(
+            'Tokens used: input 300, output unavailable, total unavailable',
+            $tester->getDisplay(),
+        );
+        self::assertStringNotContainsString('output 0', $tester->getDisplay());
+        self::assertStringNotContainsString('total 0', $tester->getDisplay());
     }
 
     public function testPublishDoesNotRegisterReviewOptions(): void
@@ -753,12 +798,39 @@ class PublishTest extends TestCase
                 return $this->aiContext;
             }
 
-            protected function analyzeModule(string $modulePath, string $machineName, array $runtime): array
-            {
+            protected function analyzeModule(
+                string $modulePath,
+                string $machineName,
+                array $runtime,
+                ?callable $progress = null,
+            ): array {
                 ++$this->analyzeCalls;
                 $this->analyzeModulePath = $modulePath;
                 $this->analyzeMachineName = $machineName;
                 $this->analyzeRuntime = $runtime;
+                if ($progress !== null && ($this->analysisResult['complete'] ?? false) === true) {
+                    $progress('source_prepared', ['files' => 1]);
+                    $progress('review_ai_started', []);
+                    $progress('review_ai_completed', []);
+                    $progress('project_search_started', ['total' => 1]);
+                    $progress('project_search_progress', [
+                        'current' => 1,
+                        'total' => 1,
+                        'term' => 'profile',
+                        'type' => 'primary',
+                    ]);
+                    $progress('project_search_completed', ['total' => 1]);
+                    $progress('candidate_ranking_completed', [
+                        'candidateCount' => count($this->analysisResult['candidates'] ?? []),
+                    ]);
+                    $progress('comparison_ai_started', [
+                        'candidateCount' => count($this->analysisResult['candidates'] ?? []),
+                    ]);
+                    $progress('comparison_ai_completed', []);
+                    $progress('assessment_completed', []);
+                    $progress('analysis_completed', []);
+                }
+
                 return $this->analysisResult;
             }
         };

@@ -87,7 +87,15 @@ class ModuleReviewAnalyzerTest extends TestCase
             $captureDir,
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $events = [];
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            static function (string $event, array $context) use (&$events): void {
+                $events[] = [$event, $context];
+            },
+        );
 
         self::assertTrue($result['complete']);
         self::assertSame(
@@ -96,6 +104,10 @@ class ModuleReviewAnalyzerTest extends TestCase
         );
         self::assertSame(1, $result['source']['files']);
         self::assertNotSame(strlen($originalSource), $result['source']['bytes']);
+        $logicalEvents = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => !str_ends_with($event[0], '_tick'),
+        ));
         self::assertSame(
             [
                 [
@@ -132,6 +144,47 @@ class ModuleReviewAnalyzerTest extends TestCase
             $result['ai']['review'],
         );
         self::assertSame($result['ai']['review'], $result['ai']['comparison']);
+        self::assertSame(
+            [
+                'source_prepared',
+                'review_ai_started',
+                'review_ai_completed',
+                'project_search_started',
+                'project_search_progress',
+                'project_search_progress',
+                'project_search_progress',
+                'project_search_completed',
+                'candidate_ranking_completed',
+                'comparison_ai_started',
+                'comparison_ai_completed',
+                'assessment_completed',
+                'analysis_completed',
+            ],
+            array_column($logicalEvents, 0),
+        );
+        $searchProgressEvents = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => $event[0] === 'project_search_progress',
+        ));
+        self::assertSame(
+            [
+                'current' => 1,
+                'total' => 3,
+                'term' => 'profile',
+                'type' => 'primary',
+            ],
+            $searchProgressEvents[0][1],
+        );
+        $rankingEvent = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => $event[0] === 'candidate_ranking_completed',
+        ))[0];
+        self::assertSame(3, $rankingEvent[1]['candidateCount']);
+        $comparisonStartEvent = array_values(array_filter(
+            $events,
+            static fn (array $event): bool => $event[0] === 'comparison_ai_started',
+        ))[0];
+        self::assertSame(3, $comparisonStartEvent[1]['candidateCount']);
 
         $serializedResult = serialize($result);
         self::assertStringNotContainsString('ORIGINAL_SECRET', $serializedResult);
@@ -271,6 +324,25 @@ class ModuleReviewAnalyzerTest extends TestCase
 
         self::assertIncompleteAt('collection', $result);
         self::assertSame([], $result['source']['skipped']);
+    }
+
+    public function testReturnsSourceEmptyWithoutCallingAiOrDrupalOrg(): void
+    {
+        file_put_contents($this->modulePath . '/logo.png', 'binary-looking content');
+        $analyzer = $this->analyzer([], []);
+
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+
+        self::assertIncompleteAt('source_empty', $result);
+        self::assertNull($result['review']);
+        self::assertSame([], $result['searches']);
+        self::assertSame([], $result['candidates']);
+        self::assertNull($result['assessment']);
+        self::assertFileDoesNotExist($this->workDir . '/ai-count.txt');
+        self::assertSame(
+            [['path' => 'logo.png', 'reason' => 'unsupported']],
+            $result['source']['skipped'],
+        );
     }
 
     /**

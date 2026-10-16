@@ -120,6 +120,24 @@ class ModuleReviewCollectorTest extends TestCase
         self::assertNotContains('external secret', array_column($result['files'], 'content'));
     }
 
+    public function testRecordsUnreadableSubdirectoriesWithoutEmittingWarnings(): void
+    {
+        $unreadableDirectory = $this->workDir . '/unreadable';
+        mkdir($unreadableDirectory);
+        if (!chmod($unreadableDirectory, 0000) || is_readable($unreadableDirectory)) {
+            chmod($unreadableDirectory, 0755);
+            self::markTestSkipped('The test environment does not allow unreadable directories.');
+        }
+
+        try {
+            $result = $this->collect();
+        } finally {
+            chmod($unreadableDirectory, 0755);
+        }
+
+        self::assertSame(['unreadable' => 'unreadable'], $this->skippedByPath($result));
+    }
+
     public function testExcludesLockfiles(): void
     {
         $this->writeFile('composer.json', '{}');
