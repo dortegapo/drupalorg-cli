@@ -10,6 +10,7 @@ use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrgCli\Command\Command;
+use mglaman\DrupalOrgCli\Command\Project\ModuleReviewProgressRenderer;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -183,14 +184,24 @@ class Publish extends Command
         $this->stdOut->writeln(sprintf('Model: %s', $aiContext['modelId']));
         $this->stdOut->writeln('');
         $this->stdOut->writeln('Source code from the selected module will be sent to the configured Drupal AI provider.');
-        $this->stdOut->writeln('Potential sensitive values are redacted locally before the request.');
+        $this->stdOut->writeln(
+            'The CLI performs best-effort local redaction of common sensitive values before the request.'
+        );
         $this->stdOut->writeln('This may consume tokens from the configured provider.');
 
         if (!$this->askConfirmation($input, $output, 'Run AI module review? [y/N] ', false)) {
             return true;
         }
 
-        $result = $this->analyzeModule($module['resolvedPath'], $module['moduleName'], $runtime);
+        $renderer = new ModuleReviewProgressRenderer($output);
+        $progress = static function (string $event, array $context) use ($renderer): void {
+            $renderer->handle($event, $context);
+        };
+        try {
+            $result = $this->analyzeModule($module['resolvedPath'], $module['moduleName'], $runtime, $progress);
+        } finally {
+            $renderer->finishOnFailure();
+        }
         $this->writeModuleReviewSummary($result);
 
         if (!$this->askConfirmation($input, $output, 'Continue with project publishing? [y/N] ', false)) {
@@ -240,11 +251,15 @@ class Publish extends Command
      *
      * @return array<string, mixed>
      */
-    protected function analyzeModule(string $modulePath, string $machineName, array $runtime): array
-    {
+    protected function analyzeModule(
+        string $modulePath,
+        string $machineName,
+        array $runtime,
+        ?callable $progress = null,
+    ): array {
         return (new ModuleReviewAnalyzerFactory($this->client))
             ->create()
-            ->analyze($modulePath, $machineName, $runtime);
+            ->analyze($modulePath, $machineName, $runtime, $progress);
     }
 
     protected function askConfirmation(
@@ -318,10 +333,10 @@ class Publish extends Command
             $this->stdOut->writeln('Tokens used: unavailable');
         } else {
             $this->stdOut->writeln(sprintf(
-                'Tokens used: input %d, output %d, total %d',
-                $tokenUsage['input'],
-                $tokenUsage['output'],
-                $tokenUsage['total'],
+                'Tokens used: input %s, output %s, total %s',
+                $this->formatTokenValue($tokenUsage['input']),
+                $this->formatTokenValue($tokenUsage['output']),
+                $this->formatTokenValue($tokenUsage['total']),
             ));
         }
 
@@ -345,7 +360,7 @@ class Publish extends Command
     /**
      * @param mixed $ai
      *
-     * @return array{input: int, output: int, total: int}|null
+     * @return array{input: ?int, output: ?int, total: ?int}|null
      */
     private function sumTokenUsage(mixed $ai): ?array
     {
@@ -353,7 +368,7 @@ class Publish extends Command
             return null;
         }
 
-        $totals = ['input' => 0, 'output' => 0, 'total' => 0];
+        $totals = ['input' => null, 'output' => null, 'total' => null];
         $found = false;
         foreach (['review', 'comparison'] as $stage) {
             $usage = $ai[$stage]['tokenUsage'] ?? null;
@@ -362,13 +377,18 @@ class Publish extends Command
             }
             foreach (array_keys($totals) as $key) {
                 if (is_int($usage[$key] ?? null)) {
-                    $totals[$key] += $usage[$key];
+                    $totals[$key] = ($totals[$key] ?? 0) + $usage[$key];
                     $found = true;
                 }
             }
         }
 
         return $found ? $totals : null;
+    }
+
+    private function formatTokenValue(?int $value): string
+    {
+        return $value === null ? 'unavailable' : (string) $value;
     }
 
     /**

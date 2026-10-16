@@ -216,6 +216,37 @@ class DrupalAiBridgeTest extends TestCase
         );
     }
 
+    public function testStructuredChatInvokesWaitCallbackWhileProcessIsRunning(): void
+    {
+        $waitCalls = 0;
+        $result = $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => ['status' => 'ok'],
+                'token_usage' => [
+                    'input' => null,
+                    'output' => null,
+                    'total' => null,
+                ],
+            ]),
+            'test system prompt',
+            'test user prompt',
+            ['type' => 'object'],
+            0,
+            null,
+            '',
+            static function () use (&$waitCalls): void {
+                ++$waitCalls;
+            },
+            200000,
+        );
+
+        self::assertSame(['status' => 'ok'], $result['result']);
+        self::assertGreaterThan(0, $waitCalls);
+    }
+
     public function testStructuredChatReportsDisabledAi(): void
     {
         $this->expectException(\RuntimeException::class);
@@ -514,6 +545,12 @@ class DrupalAiBridgeTest extends TestCase
         self::assertStringContainsString('setChatStructuredJsonSchema', $script);
         self::assertStringContainsString('->chat(', $script);
         self::assertStringContainsString('getTokenUsage', $script);
+        self::assertStringContainsString('$tokenUsage = [', $script);
+        self::assertStringContainsString("'input' => null", $script);
+        self::assertStringContainsString(
+            'Token usage is observability metadata and must not invalidate a valid response.',
+            $script,
+        );
         self::assertStringNotContainsString('<?php', $script);
         self::assertStringNotContainsString($systemPrompt, $script);
         self::assertStringNotContainsString($userPrompt, $script);
@@ -566,13 +603,16 @@ class DrupalAiBridgeTest extends TestCase
         array $jsonSchema = ['type' => 'object'],
         int $exitCode = 0,
         ?string $captureInput = null,
-        string $stderr = ''
+        string $stderr = '',
+        ?callable $onWait = null,
+        int $delayMicros = 0,
     ): array {
         return (new DrupalAiBridge())->structuredChat(
-            $this->createFakeRuntime($stdout, $exitCode, $captureInput, $stderr),
+            $this->createFakeRuntime($stdout, $exitCode, $captureInput, $stderr, $delayMicros),
             $systemPrompt,
             $userPrompt,
-            $jsonSchema
+            $jsonSchema,
+            $onWait,
         );
     }
 
@@ -587,7 +627,8 @@ class DrupalAiBridgeTest extends TestCase
         string $stdout,
         int $exitCode = 0,
         ?string $captureInput = null,
-        string $stderr = ''
+        string $stderr = '',
+        int $delayMicros = 0,
     ): array {
         $responseFile = $this->workDir . '/response.txt';
         file_put_contents($responseFile, $stdout);
@@ -600,12 +641,16 @@ $responseFile = $argv[1];
 $exitCode = (int) $argv[2];
 $captureFile = $argv[3] ?? '';
 $stderr = $argv[4] ?? '';
+$delayMicros = (int) ($argv[5] ?? 0);
 $input = stream_get_contents(STDIN);
 if ($captureFile !== '') {
     file_put_contents($captureFile, $input);
 }
 if ($stderr !== '') {
     fwrite(STDERR, $stderr);
+}
+if ($delayMicros > 0) {
+    usleep($delayMicros);
 }
 fwrite(STDOUT, (string) file_get_contents($responseFile));
 exit($exitCode);
@@ -615,6 +660,7 @@ PHP
         $command = [PHP_BINARY, $fakeExecutable, $responseFile, (string) $exitCode];
         $command[] = $captureInput ?? '';
         $command[] = $stderr;
+        $command[] = (string) $delayMicros;
 
         return [
             'type' => 'local-drush',
