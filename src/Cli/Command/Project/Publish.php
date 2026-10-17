@@ -3,6 +3,9 @@
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use GuzzleHttp\Exception\RequestException;
+use mglaman\DrupalOrg\Auth\AuthenticationResult;
+use mglaman\DrupalOrg\Auth\Authenticator;
+use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
 use mglaman\DrupalOrg\Project\DrupalAiBridge;
 use mglaman\DrupalOrg\Project\DrupalRuntimeResolver;
@@ -11,6 +14,7 @@ use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\ModuleReviewPdfReportWriter;
 use mglaman\DrupalOrg\Project\ModuleReviewSourceSelector;
+use mglaman\DrupalOrgCli\BrowserTrait;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
@@ -22,6 +26,16 @@ use Symfony\Component\Console\Question\Question;
 
 class Publish extends Command
 {
+
+    use BrowserTrait;
+
+    protected ?Client $authenticatedClient = null;
+
+    public function __construct(
+        private readonly ?Authenticator $authenticator = null,
+    ) {
+        parent::__construct();
+    }
 
     protected function configure(): void
     {
@@ -89,8 +103,8 @@ class Publish extends Command
 
             $plannedActions = $project === null
                 ? [
-                    'Authenticate with Drupal.org automatically if required.',
                     'Offer an optional AI-assisted contribution review and local PDF report.',
+                    'Authenticate with Drupal.org automatically if required.',
                     sprintf('Create Drupal.org project "%s".', $module['moduleName']),
                     'Wait for repository provisioning.',
                     'Prepare an isolated temporary workspace.',
@@ -138,7 +152,53 @@ class Publish extends Command
             }
         }
 
+        if ($project === null && $this->authenticator !== null) {
+            try {
+                $authentication = $this->authenticateForPublishing($input);
+                if ($authentication !== null) {
+                    $this->authenticatedClient = $this->createAuthenticatedClient($authentication->accessToken);
+                    if ($authentication->method === 'refreshed') {
+                        $this->stdOut->writeln('Authentication refreshed.');
+                    } elseif ($authentication->method === 'device') {
+                        $this->stdOut->writeln('Authentication successful.');
+                    }
+                }
+            } catch (\RuntimeException $exception) {
+                $this->stdErr->writeln(sprintf('<error>%s</error>', $exception->getMessage()));
+                return self::FAILURE;
+            }
+        }
+
         return self::SUCCESS;
+    }
+
+    /**
+     * Authenticate only after the optional review has been accepted.
+     */
+    protected function authenticateForPublishing(InputInterface $input): ?AuthenticationResult
+    {
+        if ($this->authenticator === null) {
+            return null;
+        }
+
+        return $this->authenticator->authenticate(
+            interactive: $input->isInteractive(),
+            onDeviceAuthorization: function (array $deviceAuthorization): void {
+                $verificationUri = $deviceAuthorization['verification_uri_complete']
+                    ?? $deviceAuthorization['verification_uri'];
+                $this->openUrl($verificationUri, $this->stdErr, $this->stdOut);
+                if (!isset($deviceAuthorization['verification_uri_complete'])) {
+                    $this->stdOut->writeln('Enter code:');
+                    $this->stdOut->writeln($deviceAuthorization['user_code']);
+                }
+                $this->stdOut->writeln('Waiting for authorization...');
+            },
+        );
+    }
+
+    protected function createAuthenticatedClient(string $accessToken): Client
+    {
+        return new Client(accessToken: $accessToken);
     }
 
     /**
