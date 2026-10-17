@@ -444,16 +444,57 @@ class ModuleReviewAnalyzerTest extends TestCase
         }
     }
 
-    public function testReturnsReviewPromptFailureWhenSourceExceedsTheBuilderBudget(): void
+    public function testContinuesToReviewAiWhenSourceExceedsTheHistoricalBuilderBudget(): void
     {
         file_put_contents($this->modulePath . '/module.php', str_repeat('a', 131073));
         $analyzer = $this->analyzer([], []);
 
         $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
 
-        self::assertIncompleteAt('review_prompt', $result);
+        self::assertIncompleteAt('review_ai', $result);
         self::assertSame([], $this->history);
         self::assertNull($result['review']);
+    }
+
+    public function testProviderContextFailureForFullSourceAboveLargestBudgetIsReviewAiFailure(): void
+    {
+        $content = str_repeat('a', 524289);
+        $preparedSource = [
+            'files' => [[
+                'path' => 'large.php',
+                'bytes' => strlen($content),
+                'content' => $content,
+            ]],
+            'skipped' => [],
+            'totalBytes' => strlen($content),
+            'redactions' => [],
+            'coverage' => [
+                'mode' => 'full',
+                'requestedBudgetBytes' => null,
+                'eligibleFiles' => 1,
+                'eligibleBytes' => strlen($content),
+                'selectedFiles' => 1,
+                'selectedBytes' => strlen($content),
+                'omittedFiles' => 0,
+                'omittedBytes' => 0,
+                'omittedBreakdown' => [],
+            ],
+        ];
+        $analyzer = $this->analyzer([], [self::aiFailure('context overflow')]);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            null,
+            null,
+            $preparedSource,
+        );
+
+        self::assertIncompleteAt('review_ai', $result);
+        self::assertSame('full', $result['source']['coverage']['mode']);
+        self::assertSame(strlen($content), $result['source']['bytes']);
+        self::assertStringNotContainsString('context overflow', (string) json_encode($result));
     }
 
     public function testStopsAfterAProjectSearchFailure(): void

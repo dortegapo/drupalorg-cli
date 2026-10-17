@@ -317,6 +317,131 @@ class PublishTest extends TestCase
         );
     }
 
+    public function testLargeModuleOffersOnlyBudgetsBelowEligibleSource(): void
+    {
+        $this->createOversizedModule(180 * 1024);
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', '1', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('  1. 128 KiB — Recommended', $display);
+        self::assertStringContainsString('  2. Full module', $display);
+        self::assertStringContainsString('  3. Cancel AI review', $display);
+        self::assertStringNotContainsString('[0]', $display);
+        self::assertSame(1, substr_count($display, '128 KiB — Recommended'));
+        self::assertStringContainsString('128 KiB — Recommended', $display);
+        self::assertStringContainsString('Full module', $display);
+        self::assertStringContainsString('Cancel AI review', $display);
+        self::assertStringNotContainsString('256 KiB', $display);
+        self::assertStringNotContainsString('512 KiB', $display);
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertNotNull($command->analyzePreparedSource);
+        self::assertSame('selected', $command->analyzePreparedSource['coverage']['mode']);
+        self::assertLessThanOrEqual(128 * 1024, $command->analyzePreparedSource['totalBytes']);
+    }
+
+    public function testModuleWithinRecommendedBudgetUsesFullSourceWithoutASelector(): void
+    {
+        $this->createOversizedModule(80 * 1024);
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('Source mode: Full module.', $display);
+        self::assertStringNotContainsString('Choose how much source', $display);
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertNotNull($command->analyzePreparedSource);
+        self::assertSame('full', $command->analyzePreparedSource['coverage']['mode']);
+        self::assertSame(
+            $command->analyzePreparedSource['coverage']['eligibleFiles'],
+            $command->analyzePreparedSource['coverage']['selectedFiles'],
+        );
+    }
+
+    public function testMediumModuleCanSelectTheLargerAvailableBudget(): void
+    {
+        $this->createOversizedModule(390 * 1024);
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', '2', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('  1. 128 KiB — Recommended', $display);
+        self::assertStringContainsString('  2. 256 KiB', $display);
+        self::assertStringContainsString('  3. Full module', $display);
+        self::assertStringContainsString('  4. Cancel AI review', $display);
+        self::assertStringNotContainsString('512 KiB', $display);
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertNotNull($command->analyzePreparedSource);
+        self::assertSame(256 * 1024, $command->analyzePreparedSource['coverage']['requestedBudgetBytes']);
+        self::assertLessThanOrEqual(256 * 1024, $command->analyzePreparedSource['totalBytes']);
+    }
+
+    public function testFullModuleCanBeSelectedAboveTheLargestRecommendedBudget(): void
+    {
+        $this->createOversizedModule(900 * 1024);
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', '4', 'n']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(1, $command->analyzeCalls);
+        self::assertNotNull($command->analyzePreparedSource);
+        self::assertSame('full', $command->analyzePreparedSource['coverage']['mode']);
+        self::assertGreaterThan(512 * 1024, $command->analyzePreparedSource['totalBytes']);
+        self::assertSame(
+            $command->analyzePreparedSource['coverage']['eligibleBytes'],
+            $command->analyzePreparedSource['coverage']['selectedBytes'],
+        );
+    }
+
+    public function testSourceBudgetSelectionCanBeCancelled(): void
+    {
+        $this->createOversizedModule(180 * 1024);
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', '3']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $command->analyzeCalls);
+        self::assertStringContainsString('AI-assisted contribution review skipped.', $tester->getDisplay());
+    }
+
     public function testCancellingAfterReviewStopsBeforeTheCurrentFlow(): void
     {
         $this->createDiscoverableModule();
@@ -744,6 +869,25 @@ class PublishTest extends TestCase
         return $modulePath;
     }
 
+    private function createOversizedModule(int $bytes): string
+    {
+        $modulePath = $this->createDiscoverableModule();
+        $sourceDirectory = $modulePath . '/src';
+        mkdir($sourceDirectory);
+        $remaining = $bytes;
+        $index = 0;
+        while ($remaining > 0) {
+            $chunk = min(8192, $remaining);
+            $prefix = "<?php\n";
+            $content = $prefix . str_repeat('x', max(0, $chunk - strlen($prefix)));
+            file_put_contents($sourceDirectory . '/Source' . $index . '.php', $content);
+            $remaining -= strlen($content);
+            ++$index;
+        }
+
+        return $modulePath;
+    }
+
     private function commandTester(Response ...$responses): CommandTester
     {
         $this->history = [];
@@ -806,6 +950,9 @@ class PublishTest extends TestCase
 
             /** @var array<string, mixed>|null */
             public ?array $analyzeRuntime = null;
+
+            /** @var array<string, mixed>|null */
+            public ?array $analyzePreparedSource = null;
 
             /** @var array<string, mixed>|null */
             private ?array $runtime;
@@ -871,12 +1018,14 @@ class PublishTest extends TestCase
                 array $runtime,
                 ?callable $progress = null,
                 ?string $humanName = null,
+                ?array $preparedSource = null,
             ): array {
                 ++$this->analyzeCalls;
                 $this->analyzeModulePath = $modulePath;
                 $this->analyzeMachineName = $machineName;
                 $this->analyzeHumanName = $humanName;
                 $this->analyzeRuntime = $runtime;
+                $this->analyzePreparedSource = $preparedSource;
                 if ($progress !== null && ($this->analysisResult['complete'] ?? false) === true) {
                     $progress('source_prepared', ['files' => 1]);
                     $progress('review_ai_started', []);

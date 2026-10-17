@@ -255,6 +255,39 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertCount(12, $analysis['candidates']);
     }
 
+    public function testRendersPartialSourceCoverageAndItsLimitation(): void
+    {
+        $analysis = self::completeAnalysis();
+        $analysis['source']['coverage'] = [
+            'mode' => 'selected',
+            'requestedBudgetBytes' => 131072,
+            'eligibleFiles' => 20,
+            'eligibleBytes' => 395740,
+            'selectedFiles' => 8,
+            'selectedBytes' => 130000,
+            'omittedFiles' => 12,
+            'omittedBytes' => 265740,
+            'omittedBreakdown' => [
+                'tests' => 8,
+                'styles' => 4,
+            ],
+        ];
+
+        $html = $this->renderHtml($analysis);
+
+        self::assertStringContainsString('Source coverage:</strong> Partial', $html);
+        self::assertStringContainsString('Eligible files:</strong> 20', $html);
+        self::assertStringContainsString('Files analyzed by AI #1:</strong> 8', $html);
+        self::assertStringContainsString('Selected budget:</strong> 128 KiB', $html);
+        self::assertStringContainsString('Files omitted due to source budget:</strong> 12', $html);
+        self::assertStringContainsString('Tests: 8', $html);
+        self::assertStringContainsString('Styles: 4', $html);
+        self::assertStringContainsString(
+            'Omitted files may contain additional evidence.',
+            $html,
+        );
+    }
+
     public function testRendersCoreCompatibilitySeparatelyFromFunctionalAssessment(): void
     {
         $analysis = self::completeAnalysis();
