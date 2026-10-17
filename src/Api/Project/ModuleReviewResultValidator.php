@@ -204,7 +204,11 @@ final class ModuleReviewResultValidator
     /**
      * @param array<string, int> $lineCounts
      *
-     * @return array{status: string, findings: list<array<string, mixed>>}
+     * @return array{
+     *     status: string,
+     *     required_changes: list<array<string, mixed>>,
+     *     advisory_notes: list<array<string, mixed>>
+     * }
      */
     private function validateContribReadiness(mixed $value, array $lineCounts): array
     {
@@ -221,9 +225,19 @@ final class ModuleReviewResultValidator
             $this->invalid();
         }
 
+        $requiredChanges = $this->validateFindings($value['required_changes'] ?? null, $lineCounts);
+        $advisoryNotes = $this->validateFindings($value['advisory_notes'] ?? null, $lineCounts);
+        if (in_array($status, ['needs_changes', 'significant_changes'], true) && $requiredChanges === []) {
+            $this->invalid();
+        }
+        if ($status === 'ready' && $requiredChanges !== []) {
+            $this->invalid();
+        }
+
         return [
             'status' => $status,
-            'findings' => $this->validateFindings($value['findings'] ?? null, $lineCounts),
+            'required_changes' => $requiredChanges,
+            'advisory_notes' => $advisoryNotes,
         ];
     }
 

@@ -307,6 +307,7 @@ final class ModuleReviewAnalyzer
         $compatibility = [];
         $compatibilityLimitations = [];
         if ($this->coreVersionInspector !== null) {
+            $this->emitProgress($progress, 'core_version_started');
             try {
                 $inspectedCore = $this->coreVersionInspector->inspect($runtime);
                 if ($inspectedCore !== null) {
@@ -326,10 +327,18 @@ final class ModuleReviewAnalyzer
                     'message' => self::LIMITATION_MESSAGES['core_version'],
                 ];
             }
+            $this->emitProgress($progress, 'core_version_completed', $core);
         }
 
         if ($this->compatibilityResolver !== null) {
-            foreach ($comparison['candidates'] as $comparisonCandidate) {
+            $comparisonCandidates = $comparison['candidates'];
+            $compatibilityTotal = count($comparisonCandidates);
+            $this->emitProgress($progress, 'compatibility_started', [
+                'current' => 0,
+                'total' => $compatibilityTotal,
+            ]);
+            $compatibilityCurrent = 0;
+            foreach ($comparisonCandidates as $comparisonCandidate) {
                 $candidateMachineName = $comparisonCandidate['machine_name'];
                 try {
                     $compatibility[$candidateMachineName] = $this->compatibilityResolver->resolve(
@@ -343,7 +352,17 @@ final class ModuleReviewAnalyzer
                         'message' => self::LIMITATION_MESSAGES['compatibility'],
                     ];
                 }
+                ++$compatibilityCurrent;
+                $this->emitProgress($progress, 'compatibility_progress', [
+                    'current' => $compatibilityCurrent,
+                    'total' => $compatibilityTotal,
+                    'machineName' => $candidateMachineName,
+                ]);
             }
+            $this->emitProgress($progress, 'compatibility_completed', [
+                'current' => $compatibilityCurrent,
+                'total' => $compatibilityTotal,
+            ]);
         }
 
         $result = [

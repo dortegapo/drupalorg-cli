@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
-use Composer\Semver\Semver;
+use Composer\MetadataMinifier\MetadataMinifier;
+use Composer\Semver\Intervals;
+use Composer\Semver\VersionParser;
 use mglaman\DrupalOrg\Client;
 
 final class DrupalOrgProjectCompatibilityResolver
@@ -34,7 +36,11 @@ final class DrupalOrgProjectCompatibilityResolver
             $response = $this->client->getGuzzleClient()->request(
                 'GET',
                 self::METADATA_ENDPOINT . rawurlencode(trim($machineName)) . '.json',
-                ['headers' => ['Accept' => 'application/json']],
+                [
+                    'connect_timeout' => 5.0,
+                    'timeout' => 10.0,
+                    'headers' => ['Accept' => 'application/json'],
+                ],
             );
             $payload = json_decode($response->getBody()->getContents(), true, 512, JSON_THROW_ON_ERROR);
         } catch (\Throwable) {
@@ -44,6 +50,9 @@ final class DrupalOrgProjectCompatibilityResolver
         $packages = $payload['packages']['drupal/' . trim($machineName)] ?? null;
         if (!is_array($packages)) {
             return $unknown;
+        }
+        if (($payload['minified'] ?? null) === 'composer/2.0') {
+            $packages = MetadataMinifier::expand($packages);
         }
 
         $supportedCoreMajors = [];
@@ -142,15 +151,16 @@ final class DrupalOrgProjectCompatibilityResolver
     private function constraintSupportsMajor(string $constraint, int $major): bool
     {
         try {
-            for ($minor = 0; $minor <= 99; ++$minor) {
-                if (Semver::satisfies(sprintf('%d.%d.0', $major, $minor), $constraint)) {
-                    return true;
-                }
-            }
+            $candidateConstraint = (new VersionParser())->parseConstraints($constraint);
+            $majorConstraint = (new VersionParser())->parseConstraints(sprintf(
+                '>=%d.0.0 <%d.0.0',
+                $major,
+                $major + 1,
+            ));
+
+            return Intervals::haveIntersections($candidateConstraint, $majorConstraint);
         } catch (\Throwable) {
             return false;
         }
-
-        return false;
     }
 }

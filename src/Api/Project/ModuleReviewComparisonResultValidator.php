@@ -32,7 +32,8 @@ final class ModuleReviewComparisonResultValidator
      *         machine_name: string,
      *         assessment: 'likely_duplicate'|'possible_overlap'|'related_not_duplicate',
      *         overlap: list<string>,
-     *         differences: list<string>,
+     *         confirmed_differences: list<string>,
+     *         unverified_details: list<string>,
      *         reason: string
      *     }>}
      */
@@ -124,7 +125,8 @@ final class ModuleReviewComparisonResultValidator
      *     machine_name: string,
      *     assessment: 'likely_duplicate'|'possible_overlap'|'related_not_duplicate',
      *     overlap: list<string>,
-     *     differences: list<string>,
+     *     confirmed_differences: list<string>,
+     *     unverified_details: list<string>,
      *     reason: string
      * }>
      */
@@ -160,7 +162,8 @@ final class ModuleReviewComparisonResultValidator
                 'machine_name' => $machineName,
                 'assessment' => $assessment,
                 'overlap' => $overlap,
-                'differences' => $this->validateTextList($candidate['differences'] ?? null),
+                'confirmed_differences' => $this->validateTextList($candidate['confirmed_differences'] ?? null),
+                'unverified_details' => $this->validateTextList($candidate['unverified_details'] ?? null),
                 'reason' => $this->requiredResultString($candidate['reason'] ?? null),
             ];
         }

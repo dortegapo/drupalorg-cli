@@ -26,7 +26,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         self::assertSame(0.95, $validated['confidence']);
         self::assertSame('summary', $validated['summary']);
         self::assertSame(['records'], $validated['candidates'][0]['overlap']);
-        self::assertSame(['ownership'], $validated['candidates'][0]['differences']);
+        self::assertSame(['ownership'], $validated['candidates'][0]['confirmed_differences']);
         self::assertSame('overlaps', $validated['candidates'][0]['reason']);
         self::assertSame(['record', 'profile'], array_column($validated['candidates'], 'machine_name'));
     }
@@ -56,6 +56,34 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         ], 'likely_duplicate');
 
         self::assertSame('likely_duplicate', $this->validator()->validate($result, self::pool())['verdict']);
+    }
+
+    public function testAcceptsLikelyDuplicateWithUnverifiedDetailsAndNoConfirmedDifferences(): void
+    {
+        $result = self::comparisonResult([
+            self::outputCandidate('profile', 'likely_duplicate', ['profiles'], [], 'Same reusable purpose.'),
+        ], 'likely_duplicate');
+        $result['candidates'][0]['unverified_details'] = [
+            'The public metadata does not establish whether access filtering is available.',
+        ];
+
+        $validated = $this->validator()->validate($result, self::pool());
+
+        self::assertSame([], $validated['candidates'][0]['confirmed_differences']);
+        self::assertSame(
+            ['The public metadata does not establish whether access filtering is available.'],
+            $validated['candidates'][0]['unverified_details'],
+        );
+        self::assertSame('likely_duplicate', $validated['verdict']);
+    }
+
+    public function testAcceptsConfirmedDifferencesWithoutUnverifiedDetails(): void
+    {
+        $result = self::comparisonResult([
+            self::outputCandidate('profile', 'possible_overlap', ['profiles'], ['Different scope.']),
+        ]);
+
+        self::assertSame([], $this->validator()->validate($result, self::pool())['candidates'][0]['unverified_details']);
     }
 
     public function testPossibleOverlapWinsWithoutLikelyDuplicate(): void
@@ -211,8 +239,8 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             $result['summary'] = ' ';
         } elseif ($field === 'overlap') {
             $result['candidates'][0]['overlap'] = [' '];
-        } elseif ($field === 'differences') {
-            $result['candidates'][0]['differences'] = [' '];
+        } elseif ($field === 'confirmed_differences') {
+            $result['candidates'][0]['confirmed_differences'] = [' '];
         } else {
             $result['candidates'][0]['reason'] = ' ';
         }
@@ -228,7 +256,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
     {
         yield 'summary' => ['summary'];
         yield 'overlap' => ['overlap'];
-        yield 'differences' => ['differences'];
+        yield 'confirmed differences' => ['confirmed_differences'];
         yield 'reason' => ['reason'];
     }
 
@@ -339,7 +367,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
 
     /**
      * @param list<string> $overlap
-     * @param list<string> $differences
+     * @param list<string> $confirmedDifferences
      *
      * @return array<string, mixed>
      */
@@ -347,14 +375,15 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         string $machineName,
         string $assessment,
         array $overlap,
-        array $differences = [],
+        array $confirmedDifferences = [],
         string $reason = 'Comparison reason.',
     ): array {
         return [
             'machine_name' => $machineName,
             'assessment' => $assessment,
             'overlap' => $overlap,
-            'differences' => $differences,
+            'confirmed_differences' => $confirmedDifferences,
+            'unverified_details' => [],
             'reason' => $reason,
         ];
     }

@@ -6,6 +6,7 @@ namespace mglaman\DrupalOrg\Tests\Project;
 
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectCompatibilityResolver;
@@ -30,6 +31,44 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         self::assertSame([9, 10, 11], $result['supportedCoreMajors']);
         self::assertSame('2.0.1', $result['latestRelevantRelease']);
         self::assertSame('^10.2 || ^11.0', $result['declaredCompatibility'][0]);
+    }
+
+    public function testReportsCompatibleForPatchSpecificTildeConstraint(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('2.0.1', '~11.4.1'),
+            ]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', self::targetCore())['status']);
+    }
+
+    public function testReportsCompatibleForAnExplicitMajorRange(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('2.0.1', '>=11.4.1 <12'),
+            ]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', self::targetCore())['status']);
+    }
+
+    public function testExpandsMinifiedMetadataBeforeCheckingCompatibility(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('2.0.1', '^10'),
+                ['version' => '2.0.2'],
+            ]),
+        ]);
+
+        $result = $resolver->resolve('coffee', self::targetCore());
+
+        self::assertSame('outdated', $result['status']);
+        self::assertSame('2.0.2', $result['latestRelevantRelease']);
+        self::assertSame(['^10'], $result['declaredCompatibility']);
     }
 
     public function testReportsOutdatedWhenOnlyLowerCoreMajorsAreDeclared(): void
@@ -70,6 +109,21 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         $resolver = $this->resolver([new Response(500)]);
 
         self::assertSame('unknown', $resolver->resolve('coffee', self::targetCore())['status']);
+    }
+
+    public function testUsesInteractiveTimeoutsForMetadataLookup(): void
+    {
+        $history = [];
+        $stack = HandlerStack::create(new MockHandler([
+            self::metadataResponse([self::package('2.0.1', '^11')]),
+        ]));
+        $stack->push(Middleware::history($history));
+        $resolver = new DrupalOrgProjectCompatibilityResolver(new Client(false, $stack));
+
+        $resolver->resolve('coffee', self::targetCore());
+
+        self::assertSame(5.0, $history[0]['options']['connect_timeout']);
+        self::assertSame(10.0, $history[0]['options']['timeout']);
     }
 
     public function testDoesNotTreatDevelopmentReleasesAsStableCompatibilityEvidence(): void
