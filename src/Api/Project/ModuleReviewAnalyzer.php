@@ -47,6 +47,75 @@ final class ModuleReviewAnalyzer
     }
 
     /**
+     * Collect and sanitize all eligible module source files.
+     *
+     * The caller may subsequently replace the files and coverage metadata with
+     * a relevance-selected subset before passing the result to analyze().
+     *
+     * @return array{
+     *     files: list<array{path: string, bytes: int, content: string}>,
+     *     skipped: list<array{path: string, reason: string}>,
+     *     totalBytes: int,
+     *     redactions: list<array{path: string, line: int, type: string}>,
+     *     coverage: array{
+     *         mode: 'full'|'selected',
+     *         requestedBudgetBytes: ?int,
+     *         eligibleFiles: int,
+     *         eligibleBytes: int,
+     *         selectedFiles: int,
+     *         selectedBytes: int,
+     *         omittedFiles: int,
+     *         omittedBytes: int,
+     *         omittedBreakdown: array<string, int>
+     *     }
+     * }
+     */
+    public function prepareSource(string $modulePath): array
+    {
+        $collection = $this->collector->collect($modulePath);
+
+        return $this->prepareSourceFromCollection($collection);
+    }
+
+    /**
+     * @param array{
+     *     files: list<array{path: string, bytes: int, content: string}>,
+     *     skipped: list<array{path: string, reason: string}>
+     * } $collection
+     *
+     * @return array{
+     *     files: list<array{path: string, bytes: int, content: string}>,
+     *     skipped: list<array{path: string, reason: string}>,
+     *     totalBytes: int,
+     *     redactions: list<array{path: string, line: int, type: string}>,
+     *     coverage: array{
+     *         mode: 'full'|'selected',
+     *         requestedBudgetBytes: ?int,
+     *         eligibleFiles: int,
+     *         eligibleBytes: int,
+     *         selectedFiles: int,
+     *         selectedBytes: int,
+     *         omittedFiles: int,
+     *         omittedBytes: int,
+     *         omittedBreakdown: array<string, int>
+     *     }
+     * }
+     */
+    private function prepareSourceFromCollection(array $collection): array
+    {
+        $sanitized = $this->sanitizer->sanitize($collection['files']);
+        $selection = (new ModuleReviewSourceSelector())->select($sanitized['files']);
+
+        return [
+            'files' => $selection['files'],
+            'skipped' => $collection['skipped'],
+            'totalBytes' => $selection['selectedBytes'],
+            'redactions' => $sanitized['redactions'],
+            'coverage' => $selection['coverage'],
+        ];
+    }
+
+    /**
      * Analyze a module already located by the caller.
      *
      * Expected operational failures are returned as an incomplete analysis.
@@ -57,6 +126,13 @@ final class ModuleReviewAnalyzer
      *     workingDirectory: string,
      *     command: list<string>
      * } $runtime
+     * @param array{
+     *     files: list<array{path: string, bytes: int, content: string}>,
+     *     skipped: list<array{path: string, reason: string}>,
+     *     totalBytes: int,
+     *     redactions: list<array{path: string, line: int, type: string}>,
+     *     coverage: array<string, mixed>
+     * }|null $preparedSource
      *
      * @return array<string, mixed>
      */
@@ -66,6 +142,7 @@ final class ModuleReviewAnalyzer
         array $runtime,
         ?callable $progress = null,
         ?string $humanName = null,
+        ?array $preparedSource = null,
     ): array {
         $module = [
             'machineName' => $machineName,
@@ -77,35 +154,42 @@ final class ModuleReviewAnalyzer
             'comparison' => null,
         ];
 
-        try {
-            $collection = $this->collector->collect($modulePath);
-        } catch (\RuntimeException) {
-            return $this->incomplete($module, $source, null, [], [], null, $ai, 'collection');
-        }
-
-        $source['files'] = count($collection['files']);
-        $source['skipped'] = $collection['skipped'];
-
-        try {
-            $sanitized = $this->sanitizer->sanitize($collection['files']);
-        } catch (\RuntimeException) {
-            return $this->incomplete($module, $source, null, [], [], null, $ai, 'sanitization');
+        if ($preparedSource === null) {
+            try {
+                $collection = $this->collector->collect($modulePath);
+            } catch (\RuntimeException) {
+                return $this->incomplete($module, $source, null, [], [], null, $ai, 'collection');
+            }
+            try {
+                $preparedSource = $this->prepareSourceFromCollection($collection);
+            } catch (\RuntimeException) {
+                return $this->incomplete($module, $source, null, [], [], null, $ai, 'sanitization');
+            }
         }
 
         $sanitizedCollection = [
-            'files' => $sanitized['files'],
-            'skipped' => $collection['skipped'],
-            'totalBytes' => array_sum(array_column($sanitized['files'], 'bytes')),
+            'files' => $preparedSource['files'],
+            'skipped' => $preparedSource['skipped'],
+            'totalBytes' => $preparedSource['totalBytes'],
+            'coverage' => $preparedSource['coverage'],
         ];
+        $source['files'] = count($sanitizedCollection['files']);
         $source['bytes'] = $sanitizedCollection['totalBytes'];
-        $source['redactions'] = $sanitized['redactions'];
+        $source['skipped'] = $sanitizedCollection['skipped'];
+        $source['redactions'] = $preparedSource['redactions'];
+        $source['coverage'] = $sanitizedCollection['coverage'];
         $this->emitProgress($progress, 'source_prepared', [
-            'files' => count($sanitized['files']),
+            'files' => count($sanitizedCollection['files']),
             'bytes' => $source['bytes'],
             'redactions' => count($source['redactions']),
+            'eligibleFiles' => $source['coverage']['eligibleFiles'],
+            'eligibleBytes' => $source['coverage']['eligibleBytes'],
+            'selectedFiles' => $source['coverage']['selectedFiles'],
+            'selectedBytes' => $source['coverage']['selectedBytes'],
+            'omittedFiles' => $source['coverage']['omittedFiles'],
         ]);
 
-        if ($sanitized['files'] === []) {
+        if ($sanitizedCollection['files'] === []) {
             return $this->incomplete($module, $source, null, [], [], null, $ai, 'source_empty');
         }
 
@@ -136,7 +220,7 @@ final class ModuleReviewAnalyzer
 
         $ai['review'] = $this->aiMetadata($reviewAi);
         try {
-            $review = $this->reviewValidator->validate($reviewAi['result'], $sanitized['files'], $machineName);
+            $review = $this->reviewValidator->validate($reviewAi['result'], $sanitizedCollection['files'], $machineName);
         } catch (\RuntimeException) {
             return $this->incomplete($module, $source, null, [], [], null, $ai, 'review_validation');
         }
@@ -431,7 +515,8 @@ final class ModuleReviewAnalyzer
      *     files: int,
      *     bytes: int,
      *     skipped: list<array{path: string, reason: string}>,
-     *     redactions: list<array{path: string, line: int, type: string}>
+     *     redactions: list<array{path: string, line: int, type: string}>,
+     *     coverage: array<string, mixed>
      * }
      */
     private function emptySource(): array
@@ -441,6 +526,17 @@ final class ModuleReviewAnalyzer
             'bytes' => 0,
             'skipped' => [],
             'redactions' => [],
+            'coverage' => [
+                'mode' => 'full',
+                'requestedBudgetBytes' => null,
+                'eligibleFiles' => 0,
+                'eligibleBytes' => 0,
+                'selectedFiles' => 0,
+                'selectedBytes' => 0,
+                'omittedFiles' => 0,
+                'omittedBytes' => 0,
+                'omittedBreakdown' => [],
+            ],
         ];
     }
 

@@ -445,11 +445,50 @@ final class ModuleReviewPdfReportWriter
         $source = is_array($analysis['source'] ?? null) ? $analysis['source'] : [];
         $skipped = is_array($source['skipped'] ?? null) ? $source['skipped'] : [];
         $redactions = is_array($source['redactions'] ?? null) ? $source['redactions'] : [];
+        $coverage = is_array($source['coverage'] ?? null) ? $source['coverage'] : [];
+        $mode = ($coverage['mode'] ?? 'full') === 'selected' ? 'Partial' : 'Full';
+        $eligibleFiles = is_int($coverage['eligibleFiles'] ?? null)
+            ? $coverage['eligibleFiles']
+            : (is_int($source['files'] ?? null) ? $source['files'] : 0);
+        $selectedFiles = is_int($coverage['selectedFiles'] ?? null)
+            ? $coverage['selectedFiles']
+            : (is_int($source['files'] ?? null) ? $source['files'] : 0);
+        $eligibleBytes = is_int($coverage['eligibleBytes'] ?? null)
+            ? $coverage['eligibleBytes']
+            : (is_int($source['bytes'] ?? null) ? $source['bytes'] : 0);
+        $selectedBytes = is_int($coverage['selectedBytes'] ?? null)
+            ? $coverage['selectedBytes']
+            : (is_int($source['bytes'] ?? null) ? $source['bytes'] : 0);
         $html = '<section><h2>Source coverage</h2><p>'
-            . '<strong>Analyzed files:</strong> ' . $this->integerValue($source['files'] ?? null)
-            . '<br><strong>Sanitized bytes sent to AI #1:</strong> ' . $this->integerValue($source['bytes'] ?? null)
+            . '<strong>Source coverage:</strong> ' . $mode
+            . '<br><strong>AI source mode:</strong> ' . ($mode === 'Full' ? 'Full module' : 'Relevance-selected subset')
+            . '<br><strong>Eligible files:</strong> ' . $eligibleFiles
+            . '<br><strong>Files analyzed by AI #1:</strong> ' . $selectedFiles
+            . '<br><strong>Eligible source:</strong> ' . $this->formatBytes($eligibleBytes)
+            . '<br><strong>Source sent to AI #1:</strong> ' . $this->formatBytes($selectedBytes)
+            . '<br><strong>Sanitized bytes sent to AI #1:</strong> ' . $selectedBytes
             . '<br><strong>Skipped files:</strong> ' . count($skipped)
             . '<br><strong>Redactions:</strong> ' . count($redactions) . '</p>';
+        if ($mode === 'Partial') {
+            $budget = is_int($coverage['requestedBudgetBytes'] ?? null)
+                ? $coverage['requestedBudgetBytes']
+                : null;
+            $omittedFiles = is_int($coverage['omittedFiles'] ?? null)
+                ? $coverage['omittedFiles']
+                : max(0, $eligibleFiles - $selectedFiles);
+            $html .= '<p><strong>Selected budget:</strong> ' . ($budget === null ? 'Unavailable' : $this->formatBytes($budget))
+                . '<br><strong>Files omitted due to source budget:</strong> ' . $omittedFiles . '</p>';
+            $breakdown = is_array($coverage['omittedBreakdown'] ?? null) ? $coverage['omittedBreakdown'] : [];
+            if ($breakdown !== []) {
+                $html .= '<h3>Omitted due to source budget</h3><ul>';
+                foreach ($breakdown as $category => $count) {
+                    if (is_int($count)) {
+                        $html .= '<li>' . $this->escape($this->sourceCategoryLabel((string) $category)) . ': ' . $count . '</li>';
+                    }
+                }
+                $html .= '</ul>';
+            }
+        }
         if ($skipped !== []) {
             $html .= '<h3>Skipped files</h3><ul>';
             foreach ($skipped as $item) {
@@ -507,9 +546,14 @@ final class ModuleReviewPdfReportWriter
             }
         }
 
+        $coverage = is_array($analysis['source']['coverage'] ?? null) ? $analysis['source']['coverage'] : [];
+        $partial = ($coverage['mode'] ?? 'full') === 'selected';
         $html = '<section><h2>Analysis limitations</h2>'
             . '<p>The review is based only on the selected source that was collected. '
             . 'Skipped or unavailable files may limit the conclusions.</p>';
+        if ($partial) {
+            $html .= '<p>The module exceeded the selected AI source budget. The review is based on a deterministically selected subset prioritizing module definition, runtime code, configuration, and functionally relevant files. Omitted files may contain additional evidence.</p>';
+        }
         if ($limitations !== []) {
             $html .= '<ul>';
             foreach (array_unique($limitations) as $limitation) {
@@ -670,6 +714,27 @@ final class ModuleReviewPdfReportWriter
         return is_int($value) || is_float($value)
             ? $this->escape((string) $value)
             : 'Unavailable';
+    }
+
+    private function formatBytes(int $bytes): string
+    {
+        $value = number_format($bytes / 1024, 1, '.', '');
+
+        return rtrim(rtrim($value, '0'), '.') . ' KiB';
+    }
+
+    private function sourceCategoryLabel(string $category): string
+    {
+        return match ($category) {
+            'module_definition' => 'Module definition/configuration',
+            'configuration' => 'Configuration/schema/install',
+            'runtime' => 'Production/runtime source',
+            'frontend' => 'Frontend behavior',
+            'documentation' => 'Documentation',
+            'tests' => 'Tests',
+            'styles' => 'Styles',
+            default => 'Other',
+        };
     }
 
     /**
