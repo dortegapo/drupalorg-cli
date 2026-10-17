@@ -98,6 +98,19 @@ class ModuleReviewResultValidatorTest extends TestCase
         self::assertSame('profile management', $validated['functional_search_queries'][0]['query']);
     }
 
+    public function testAcceptsAFourWordFunctionalSearchQuery(): void
+    {
+        $result = self::validResult();
+        $result['functional_search_queries'][0]['query'] = 'profile management access control';
+
+        $validated = $this->validator()->validate($result, self::files());
+
+        self::assertSame(
+            'profile management access control',
+            $validated['functional_search_queries'][0]['query'],
+        );
+    }
+
     /**
      * @return iterable<string, array{string, string}>
      */
