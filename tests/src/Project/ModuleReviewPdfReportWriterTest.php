@@ -110,68 +110,87 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         }
         $analysis['review']['reusability']['status'] = 'needs_generalization';
         $analysis['review']['contrib_readiness']['status'] = 'needs_changes';
+        $analysis['review']['contrib_readiness']['required_changes'] = [
+            [
+                'severity' => 'high',
+                'file' => 'src/example.php',
+                'line' => 4,
+                'evidence' => 'A project-specific endpoint is embedded in the module.',
+                'reason' => 'The module cannot be reused independently without adaptation.',
+                'suggestion' => 'Move the endpoint into configurable settings.',
+            ],
+        ];
         $analysis['comparison']['candidates'] = [
             [
                 'machine_name' => 'project_2',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => ['The public metadata does not establish access filtering.'],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'profiles',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared profile management.'],
-                'differences' => ['Different configuration.'],
+                'confirmed_differences' => ['Different configuration.'],
+                'unverified_details' => [],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'project_3',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'project_4',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'project_5',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'project_6',
                 'assessment' => 'likely_duplicate',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects address substantially the same problem.',
             ],
             [
                 'machine_name' => 'project_7',
                 'assessment' => 'possible_overlap',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects overlap partially.',
             ],
             [
                 'machine_name' => 'project_8',
                 'assessment' => 'possible_overlap',
                 'overlap' => ['Shared record behavior.'],
-                'differences' => ['Different domain.'],
+                'confirmed_differences' => ['Different domain.'],
+                'unverified_details' => [],
                 'reason' => 'The projects overlap partially.',
             ],
             [
                 'machine_name' => 'project_9',
                 'assessment' => 'related_not_duplicate',
                 'overlap' => [],
-                'differences' => [],
+                'confirmed_differences' => [],
+                'unverified_details' => [],
                 'reason' => 'The projects are related but distinct.',
             ],
         ];
@@ -208,11 +227,16 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Related, Not Duplicate', $html);
         self::assertStringContainsString('Main signals', $html);
         self::assertStringContainsString('6 likely functional duplicates identified', $html);
-        self::assertStringContainsString('Closest matches: Project 2, Profiles, Project 3', $html);
+        self::assertStringContainsString('Likely duplicate candidates: Project 2, Profiles, Project 3', $html);
         self::assertStringContainsString('2 projects with possible functional overlap', $html);
         self::assertStringNotContainsString('Likely functional duplicate identified: Profiles', $html);
         self::assertStringContainsString('Needs Generalization', $html);
         self::assertStringContainsString('Needs Changes', $html);
+        self::assertStringContainsString('Confirmed differences', $html);
+        self::assertStringContainsString('Unverified details', $html);
+        self::assertStringContainsString('The public metadata does not establish access filtering.', $html);
+        self::assertStringContainsString('Required changes before contribution', $html);
+        self::assertStringContainsString('status-badge danger', $html);
         self::assertStringContainsString('Not Candidate Yet', $html);
         self::assertStringContainsString('Strong negative signal', $html);
         self::assertStringContainsString(
@@ -255,9 +279,25 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Runtime</dt><dd>Drupal 11.4.8', $html);
         self::assertStringContainsString('Target major</dt><dd>Drupal 11', $html);
         self::assertStringContainsString('Outdated for Drupal 11', $html);
+        self::assertStringContainsString('status-badge warning">Outdated for Drupal 11</span>', $html);
         self::assertStringContainsString('Latest verified core support:</strong> Drupal 10', $html);
         self::assertStringContainsString('Contribution consideration', $html);
         self::assertStringContainsString('final functional-overlap assessment is performed separately', $html);
+
+        $analysis['candidateCompatibility']['profiles']['status'] = 'compatible';
+        $analysis['candidateCompatibility']['profiles']['supportedCoreMajors'] = [11];
+        $compatibleHtml = $this->renderHtml($analysis);
+        self::assertStringContainsString('status-badge success">Compatible with Drupal 11</span>', $compatibleHtml);
+    }
+
+    public function testRendersReadyAdvisoryNotesWithoutNeedsChangesLabel(): void
+    {
+        $html = $this->renderHtml(self::completeAnalysis());
+
+        self::assertStringContainsString('Contribution readiness', $html);
+        self::assertStringContainsString('status-badge success">Ready</span>', $html);
+        self::assertStringContainsString('Advisory notes', $html);
+        self::assertStringNotContainsString('Needs Changes', $html);
     }
 
     public function testWriterAcceptsOnlyStructuredAnalysisAndModuleMetadata(): void
@@ -299,7 +339,17 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
                 ],
                 'contrib_readiness' => [
                     'status' => 'ready',
-                    'findings' => [],
+                    'required_changes' => [],
+                    'advisory_notes' => [
+                        [
+                            'severity' => 'medium',
+                            'file' => 'src/example.php',
+                            'line' => 4,
+                            'evidence' => 'The specialization is fixed in the current module.',
+                            'reason' => 'This may be worth generalizing for broader reuse.',
+                            'suggestion' => 'Consider making the specialization configurable.',
+                        ],
+                    ],
                 ],
                 'analysis_limits' => [],
             ],
@@ -324,7 +374,8 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
                     'machine_name' => 'profiles',
                     'assessment' => 'possible_overlap',
                     'overlap' => ['Profile management.'],
-                    'differences' => ['Different scope.'],
+                    'confirmed_differences' => ['Different scope.'],
+                    'unverified_details' => [],
                     'reason' => 'The projects address related needs.',
                 ]],
             ],

@@ -63,6 +63,10 @@ Compare reusable functional purpose, capabilities, resources or data managed, ow
 
 Assess a candidate as likely_duplicate only when it solves substantially the same reusable problem, implements most important core capabilities, and could reasonably replace most of the local module's reusable purpose. Assess it as possible_overlap only when it solves the same core reusable problem and provides a meaningful partial replacement. Assess it as related_not_duplicate when it is adjacent, complementary, or shares terminology but cannot replace a meaningful portion of the local module.
 
+Do not infer a functional difference merely because a feature is absent from the candidate title or description. Candidate metadata is incomplete evidence about the remote project. Only put an item in confirmed_differences when the supplied candidate metadata positively establishes a behavior, scope, constraint, or capability that differs from the local module. When the local module has a capability that the candidate metadata neither confirms nor contradicts, place it in unverified_details if it is relevant. Missing candidate-description detail must never be converted into a confirmed difference. An empty confirmed_differences list is valid.
+
+Do not rank likely-duplicate candidates as closest, best, strongest, or most complete unless the supplied evidence directly supports that comparison. When several candidates satisfy likely_duplicate, summarize them without inventing a relative ordering of functional similarity.
+
 Set the global verdict to likely_duplicate when any candidate is likely_duplicate; otherwise possible_overlap when any candidate is possible_overlap; otherwise no_clear_duplicate. This includes when there are only related candidates or no candidates. Maintenance, security coverage, recommendation status, and popularity are separate from functional overlap and must not reduce an otherwise supported overlap assessment.
 
 Return at most eight functionally relevant candidates. An empty candidates array is valid. Use the exact supplied machine_name for every returned candidate. Do not return candidate titles or URLs. Confidence must be a number from 0 to 1.
@@ -278,7 +282,13 @@ PROMPT,
                         'type' => 'string',
                     ],
                 ],
-                'differences' => [
+                'confirmed_differences' => [
+                    'type' => 'array',
+                    'items' => [
+                        'type' => 'string',
+                    ],
+                ],
+                'unverified_details' => [
                     'type' => 'array',
                     'items' => [
                         'type' => 'string',
@@ -292,7 +302,8 @@ PROMPT,
                 'machine_name',
                 'assessment',
                 'overlap',
-                'differences',
+                'confirmed_differences',
+                'unverified_details',
                 'reason',
             ],
         ];

@@ -39,6 +39,11 @@ final class ModuleReviewProgressRenderer
             'comparison_ai_completed' => $this->finishIndicator('Candidate comparison completed.'),
             'comparison_ai_failed' => $this->finishIndicator('Candidate comparison failed.'),
             'assessment_completed' => $this->output->writeln('Contribution assessment completed.'),
+            'core_version_started' => $this->output->writeln('Checking Drupal core version...'),
+            'core_version_completed' => $this->output->writeln('Drupal core version check completed.'),
+            'compatibility_started' => $this->output->writeln('Checking project compatibility...'),
+            'compatibility_progress' => $this->writeCompatibilityProgress($context),
+            'compatibility_completed' => $this->output->writeln('Core compatibility checks completed.'),
             'analysis_completed' => $this->output->writeln('Module review analysis completed.'),
             default => null,
         };
@@ -102,6 +107,22 @@ final class ModuleReviewProgressRenderer
         $this->output->writeln(sprintf(
             'Candidate projects found: %d',
             $this->integerContext($context, 'candidateCount'),
+        ));
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function writeCompatibilityProgress(array $context): void
+    {
+        $current = $this->integerContext($context, 'current');
+        $total = $this->integerContext($context, 'total');
+        $machineName = is_string($context['machineName'] ?? null) ? $context['machineName'] : 'unknown';
+        $this->output->writeln(sprintf(
+            'Checking project compatibility... %d/%d (%s)',
+            $current,
+            $total,
+            $machineName,
         ));
     }
 

@@ -292,7 +292,15 @@ class ModuleReviewAnalyzerTest extends TestCase
             ], 'likely_duplicate')),
         ], null, true);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $events = [];
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            static function (string $event, array $context) use (&$events): void {
+                $events[] = [$event, $context];
+            },
+        );
 
         self::assertTrue($result['complete']);
         self::assertSame('11.4.8', $result['core']['runtimeVersion']);
@@ -301,6 +309,33 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertSame('likely_duplicate', $result['comparison']['verdict']);
         self::assertSame('not_candidate_yet', $result['assessment']['status']);
         self::assertCount(5, $this->history);
+        self::assertSame(
+            [
+                'source_prepared',
+                'review_ai_started',
+                'review_ai_completed',
+                'project_search_started',
+                'project_search_progress',
+                'project_search_progress',
+                'project_search_progress',
+                'project_search_progress',
+                'project_search_completed',
+                'candidate_ranking_completed',
+                'comparison_ai_started',
+                'comparison_ai_completed',
+                'assessment_completed',
+                'core_version_started',
+                'core_version_completed',
+                'compatibility_started',
+                'compatibility_progress',
+                'compatibility_completed',
+                'analysis_completed',
+            ],
+            array_values(array_filter(
+                array_column($events, 0),
+                static fn (string $event): bool => !str_ends_with($event, '_tick'),
+            )),
+        );
     }
 
     public function testFunctionalSearchRecoversCandidateWhenHumanNameDoesNot(): void
@@ -600,7 +635,7 @@ $countFile = $argv[1];
 $captureDir = $argv[2];
 $responseFiles = array_slice($argv, 3);
 if (in_array('php:eval', $argv, true)) {
-    fwrite(STDOUT, "11.4.8\n");
+    fwrite(STDOUT, "__DRUPALORG_CLI_CORE_VERSION__=11.4.8\n");
     exit(0);
 }
 $index = is_file($countFile) ? (int) file_get_contents($countFile) : 0;
@@ -679,7 +714,8 @@ PHP
             ],
             'contrib_readiness' => [
                 'status' => 'ready',
-                'findings' => [],
+                'required_changes' => [],
+                'advisory_notes' => [],
             ],
             'analysis_limits' => [],
         ];
@@ -730,7 +766,8 @@ PHP
             'machine_name' => $machineName,
             'assessment' => $assessment,
             'overlap' => $overlap,
-            'differences' => ['Different implementation details.'],
+            'confirmed_differences' => ['Different implementation details.'],
+            'unverified_details' => [],
             'reason' => 'The candidate addresses the same reusable purpose.',
         ];
     }

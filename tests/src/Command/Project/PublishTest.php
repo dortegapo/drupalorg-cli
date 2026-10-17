@@ -296,16 +296,17 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Candidate comparison completed.', $display);
         self::assertStringContainsString('Contribution assessment completed.', $display);
         self::assertStringContainsString('Assessment: Candidate with changes', $display);
-        self::assertStringContainsString('Reusability: reusable', $display);
-        self::assertStringContainsString('Contrib readiness: ready', $display);
-        self::assertStringContainsString('Drupal.org overlap: possible_overlap', $display);
+        self::assertStringContainsString('Reusability: Reusable', $display);
+        self::assertStringContainsString('Contrib readiness: Ready', $display);
+        self::assertStringContainsString('Drupal.org overlap: Possible Overlap', $display);
         self::assertStringContainsString('Candidate projects evaluated: 1', $display);
         self::assertStringContainsString('Sensitive values redacted locally: 2', $display);
         self::assertStringContainsString('AI #1: local-provider / local-model', $display);
         self::assertStringContainsString('AI #2: local-provider / local-model', $display);
         self::assertStringContainsString('Tokens used: input 20, output 10, total 30', $display);
         self::assertStringContainsString('Potential overlaps:', $display);
-        self::assertStringContainsString('  - existing_profiles (possible_overlap)', $display);
+        self::assertStringContainsString('Existing Profiles (existing_profiles)', $display);
+        self::assertStringContainsString('  Functional assessment: Possible Overlap', $display);
         self::assertStringContainsString('PDF report generated.', $display);
         self::assertStringContainsString('Full report: ' . $command->pdfPath, $display);
         self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
@@ -964,7 +965,7 @@ class PublishTest extends TestCase
                 'contrib_readiness' => ['status' => 'ready'],
             ],
             'candidates' => [
-                ['machineName' => 'existing_profiles'],
+                ['machineName' => 'existing_profiles', 'title' => 'Existing Profiles'],
             ],
             'comparison' => [
                 'verdict' => 'possible_overlap',

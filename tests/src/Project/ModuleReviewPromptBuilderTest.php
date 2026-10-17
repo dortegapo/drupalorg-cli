@@ -316,6 +316,10 @@ class ModuleReviewPromptBuilderTest extends TestCase
             'If something appears credential-like, describe it conceptually and never repeat the complete value.',
             $prompt
         );
+        self::assertStringContainsString('required_changes from advisory_notes', $prompt);
+        self::assertStringContainsString('A ready status MUST have no required_changes', $prompt);
+        self::assertStringContainsString('Contribution readiness is not a generic code-quality review.', $prompt);
+        self::assertStringContainsString('A narrowly scoped module is not automatically project-specific.', $prompt);
     }
 
     public function testBuildsStrictRootSchema(): void
@@ -411,19 +415,20 @@ class ModuleReviewPromptBuilderTest extends TestCase
 
         self::assertSame('object', $readiness['type']);
         self::assertFalse($readiness['additionalProperties']);
-        self::assertSame(['status', 'findings'], $readiness['required']);
+        self::assertSame(['status', 'required_changes', 'advisory_notes'], $readiness['required']);
         self::assertSame(
             ['ready', 'needs_changes', 'significant_changes', 'unclear'],
             $readiness['properties']['status']['enum']
         );
-        self::assertSame('array', $readiness['properties']['findings']['type']);
+        self::assertSame('array', $readiness['properties']['required_changes']['type']);
+        self::assertSame('array', $readiness['properties']['advisory_notes']['type']);
     }
 
     public function testBuildsStrictFindingSchemasWithoutReferences(): void
     {
         $schema = $this->build()['schema'];
         $reusabilityFinding = $schema['properties']['reusability']['properties']['findings']['items'];
-        $readinessFinding = $schema['properties']['contrib_readiness']['properties']['findings']['items'];
+        $readinessFinding = $schema['properties']['contrib_readiness']['properties']['required_changes']['items'];
 
         self::assertSame($reusabilityFinding, $readinessFinding);
         self::assertSame('object', $reusabilityFinding['type']);

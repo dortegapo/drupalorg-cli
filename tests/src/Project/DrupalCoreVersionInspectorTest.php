@@ -35,7 +35,17 @@ final class DrupalCoreVersionInspectorTest extends TestCase
 
         self::assertSame(
             ['version' => '11.4.8', 'major' => 11],
-            (new DrupalCoreVersionInspector())->inspect($this->runtime('11.4.8')),
+            (new DrupalCoreVersionInspector())->inspect($this->runtime('__DRUPALORG_CLI_CORE_VERSION__=11.4.8')),
+        );
+    }
+
+    public function testFindsTheVersionMarkerAmongRuntimeNoise(): void
+    {
+        $this->writeRuntimeScript();
+
+        self::assertSame(
+            ['version' => '11.4.8', 'major' => 11],
+            (new DrupalCoreVersionInspector())->inspect($this->runtime("warning before\n__DRUPALORG_CLI_CORE_VERSION__=11.4.8\nwarning after")),
         );
     }
 

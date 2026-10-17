@@ -91,7 +91,7 @@ Assess reusability and contribution readiness only from supplied evidence. Reusa
 
 For reusability, investigate these signals only when the source provides evidence: hardcoded customer or project names, hardcoded URLs or domains, fixed external identifiers, business-specific workflow states, business-specific roles, fixed taxonomy or entity IDs, project-only module dependencies, project-only services, one-deployment assumptions, domain-specific field names, domain-specific allowed values, and customer-specific terminology. These are signals to investigate, not automatic rules. A generic configurable external integration can still be reusable, and a domain-specific module can legitimately have domain-specific terminology.
 
-For contrib_readiness, investigate only publication-relevant problems such as hardcoded endpoints, credential-like values embedded in code, project-only dependencies, project-only services, deployment-specific assumptions, customer-specific configuration embedded in code, business-specific behavior that should be configurable, and missing abstraction around deployment-specific integration details. Do not turn this into a review of coding style, formatting, naming preferences, micro-optimizations, or general refactoring opportunities.
+For contrib_readiness, distinguish required_changes from advisory_notes. Reserve required_changes for publication-relevant problems such as hardcoded endpoints, credential-like values embedded in code, project-only dependencies, project-only services, deployment-specific assumptions, customer-specific configuration embedded in code, business-specific behavior that should be configurable, and missing abstraction around deployment-specific integration details. Use advisory_notes for optional generalization, documentation, configurability, or specialization improvements that do not materially prevent independent reuse. A ready status MUST have no required_changes; needs_changes and significant_changes MUST have at least one required_change. An intentional functional specialization is not automatically project-specific: classify it as a publication-readiness problem only when the supplied source supports a customer, deployment, private workflow, or unavailable project dependency. Contribution readiness is not a generic code-quality review. Do not turn style, formatting, naming preferences, micro-optimizations, or optional refactoring opportunities into required changes.
 
 Findings must cite a file value that exactly matches one supplied file path, an integer source line, brief concrete evidence, the reason, and a useful suggestion. If something appears credential-like, describe it conceptually and never repeat the complete value. Do not turn this into a generic coding-style audit.
 
@@ -200,14 +200,19 @@ PROMPT,
                                 'unclear',
                             ],
                         ],
-                        'findings' => [
+                        'required_changes' => [
+                            'type' => 'array',
+                            'items' => $this->buildFindingSchema(),
+                        ],
+                        'advisory_notes' => [
                             'type' => 'array',
                             'items' => $this->buildFindingSchema(),
                         ],
                     ],
                     'required' => [
                         'status',
-                        'findings',
+                        'required_changes',
+                        'advisory_notes',
                     ],
                 ],
                 'analysis_limits' => [

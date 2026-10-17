@@ -180,7 +180,7 @@ final class ModuleReviewPdfReportWriter
         $readiness = is_array($review['contrib_readiness'] ?? null) ? $review['contrib_readiness'] : [];
 
         $html = '<section><h2>Executive assessment</h2>'
-            . '<p><strong>Recommendation:</strong> ' . $this->escape($this->label($status)) . '</p>'
+            . '<p><strong>Recommendation:</strong> ' . $this->statusBadge($this->label($status), $this->statusSemanticType($status)) . '</p>'
             . '<h3>Main signals</h3><ul>';
         if ($titlesByAssessment['likely_duplicate'] !== []) {
             $titles = [];
@@ -190,7 +190,7 @@ final class ModuleReviewPdfReportWriter
             $count = count($titlesByAssessment['likely_duplicate']);
             $html .= '<li><strong>' . $count . ' likely functional duplicate'
                 . ($count === 1 ? '' : 's') . ' identified</strong><br>'
-                . '<span class="meta">Closest matches: ' . implode(', ', $titles) . '</span></li>';
+                . '<span class="meta">Likely duplicate candidates: ' . implode(', ', $titles) . '</span></li>';
         }
         if ($titlesByAssessment['possible_overlap'] !== []) {
             $count = count($titlesByAssessment['possible_overlap']);
@@ -204,8 +204,10 @@ final class ModuleReviewPdfReportWriter
         if ($titlesByAssessment['likely_duplicate'] === [] && $titlesByAssessment['possible_overlap'] === []) {
             $html .= '<li>No likely duplicate or potential functional overlap was identified.</li>';
         }
-        $html .= '<li>Reusability: ' . $this->escape($this->label($reusability['status'] ?? 'unknown')) . '</li>'
-            . '<li>Contribution readiness: ' . $this->escape($this->label($readiness['status'] ?? 'unknown')) . '</li>'
+        $reusabilityStatus = is_string($reusability['status'] ?? null) ? $reusability['status'] : 'unknown';
+        $readinessStatus = is_string($readiness['status'] ?? null) ? $readiness['status'] : 'unknown';
+        $html .= '<li>Reusability: ' . $this->statusBadge($this->label($reusabilityStatus), $this->statusSemanticType($reusabilityStatus)) . '</li>'
+            . '<li>Contribution readiness: ' . $this->statusBadge($this->label($readinessStatus), $this->statusSemanticType($readinessStatus)) . '</li>'
             . '</ul><p>This assessment is advisory only. It does not prevent you from continuing to publish.</p></section>';
 
         return $html;
@@ -268,8 +270,10 @@ final class ModuleReviewPdfReportWriter
             return '';
         }
 
+        $status = is_string($value['status'] ?? null) ? $value['status'] : 'unknown';
+
         return '<h3>Reusability</h3>'
-            . '<p><strong>Status:</strong> ' . $this->escape($this->label($value['status'] ?? 'unknown'))
+            . '<p><strong>Status:</strong> ' . $this->statusBadge($this->label($status), $this->statusSemanticType($status))
             . '<br><strong>Confidence:</strong> ' . $this->formatConfidence($value['confidence'] ?? null) . '</p>'
             . $this->findingsList($value['findings'] ?? []);
     }
@@ -280,10 +284,19 @@ final class ModuleReviewPdfReportWriter
             return '';
         }
 
-        return '<h3>Contribution readiness</h3>'
-            . '<p><strong>Status:</strong> ' . $this->escape($this->label($value['status'] ?? 'unknown'))
-            . '</p>'
-            . $this->findingsList($value['findings'] ?? []);
+        $status = is_string($value['status'] ?? null) ? $value['status'] : 'unknown';
+        $html = '<h3>Contribution readiness</h3>'
+            . '<p><strong>Status:</strong> ' . $this->statusBadge($this->label($status), $this->statusSemanticType($status)) . '</p>';
+        $requiredChanges = $value['required_changes'] ?? [];
+        $advisoryNotes = $value['advisory_notes'] ?? [];
+        if (is_array($requiredChanges) && $requiredChanges !== []) {
+            $html .= $this->findingsList($requiredChanges, 'Required changes before contribution', 'required');
+        }
+        if (is_array($advisoryNotes) && $advisoryNotes !== []) {
+            $html .= $this->findingsList($advisoryNotes, 'Advisory notes', 'advisory');
+        }
+
+        return $html;
     }
 
     /**
@@ -358,7 +371,12 @@ final class ModuleReviewPdfReportWriter
         $html = '<section><h2>Functional overlap</h2>'
             . '<p><strong>Verdict:</strong> ' . $this->escape($this->label($comparison['verdict'] ?? 'unknown'))
             . '<br><strong>Confidence:</strong> ' . $this->formatConfidence($comparison['confidence'] ?? null)
-            . '</p><p>' . $this->escape($this->stringValue($comparison['summary'] ?? 'Unavailable')) . '</p>';
+            . '</p><p>' . $this->escape($this->stringValue($comparison['summary'] ?? 'Unavailable')) . '</p>'
+            . '<aside class="evidence-scope"><strong>Evidence scope</strong><br>'
+            . 'Candidate comparison is based on Drupal.org project metadata supplied to the semantic comparison stage. '
+            . 'Remote candidate source code is not downloaded or compared.<br><br>'
+            . 'A missing capability in the public description is therefore treated as unverified, not as a confirmed difference.'
+            . '</aside>';
         $candidateMap = $this->candidateMap($analysis['candidates'] ?? []);
         $comparisonCandidates = is_array($comparison['candidates'] ?? null) ? $comparison['candidates'] : [];
         $detailedCandidates = [];
@@ -535,10 +553,12 @@ final class ModuleReviewPdfReportWriter
             . '<li>Direct Drupal.org searches using module-name, core-capability, functional-query, and domain-specific signals.</li>'
             . '<li>Weighted Reciprocal Rank Fusion for candidate discovery ordering.</li>'
             . '<li>AI-assisted semantic comparison of discovered candidates.</li>'
-            . '<li>Deterministic Drupal core compatibility enrichment for relevant candidates.</li>'
             . '<li>Deterministic mapping of validated review signals into the advisory contribution assessment.</li>'
+            . '<li>Deterministic Drupal core compatibility enrichment for relevant candidates.</li>'
+            . '<li>Local PDF rendering.</li>'
             . '</ol><p>AI does not invent the Drupal.org candidate catalog. '
-            . 'RRF does not determine duplicate status. Core compatibility does not determine functional duplicate status. '
+            . 'RRF does not determine duplicate status. Core compatibility is evaluated separately after the functional contribution '
+            . 'assessment and does not change the semantic duplicate verdict. '
             . 'The final recommendation is advisory.</p></section>';
     }
 
@@ -603,13 +623,13 @@ final class ModuleReviewPdfReportWriter
         return $html . '</ul>';
     }
 
-    private function findingsList(mixed $findings): string
+    private function findingsList(mixed $findings, string $heading = 'Findings', string $semanticType = 'neutral'): string
     {
         if (!is_array($findings) || $findings === []) {
             return '';
         }
 
-        $html = '<h4>Findings</h4><ul>';
+        $html = '<h4>' . $this->escape($heading) . '</h4><ul class="finding-list ' . $this->escape($semanticType) . '">';
         foreach ($findings as $finding) {
             if (!is_array($finding)) {
                 continue;
@@ -699,12 +719,23 @@ final class ModuleReviewPdfReportWriter
         $title = $this->stringValue($poolCandidate['title'] ?? 'Unavailable');
         $url = $this->stringValue($poolCandidate['url'] ?? 'Unavailable');
 
-        return '<article class="comparison-card"><h4>' . $this->escape($title) . '</h4>'
+        $assessment = is_string($candidate['assessment'] ?? null) ? $candidate['assessment'] : 'unknown';
+
+        return '<article class="comparison-card"><h4>' . $this->escape($title) . ' '
+            . $this->statusBadge($this->label($assessment), $this->statusSemanticType($assessment)) . '</h4>'
             . '<p><strong>Project:</strong> ' . $this->escape($machineName) . '<br>'
             . '<strong>Drupal.org:</strong><br><span class="url">' . $this->escape($url) . '</span><br>'
-            . '<strong>Assessment:</strong> ' . $this->escape($this->label($candidate['assessment'] ?? 'unknown')) . '</p>'
+            . '<strong>Assessment:</strong> ' . $this->statusBadge($this->label($assessment), $this->statusSemanticType($assessment)) . '</p>'
             . '<h4>Overlap</h4>' . $this->listBlock($candidate['overlap'] ?? [])
-            . '<h4>Differences</h4>' . $this->listBlock($candidate['differences'] ?? [])
+            . '<h4>Confirmed differences</h4>' . $this->listBlock(
+                $candidate['confirmed_differences'] ?? [],
+                'None established from the supplied candidate metadata.',
+            )
+            . '<h4>Unverified details</h4>' . $this->listBlock(
+                $candidate['unverified_details'] ?? [],
+                'None.',
+                'unverified',
+            )
             . '<h4>Reason</h4><p>' . $this->escape($this->stringValue($candidate['reason'] ?? 'Unavailable')) . '</p>'
             . $this->compatibilityBlock($candidate, $analysis)
             . '</article>';
@@ -734,7 +765,8 @@ final class ModuleReviewPdfReportWriter
             'requires_newer_core' => 'Requires newer core than ' . $targetLabel,
             default => 'Not verified',
         };
-        $html = '<h4>Core compatibility</h4><p>' . $this->escape($label) . '</p>';
+        $html = '<h4>Core compatibility</h4><p>'
+            . $this->statusBadge($label, $this->compatibilitySemanticType($status)) . '</p>';
         if ($status === 'outdated') {
             $supported = is_array($compatibility['supportedCoreMajors'] ?? null)
                 ? $compatibility['supportedCoreMajors']
@@ -754,13 +786,13 @@ final class ModuleReviewPdfReportWriter
         return $html;
     }
 
-    private function listBlock(mixed $items): string
+    private function listBlock(mixed $items, string $emptyMessage = 'Unavailable', string $semanticType = 'neutral'): string
     {
         if (!is_array($items) || $items === []) {
-            return '<p>Unavailable</p>';
+            return '<p class="' . $semanticType . '">' . $this->escape($emptyMessage) . '</p>';
         }
 
-        $html = '<ul>';
+        $html = '<ul class="' . $this->escape($semanticType) . '">';
         foreach ($items as $item) {
             if (is_string($item)) {
                 $html .= '<li>' . $this->escape($item) . '</li>';
@@ -780,6 +812,30 @@ final class ModuleReviewPdfReportWriter
         }
 
         return $this->label($value);
+    }
+
+    private function statusBadge(string $label, string $semanticType): string
+    {
+        return '<span class="status-badge ' . $this->escape($semanticType) . '">' . $this->escape($label) . '</span>';
+    }
+
+    private function statusSemanticType(string $status): string
+    {
+        return match ($status) {
+            'likely_duplicate', 'not_candidate_yet', 'significant_changes', 'client_specific' => 'danger',
+            'possible_overlap', 'needs_generalization', 'needs_changes', 'candidate_with_changes', 'outdated', 'advisory' => 'warning',
+            'reusable', 'ready', 'candidate', 'compatible' => 'success',
+            default => 'neutral',
+        };
+    }
+
+    private function compatibilitySemanticType(string $status): string
+    {
+        return match ($status) {
+            'compatible' => 'success',
+            'outdated', 'requires_newer_core' => 'warning',
+            default => 'neutral',
+        };
     }
 
     private function formatToken(mixed $value): string
@@ -806,12 +862,14 @@ final class ModuleReviewPdfReportWriter
         $labels = [
             'needs_generalization' => 'Needs Generalization',
             'needs_changes' => 'Needs Changes',
+            'significant_changes' => 'Significant Changes',
             'likely_duplicate' => 'Likely Duplicate',
             'possible_overlap' => 'Possible Overlap',
             'related_not_duplicate' => 'Related, Not Duplicate',
             'not_candidate_yet' => 'Not Candidate Yet',
             'candidate_with_changes' => 'Candidate With Changes',
             'candidate' => 'Candidate for Contribution',
+            'unclear' => 'Unclear',
         ];
 
         if (isset($labels[$value])) {
@@ -884,6 +942,15 @@ final class ModuleReviewPdfReportWriter
             . '.small,.meta{font-size:9.5pt;line-height:1.3;color:#555}'
             . '.comparison-card{font-size:10.5pt;line-height:1.45;border:1px solid #ccd3da;background:#f8fafc;padding:10px;margin:10px 0;page-break-inside:avoid}'
             . '.comparison-card p,.comparison-card li{font-size:10.5pt;line-height:1.45}'
+            . '.status-badge{display:inline-block;padding:2px 6px;border:1px solid;border-radius:3px;font-size:9.5pt;font-weight:bold;line-height:1.2}'
+            . '.status-badge.danger{background:#fdecec;border-color:#c0392b;color:#7b1e16}'
+            . '.status-badge.warning{background:#fff5db;border-color:#c78a12;color:#6b4b00}'
+            . '.status-badge.success{background:#e8f5e9;border-color:#388e3c;color:#1b5e20}'
+            . '.status-badge.neutral{background:#f0f2f4;border-color:#8a969f;color:#3f4a50}'
+            . '.evidence-scope{background:#f0f2f4;border-left:3px solid #8a969f;padding:8px;margin:10px 0;font-size:10.5pt}'
+            . '.finding-list.advisory,.advisory{background:#fffaf0}'
+            . '.finding-list.required,.required{background:#fff4f3}'
+            . '.unverified{color:#59636b}'
             . '.url{overflow-wrap:anywhere;word-break:break-word}'
             . 'dl{display:grid;grid-template-columns:35% 65%;margin:0}'
             . 'dt,dd{padding:3px;border-bottom:1px solid #eee;margin:0}'
