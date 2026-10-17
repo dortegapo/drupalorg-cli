@@ -6,13 +6,12 @@ namespace mglaman\DrupalOrg\Project;
 
 final class ModuleReviewPromptBuilder
 {
-    private const MAX_SOURCE_BYTES = 131072;
-
     /**
      * @param array{
      *     files: list<array{path: string, bytes: int, content: string}>,
      *     skipped: list<array{path: string, reason: string}>,
-     *     totalBytes: int
+     *     totalBytes: int,
+     *     coverage?: array<string, mixed>
      * } $collection
      *
      * @return array{
@@ -30,14 +29,6 @@ final class ModuleReviewPromptBuilder
 
         if ($collection['files'] === []) {
             throw new \InvalidArgumentException('Module review collection must contain at least one file.');
-        }
-
-        $sourceBytes = 0;
-        foreach ($collection['files'] as $file) {
-            $sourceBytes += strlen($file['content']);
-        }
-        if ($sourceBytes > self::MAX_SOURCE_BYTES) {
-            throw new \RuntimeException('Module review source exceeds the AI context budget.');
         }
 
         $formattedFiles = [];
@@ -103,11 +94,16 @@ PROMPT;
 MODULE METADATA
 machine_name: %s
 
+%s
 SOURCE CODE START
 %s
 SOURCE CODE END
 PROMPT,
             $machineName,
+            $this->formatCoverage($collection, count($collection['files']), array_sum(array_map(
+                static fn (array $file): int => strlen($file['content']),
+                $collection['files'],
+            ))),
             implode("\n", $formattedFiles),
         );
 
@@ -116,6 +112,43 @@ PROMPT,
             'userPrompt' => $userPrompt,
             'schema' => $this->buildSchema(),
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $collection
+     */
+    private function formatCoverage(array $collection, int $selectedFiles, int $selectedBytes): string
+    {
+        $coverage = is_array($collection['coverage'] ?? null) ? $collection['coverage'] : [];
+        $mode = ($coverage['mode'] ?? 'full') === 'selected' ? 'partial' : 'full';
+        $eligibleFiles = is_int($coverage['eligibleFiles'] ?? null)
+            ? $coverage['eligibleFiles']
+            : $selectedFiles;
+        $eligibleBytes = is_int($coverage['eligibleBytes'] ?? null)
+            ? $coverage['eligibleBytes']
+            : $selectedBytes;
+        $omittedFiles = is_int($coverage['omittedFiles'] ?? null)
+            ? $coverage['omittedFiles']
+            : max(0, $eligibleFiles - $selectedFiles);
+
+        if ($mode === 'full') {
+            return sprintf(
+                "SOURCE COVERAGE\nmode: full\neligible_files: %d\nfiles_included: %d\neligible_bytes: %d\nbytes_included: %d\n",
+                $eligibleFiles,
+                $selectedFiles,
+                $eligibleBytes,
+                $selectedBytes,
+            );
+        }
+
+        return sprintf(
+            "SOURCE COVERAGE\nmode: partial\neligible_files: %d\nfiles_included: %d\nfiles_omitted: %d\neligible_bytes: %d\nbytes_included: %d\n\nThe complete eligible module source exceeded the selected source budget. Do not assume omitted files contain or do not contain particular functionality. Partial source coverage does not prove the absence of an issue.\n",
+            $eligibleFiles,
+            $selectedFiles,
+            $omittedFiles,
+            $eligibleBytes,
+            $selectedBytes,
+        );
     }
 
     /**

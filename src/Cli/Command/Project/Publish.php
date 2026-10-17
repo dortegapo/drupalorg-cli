@@ -10,6 +10,7 @@ use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\ModuleReviewPdfReportWriter;
+use mglaman\DrupalOrg\Project\ModuleReviewSourceSelector;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
@@ -17,6 +18,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
+use Symfony\Component\Console\Question\Question;
 
 class Publish extends Command
 {
@@ -181,6 +183,51 @@ class Publish extends Command
             return true;
         }
 
+        $this->stdOut->writeln('Preparing module source...');
+        try {
+            $preparedSource = $this->prepareModuleSource($module['resolvedPath']);
+        } catch (\RuntimeException) {
+            $this->stdOut->writeln('AI-assisted contribution review could not prepare the module source.');
+            return true;
+        }
+
+        $selector = new ModuleReviewSourceSelector();
+        $eligibleBytes = $preparedSource['totalBytes'];
+        $eligibleFiles = count($preparedSource['files']);
+        $this->stdOut->writeln(sprintf(
+            'Eligible module source: %s across %d files.',
+            $this->formatKilobytes($eligibleBytes),
+            $eligibleFiles,
+        ));
+
+        $sourceBudget = null;
+        if ($eligibleBytes > ModuleReviewSourceSelector::DEFAULT_BUDGET_BYTES) {
+            $sourceBudget = $this->askSourceBudget($input, $output, $eligibleBytes);
+            if ($sourceBudget === false) {
+                $this->stdOut->writeln('AI-assisted contribution review skipped.');
+                return true;
+            }
+        }
+
+        $selection = $selector->select($preparedSource['files'], $sourceBudget);
+        $preparedSource['files'] = $selection['files'];
+        $preparedSource['totalBytes'] = $selection['selectedBytes'];
+        $preparedSource['coverage'] = $selection['coverage'];
+        if ($selection['coverage']['mode'] === 'selected') {
+            $this->stdOut->writeln('Selecting functionally relevant source...');
+            $this->stdOut->writeln(sprintf(
+                'Selected: %s across %d files.',
+                $this->formatKilobytes($selection['selectedBytes']),
+                count($selection['files']),
+            ));
+            $this->stdOut->writeln(sprintf(
+                'Omitted due to source budget: %d files.',
+                count($selection['omitted']),
+            ));
+        } else {
+            $this->stdOut->writeln('Source mode: Full module.');
+        }
+
         $renderer = new ModuleReviewProgressRenderer($output);
         $progress = static function (string $event, array $context) use ($renderer): void {
             $renderer->handle($event, $context);
@@ -192,6 +239,7 @@ class Publish extends Command
                 $runtime,
                 $progress,
                 $moduleInfo['name'],
+                $preparedSource,
             );
         } finally {
             $renderer->finishOnFailure();
@@ -252,6 +300,13 @@ class Publish extends Command
      *     workingDirectory: string,
      *     command: list<string>
      * } $runtime
+     * @param array{
+     *     files: list<array{path: string, bytes: int, content: string}>,
+     *     skipped: list<array{path: string, reason: string}>,
+     *     totalBytes: int,
+     *     redactions: list<array{path: string, line: int, type: string}>,
+     *     coverage: array<string, mixed>
+     * }|null $preparedSource
      *
      * @return array<string, mixed>
      */
@@ -261,10 +316,21 @@ class Publish extends Command
         array $runtime,
         ?callable $progress = null,
         ?string $humanName = null,
+        ?array $preparedSource = null,
     ): array {
         return (new ModuleReviewAnalyzerFactory($this->client))
             ->create()
-            ->analyze($modulePath, $machineName, $runtime, $progress, $humanName);
+            ->analyze($modulePath, $machineName, $runtime, $progress, $humanName, $preparedSource);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function prepareModuleSource(string $modulePath): array
+    {
+        return (new ModuleReviewAnalyzerFactory($this->client))
+            ->create()
+            ->prepareSource($modulePath);
     }
 
     /**
@@ -307,6 +373,82 @@ class Publish extends Command
         }
 
         return (bool) $helper->ask($input, $output, new ConfirmationQuestion($question, $default));
+    }
+
+    private function askSourceBudget(
+        InputInterface $input,
+        OutputInterface $output,
+        int $eligibleBytes,
+    ): int|false|null {
+        $helper = $this->getHelper('question');
+        if (!$helper instanceof QuestionHelper) {
+            throw new \LogicException('The question helper is not available.');
+        }
+
+        $optionLines = [];
+        $choiceValues = [];
+        $choiceNumber = 1;
+        foreach (ModuleReviewSourceSelector::AVAILABLE_BUDGETS as $budget) {
+            if ($budget >= $eligibleBytes) {
+                continue;
+            }
+
+            $choice = (string) $choiceNumber;
+            $kilobytes = intdiv($budget, 1024);
+            $label = $choiceNumber === 1
+                ? sprintf('%d KiB — Recommended', $kilobytes)
+                : sprintf('%d KiB', $kilobytes);
+            $description = $choiceNumber === 1
+                ? 'Analyze a relevance-selected subset of the module. Lowest token usage.'
+                : 'Analyze a larger relevance-selected subset. Higher coverage and token usage.';
+            $optionLines[] = sprintf('  %s. %s', $choice, $label);
+            $optionLines[] = '     ' . $description;
+            $choiceValues[$choice] = $budget;
+            ++$choiceNumber;
+        }
+
+        $fullChoice = (string) $choiceNumber;
+        $optionLines[] = sprintf(
+            '  %s. Full module — %s',
+            $fullChoice,
+            $this->formatKilobytes($eligibleBytes),
+        );
+        $optionLines[] = '     Send all eligible module source.';
+        $optionLines[] = '     Significantly higher token usage and may exceed the configured model\'s context limit.';
+        $optionLines[] = '     Sending the complete module may consume substantially more tokens and may exceed the configured model\'s context window.';
+        $choiceValues[$fullChoice] = null;
+        ++$choiceNumber;
+
+        $cancelChoice = (string) $choiceNumber;
+        $optionLines[] = sprintf('  %s. Cancel AI review', $cancelChoice);
+        $choiceValues[$cancelChoice] = false;
+
+        $question = new Question(
+            "Choose how much source to send to the configured AI provider:\n\n"
+            . implode("\n", $optionLines)
+            . "\n\nSelection [1]: ",
+            '1',
+        );
+        $question->setValidator(static function (mixed $selected) use ($choiceValues): int|false|null {
+            $selected = (string) $selected;
+            if (!array_key_exists($selected, $choiceValues)) {
+                throw new \InvalidArgumentException('Invalid selection. Choose one of the displayed options.');
+            }
+
+            return $choiceValues[$selected];
+        });
+
+        /** @var int|false|null $selected */
+        $selected = $helper->ask($input, $output, $question);
+
+        return $selected;
+    }
+
+    private function formatKilobytes(int $bytes): string
+    {
+        $value = number_format($bytes / 1024, 1, '.', '');
+
+        return rtrim(rtrim($value, '0'), '.') . ' KiB';
     }
 
     /**
