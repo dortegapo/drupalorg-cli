@@ -129,6 +129,58 @@ final class DeviceAuthorizationClient
     }
 
     /**
+     * @return array{
+     *   access_token: string,
+     *   refresh_token?: string,
+     *   expires_in?: int,
+     *   token_type: string,
+     *   scope?: string
+     * }
+     */
+    public function requestRefreshToken(string $refreshToken): array
+    {
+        if (trim($refreshToken) === '') {
+            throw new \InvalidArgumentException('refreshToken must not be empty.');
+        }
+
+        $response = $this->client->request('POST', $this->configuration->tokenEndpoint, [
+            'form_params' => [
+                'grant_type' => 'refresh_token',
+                'refresh_token' => $refreshToken,
+                'client_id' => $this->configuration->clientId,
+            ],
+        ]);
+        $contents = (string) $response->getBody();
+
+        if ($response->getStatusCode() < 200 || $response->getStatusCode() >= 300) {
+            $error = $this->oauthError($contents);
+            if ($error === 'invalid_grant') {
+                throw new RefreshTokenRejectedException();
+            }
+
+            if ($error !== null) {
+                throw new \RuntimeException(sprintf('Refresh token request failed: %s.', $error));
+            }
+
+            throw new \RuntimeException(sprintf(
+                'Refresh token request failed with HTTP %d.',
+                $response->getStatusCode()
+            ));
+        }
+
+        try {
+            $responseData = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $exception) {
+            throw new \RuntimeException('Could not parse refresh token response.', 0, $exception);
+        }
+
+        $result = $this->validateTokenResponse($responseData);
+        unset($result['status']);
+
+        return $result;
+    }
+
+    /**
      * @param array{
      *   device_code: string,
      *   user_code: string,

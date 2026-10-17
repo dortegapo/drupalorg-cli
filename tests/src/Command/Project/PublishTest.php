@@ -6,6 +6,11 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
+use mglaman\DrupalOrg\Auth\AuthenticationResult;
+use mglaman\DrupalOrg\Auth\Authenticator;
+use mglaman\DrupalOrg\Auth\DeviceAuthorizationClient;
+use mglaman\DrupalOrg\Auth\OAuthConfiguration;
+use mglaman\DrupalOrg\Auth\TokenStorage;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
@@ -162,6 +167,68 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->inspectCalls);
         self::assertSame(0, $command->analyzeCalls);
         self::assertSame(0, $command->pdfCalls);
+    }
+
+    public function testNewProjectUsesStoredAuthenticatorAfterTheReviewStage(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+        $storage = new TokenStorage($this->workDir . '/auth');
+        $storage->write([
+            'access_token' => 'stored-access',
+            'expires_at' => 1790003600,
+        ]);
+        $authenticator = new Authenticator(
+            new DeviceAuthorizationClient(
+                new OAuthConfiguration(
+                    'https://accounts.example.test/oauth/device',
+                    'https://accounts.example.test/oauth/token',
+                    'drupalorg-cli',
+                    [],
+                ),
+                HandlerStack::create(new MockHandler()),
+            ),
+            $storage,
+            60,
+            static fn (): float => 1790000000.0,
+        );
+        [$tester, $command] = $this->commandTesterWithInjectedAuthenticator(
+            self::jsonResponse(['list' => []]),
+            $authenticator,
+        );
+
+        self::assertSame(0, $tester->execute(
+            ['module' => 'my_module'],
+            ['interactive' => false],
+        ));
+        self::assertSame('stored-access', $command->authenticatedAccessToken);
+    }
+
+    public function testCancelledReviewDoesNotCallAuthenticator(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+        [$tester, $command] = $this->commandTesterWithReviewDecision(
+            self::jsonResponse(['list' => []]),
+            false,
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $command->authenticationCalls);
+    }
+
+    public function testAcceptedReviewCallsAuthenticatorOnce(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+        [$tester, $command] = $this->commandTesterWithReviewDecision(
+            self::jsonResponse(['list' => []]),
+            true,
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(1, $command->authenticationCalls);
+        self::assertSame('test-access', $command->authenticatedAccessToken);
     }
 
     public function testUnavailableRuntimeContinuesWithoutReview(): void
@@ -648,8 +715,8 @@ class PublishTest extends TestCase
             . "Core version requirement: ^11\n"
             . "Drupal.org project exists: no\n\n"
             . "Planned actions:\n"
-            . "  1. Authenticate with Drupal.org automatically if required.\n"
-            . "  2. Offer an optional AI-assisted contribution review and local PDF report.\n"
+            . "  1. Offer an optional AI-assisted contribution review and local PDF report.\n"
+            . "  2. Authenticate with Drupal.org automatically if required.\n"
             . "  3. Create Drupal.org project \"my_module\".\n"
             . "  4. Wait for repository provisioning.\n"
             . "  5. Prepare an isolated temporary workspace.\n"
@@ -886,6 +953,112 @@ class PublishTest extends TestCase
         }
 
         return $modulePath;
+    }
+
+    /**
+     * @return array{0: CommandTester, 1: object}
+     */
+    private function commandTesterWithInjectedAuthenticator(
+        Response $response,
+        Authenticator $authenticator,
+    ): array {
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler([$response]));
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack);
+        $command = new class($client, $authenticator) extends Publish {
+            public ?string $authenticatedAccessToken = null;
+
+            public function __construct(
+                private readonly Client $testClient,
+                Authenticator $authenticator,
+            ) {
+                parent::__construct($authenticator);
+            }
+
+            protected function initialize(InputInterface $input, OutputInterface $output): void
+            {
+                parent::initialize($input, $output);
+                $this->client = $this->testClient;
+            }
+
+            protected function createAuthenticatedClient(string $accessToken): Client
+            {
+                $this->authenticatedAccessToken = $accessToken;
+                return parent::createAuthenticatedClient($accessToken);
+            }
+        };
+
+        return [new CommandTester($command), $command];
+    }
+
+    /**
+     * @return array{0: CommandTester, 1: object}
+     */
+    private function commandTesterWithReviewDecision(Response $response, bool $reviewDecision): array
+    {
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler([$response]));
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack);
+        $command = new class($client, $this->testAuthenticator(), $reviewDecision) extends Publish {
+            public int $authenticationCalls = 0;
+
+            public ?string $authenticatedAccessToken = null;
+
+            public function __construct(
+                private readonly Client $testClient,
+                Authenticator $authenticator,
+                private readonly bool $reviewDecision,
+            ) {
+                parent::__construct($authenticator);
+            }
+
+            protected function initialize(InputInterface $input, OutputInterface $output): void
+            {
+                parent::initialize($input, $output);
+                $this->client = $this->testClient;
+            }
+
+            protected function offerModuleReview(
+                InputInterface $input,
+                OutputInterface $output,
+                array $module,
+                array $moduleInfo,
+            ): bool {
+                return $this->reviewDecision;
+            }
+
+            protected function authenticateForPublishing(InputInterface $input): ?AuthenticationResult
+            {
+                ++$this->authenticationCalls;
+                return new AuthenticationResult('test-access', 'stored');
+            }
+
+            protected function createAuthenticatedClient(string $accessToken): Client
+            {
+                $this->authenticatedAccessToken = $accessToken;
+                return parent::createAuthenticatedClient($accessToken);
+            }
+        };
+
+        return [new CommandTester($command), $command];
+    }
+
+    private function testAuthenticator(): Authenticator
+    {
+        return new Authenticator(
+            new DeviceAuthorizationClient(
+                new OAuthConfiguration(
+                    'https://accounts.example.test/oauth/device',
+                    'https://accounts.example.test/oauth/token',
+                    'drupalorg-cli',
+                    [],
+                ),
+                HandlerStack::create(new MockHandler()),
+            ),
+            new TokenStorage($this->workDir . '/unused-auth'),
+        );
     }
 
     private function commandTester(Response ...$responses): CommandTester

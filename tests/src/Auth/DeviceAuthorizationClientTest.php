@@ -10,6 +10,7 @@ use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Auth\DeviceAuthorizationClient;
 use mglaman\DrupalOrg\Auth\OAuthConfiguration;
+use mglaman\DrupalOrg\Auth\RefreshTokenRejectedException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -207,6 +208,39 @@ class DeviceAuthorizationClientTest extends TestCase
         $result = $this->client(['project:create'], self::json($response))->requestToken('device-test');
 
         self::assertSame(['status' => 'success', ...$response], $result);
+    }
+
+    public function testSendsTheRefreshTokenRequestWithoutDeviceCodeOrSecret(): void
+    {
+        $client = $this->client(['project:create'], self::json($this->minimalTokenResponse()));
+
+        $result = $client->requestRefreshToken('refresh-test');
+
+        self::assertSame($this->minimalTokenResponse(), $result);
+        parse_str((string) $this->sentRequest()->getBody(), $formParams);
+        self::assertSame('refresh_token', $formParams['grant_type']);
+        self::assertSame('refresh-test', $formParams['refresh_token']);
+        self::assertSame('drupalorg-cli', $formParams['client_id']);
+        self::assertArrayNotHasKey('device_code', $formParams);
+        self::assertArrayNotHasKey('client_secret', $formParams);
+    }
+
+    public function testClassifiesInvalidGrantAsARejectedRefreshToken(): void
+    {
+        $client = $this->client(['project:create'], self::json(['error' => 'invalid_grant'], 400));
+
+        $this->expectException(RefreshTokenRejectedException::class);
+        $this->expectExceptionMessage('The stored refresh token was rejected.');
+        $client->requestRefreshToken('refresh-test');
+    }
+
+    public function testReportsRefreshServerFailuresAsOperationalErrors(): void
+    {
+        $client = $this->client(['project:create'], new Response(500, [], 'Server error'));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Refresh token request failed with HTTP 500.');
+        $client->requestRefreshToken('refresh-test');
     }
 
     /**

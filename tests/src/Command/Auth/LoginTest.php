@@ -9,6 +9,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Auth\DeviceAuthorizationClient;
+use mglaman\DrupalOrg\Auth\Authenticator;
 use mglaman\DrupalOrg\Auth\OAuthConfiguration;
 use mglaman\DrupalOrg\Auth\TokenStorage;
 use mglaman\DrupalOrgCli\Command\Auth\Login;
@@ -228,6 +229,49 @@ class LoginTest extends TestCase
         ], $this->storage()->read());
     }
 
+    public function testExpiredCredentialsAreRefreshed(): void
+    {
+        $this->storage()->write([
+            'access_token' => 'old-token',
+            'refresh_token' => 'refresh-token',
+            'expires_at' => 1790000000,
+        ]);
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler([
+            self::json([
+                'access_token' => 'refreshed-token',
+                'token_type' => 'Bearer',
+                'expires_in' => 3600,
+            ]),
+        ]));
+        $stack->push(Middleware::history($this->history));
+        $time = 1790000000.0;
+        $command = new Login(new Authenticator(
+            new DeviceAuthorizationClient(
+                new OAuthConfiguration(
+                    'https://accounts.example.test/oauth/device',
+                    'https://accounts.example.test/oauth/token',
+                    'drupalorg-cli',
+                    [],
+                ),
+                $stack,
+            ),
+            $this->storage(),
+            60,
+            static function () use (&$time): float {
+                return $time;
+            },
+        ));
+
+        $tester = new CommandTester($command);
+        $exitCode = $tester->execute(['--local' => true]);
+
+        self::assertSame(0, $exitCode);
+        self::assertSame("Authentication refreshed.\n", $tester->getDisplay());
+        self::assertSame('refreshed-token', $this->storage()->read()['access_token']);
+        self::assertCount(1, $this->history);
+    }
+
     public function testForceStartsANewDeviceFlowWithUsableCredentials(): void
     {
         $this->storage()->write([
@@ -332,7 +376,7 @@ class LoginTest extends TestCase
         $stack->push(Middleware::history($this->history));
         $time = 1790000000.0;
 
-        return new Login(
+        return new Login(new Authenticator(
             new DeviceAuthorizationClient(
                 new OAuthConfiguration(
                     'https://accounts.example.test/oauth/device',
@@ -343,12 +387,13 @@ class LoginTest extends TestCase
                 $stack,
             ),
             $this->storage(),
-            $sleep ?? static function (int $seconds): void {
-            },
+            60,
             static function () use (&$time): float {
                 return $time;
             },
-        );
+            $sleep ?? static function (int $seconds): void {
+            },
+        ));
     }
 
     /**
