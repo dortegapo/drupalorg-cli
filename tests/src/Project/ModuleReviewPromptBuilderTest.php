@@ -272,6 +272,13 @@ class ModuleReviewPromptBuilderTest extends TestCase
         self::assertStringContainsString('Do not perform duplicate assessment.', $prompt);
         self::assertStringContainsString('functional search queries', $prompt);
         self::assertStringContainsString('2-4 natural English words', $prompt);
+        self::assertStringContainsString('canonical ecosystem vocabulary', $prompt);
+        self::assertStringContainsString('usefulness in retrieving Drupal.org projects, not because a word appears frequently in the source', $prompt);
+        self::assertStringContainsString('prefer the canonical singular noun', $prompt);
+        self::assertStringContainsString('Prefer 2-3 natural English words', $prompt);
+        self::assertStringContainsString('Prefer the shortest natural phrase that preserves the reusable functional meaning.', $prompt);
+        self::assertStringContainsString('broad but discriminating description', $prompt);
+        self::assertStringContainsString('more specific complementary behavior', $prompt);
         self::assertStringContainsString('keyboard navigation', $prompt);
         self::assertStringContainsString('Do not derive these queries from the module machine name.', $prompt);
         self::assertStringContainsString('PRIMARY terms describe', $prompt);

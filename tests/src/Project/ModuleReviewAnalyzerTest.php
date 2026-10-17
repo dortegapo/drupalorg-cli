@@ -130,7 +130,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         foreach ($this->history as $index => $entry) {
             parse_str($entry['request']->getUri()->getQuery(), $query);
             self::assertSame(['profile', 'records', 'profile management', 'directory'][$index], $query['filter']['fulltext']);
-            self::assertSame('10', $query['page']['limit']);
+            self::assertSame('20', $query['page']['limit']);
             self::assertSame('0', $query['page']['offset']);
         }
         self::assertCount(3, $result['candidates']);
@@ -439,9 +439,93 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertCount(10, $result['searches']);
         foreach ($this->history as $entry) {
             parse_str($entry['request']->getUri()->getQuery(), $query);
-            self::assertSame('10', $query['page']['limit']);
+            self::assertSame('20', $query['page']['limit']);
             self::assertSame('0', $query['page']['offset']);
         }
+    }
+
+    public function testReportsMultiQueryDiscoveryMetadata(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['functional_search_queries'] = [['query' => 'profile management', 'reason' => 'Functional search.']];
+        $review['secondary_search_terms'] = [];
+        $analyzer = $this->analyzer([
+            self::searchResponse([
+                self::project('candidate_shared', 'Shared', 'Shared.'),
+                self::project('candidate_unique_a', 'A', 'A.'),
+            ]),
+            self::searchResponse([
+                self::project('candidate_shared', 'Shared', 'Shared.'),
+                self::project('candidate_unique_b', 'B', 'B.'),
+            ]),
+            self::searchResponse([]),
+        ], [
+            self::aiSuccess($review),
+            self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
+        ]);
+
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+
+        self::assertSame([
+            'searches' => 3,
+            'rawResultOccurrences' => 4,
+            'uniqueCandidatesDiscovered' => 3,
+            'multiQueryCandidates' => 1,
+            'candidatesSentToComparison' => 3,
+        ], $result['discovery']);
+    }
+
+    public function testKeepsMoreThanOneHundredDiscoveredCandidatesOutOfComparison(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $review = self::reviewResult();
+        $review['primary_search_terms'] = self::terms(['alpha', 'bravo', 'charlie', 'delta']);
+        $review['functional_search_queries'] = [
+            ['query' => 'alpha capability', 'reason' => 'First query.'],
+            ['query' => 'bravo workflow', 'reason' => 'Second query.'],
+        ];
+        $review['secondary_search_terms'] = self::terms(['fitness', 'nutrition', 'wellness']);
+
+        $responses = [];
+        for ($query = 0; $query < 10; ++$query) {
+            $projects = [];
+            for ($rank = 1; $rank <= 20; ++$rank) {
+                $machineName = 'candidate_' . $query . '_' . $rank;
+                $projects[] = self::project($machineName, $machineName, 'Description.');
+            }
+            $responses[] = self::searchResponse($projects);
+        }
+        $captureDir = $this->workDir . '/captures';
+        mkdir($captureDir);
+        $analyzer = $this->analyzer(
+            $responses,
+            [
+                self::aiSuccess($review),
+                self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
+            ],
+            $captureDir,
+        );
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            null,
+            'Example Module',
+        );
+
+        self::assertTrue($result['complete']);
+        self::assertSame(200, $result['discovery']['rawResultOccurrences']);
+        self::assertSame(200, $result['discovery']['uniqueCandidatesDiscovered']);
+        self::assertSame(100, $result['discovery']['candidatesSentToComparison']);
+        self::assertCount(100, $result['candidates']);
+        $comparisonPayload = self::capturedPayload($captureDir . '/call-1.php');
+        $userPrompt = $comparisonPayload['user_prompt'];
+        self::assertIsString($userPrompt);
+        $inputJson = trim((string) substr($userPrompt, strlen("INPUT DATA START\n"), -strlen("\nINPUT DATA END")));
+        $input = json_decode($inputJson, true, 512, JSON_THROW_ON_ERROR);
+        self::assertCount(100, $input['candidates']);
     }
 
     public function testContinuesToReviewAiWhenSourceExceedsTheHistoricalBuilderBudget(): void

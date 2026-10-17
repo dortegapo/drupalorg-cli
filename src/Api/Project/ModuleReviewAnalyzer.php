@@ -6,7 +6,7 @@ namespace mglaman\DrupalOrg\Project;
 
 final class ModuleReviewAnalyzer
 {
-    private const SEARCH_LIMIT = 10;
+    private const SEARCH_LIMIT = 20;
 
     private const MAXIMUM_RANKED_CANDIDATES = 100;
 
@@ -456,6 +456,7 @@ final class ModuleReviewAnalyzer
             'review' => $review,
             'searches' => $searches,
             'candidates' => $candidates,
+            'discovery' => $this->discoveryMetadata($searches, $candidates),
             'comparison' => $comparison,
             'assessment' => $assessment,
             'core' => $core,
@@ -498,6 +499,7 @@ final class ModuleReviewAnalyzer
             'review' => $review,
             'searches' => $searches,
             'candidates' => $candidates,
+            'discovery' => $this->discoveryMetadata($searches, $candidates),
             'comparison' => $comparison,
             'assessment' => null,
             'ai' => $ai,
@@ -537,6 +539,62 @@ final class ModuleReviewAnalyzer
                 'omittedBytes' => 0,
                 'omittedBreakdown' => [],
             ],
+        ];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $searches
+     * @param list<array<string, mixed>> $candidates
+     *
+     * @return array{
+     *     searches: int,
+     *     rawResultOccurrences: int,
+     *     uniqueCandidatesDiscovered: int,
+     *     multiQueryCandidates: int,
+     *     candidatesSentToComparison: int
+     * }
+     */
+    private function discoveryMetadata(array $searches, array $candidates): array
+    {
+        $rawResultOccurrences = 0;
+        $queriesByCandidate = [];
+
+        foreach ($searches as $searchIndex => $search) {
+            $projects = $search['results'] ?? [];
+            if (!is_array($projects)) {
+                continue;
+            }
+
+            $rawResultOccurrences += count($projects);
+            $query = is_string($search['term'] ?? null)
+                ? strtolower(trim($search['term']))
+                : 'search-' . $searchIndex;
+            foreach ($projects as $project) {
+                if (!is_array($project) || !is_string($project['machineName'] ?? null)) {
+                    continue;
+                }
+
+                $machineName = trim($project['machineName']);
+                if ($machineName === '') {
+                    continue;
+                }
+                $queriesByCandidate[$machineName][$query] = true;
+            }
+        }
+
+        $multiQueryCandidates = 0;
+        foreach ($queriesByCandidate as $queries) {
+            if (count($queries) > 1) {
+                ++$multiQueryCandidates;
+            }
+        }
+
+        return [
+            'searches' => count($searches),
+            'rawResultOccurrences' => $rawResultOccurrences,
+            'uniqueCandidatesDiscovered' => count($queriesByCandidate),
+            'multiQueryCandidates' => $multiQueryCandidates,
+            'candidatesSentToComparison' => count($candidates),
         ];
     }
 

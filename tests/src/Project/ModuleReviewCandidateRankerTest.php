@@ -36,6 +36,30 @@ class ModuleReviewCandidateRankerTest extends TestCase
         self::assertEqualsWithDelta(1 / 61, $results[1]['score'], 0.000000001);
     }
 
+    public function testRepeatedRankFifteenEvidenceBeatsOneRankOneMatch(): void
+    {
+        $sharedProjects = [];
+        for ($rank = 1; $rank <= 15; ++$rank) {
+            $sharedProjects[] = self::project($rank === 15 ? 'candidate_shared' : 'candidate_first_' . $rank);
+        }
+        $secondProjects = [];
+        for ($rank = 1; $rank <= 15; ++$rank) {
+            $secondProjects[] = self::project($rank === 15 ? 'candidate_shared' : 'candidate_second_' . $rank);
+        }
+        $singleProjects = [self::project('candidate_single')];
+
+        $results = $this->ranker()->rank([
+            self::ranking('first', $sharedProjects),
+            self::ranking('second', $secondProjects),
+            self::ranking('third', $singleProjects),
+        ], []);
+
+        self::assertSame('candidate_shared', $results[0]['machineName']);
+        self::assertGreaterThan($results[1]['score'], $results[0]['score']);
+        self::assertEqualsWithDelta(2 / 75 + 2 / 75, $results[0]['score'], 0.000000001);
+        self::assertEqualsWithDelta(2 / 61, $results[1]['score'], 0.000000001);
+    }
+
     public function testAccumulatesContributionsAndRecordsMatches(): void
     {
         $results = $this->ranker()->rank([

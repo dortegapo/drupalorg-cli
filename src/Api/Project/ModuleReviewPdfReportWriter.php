@@ -334,9 +334,15 @@ final class ModuleReviewPdfReportWriter
         $searches = is_array($analysis['searches'] ?? null) ? $analysis['searches'] : [];
         $candidates = is_array($analysis['candidates'] ?? null) ? $analysis['candidates'] : [];
         $html .= '<p><strong>Searches:</strong> ' . count($searches)
-            . '<br><strong>' . count($candidates) . ' unique candidates discovered.</strong> '
-            . 'Top ' . min(10, count($candidates)) . ' shown below. '
-            . 'All discovered candidates were available to the semantic comparison stage.</p>';
+            . '<br>' . $this->discoveryCount($analysis, 'rawResultOccurrences', 0)
+            . ' result occurrences returned by Drupal.org.'
+            . '<br>' . $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates))
+            . ' unique candidate projects discovered.'
+            . '<br>' . $this->discoveryCount($analysis, 'multiQueryCandidates', 0)
+            . ' candidates were found by more than one search query.'
+            . '<br><strong>Top ' . min(10, $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates)))
+            . ' shown below.</strong> '
+            . $this->comparisonAvailabilityWording($analysis, $candidates) . '</p>';
 
         if ($candidates !== []) {
             $html .= '<h3>Candidate discovery ranking</h3><p class="small">'
@@ -360,6 +366,35 @@ final class ModuleReviewPdfReportWriter
         }
 
         return $html . '</section>';
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     */
+    private function discoveryCount(array $analysis, string $key, int $fallback): int
+    {
+        $discovery = $analysis['discovery'] ?? null;
+        if (!is_array($discovery) || !is_int($discovery[$key] ?? null)) {
+            return $fallback;
+        }
+
+        return $discovery[$key];
+    }
+
+    /**
+     * @param array<string, mixed> $analysis
+     * @param list<array<string, mixed>> $candidates
+     */
+    private function comparisonAvailabilityWording(array $analysis, array $candidates): string
+    {
+        $uniqueCandidates = $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates));
+        $candidatesSent = $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates));
+        if ($uniqueCandidates > $candidatesSent) {
+            return 'The top ' . $candidatesSent
+                . ' candidates after Weighted Reciprocal Rank Fusion were available to the semantic comparison stage.';
+        }
+
+        return 'All discovered candidates were available to the semantic comparison stage.';
     }
 
     /**
