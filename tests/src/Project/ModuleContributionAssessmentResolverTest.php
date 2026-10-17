@@ -81,6 +81,22 @@ class ModuleContributionAssessmentResolverTest extends TestCase
         );
     }
 
+    public function testIgnoresAdvisoryNotesWhenResolvingLikelyDuplicate(): void
+    {
+        $review = self::moduleReview('reusable', 'ready');
+        $review['contrib_readiness']['advisory_notes'] = [
+            ['reason' => 'Optional generalization.'],
+        ];
+
+        $result = $this->resolver()->resolve($review, self::comparison('likely_duplicate'));
+
+        self::assertSame('not_candidate_yet', $result['status']);
+        self::assertSame(
+            [['code' => 'likely_duplicate', 'severity' => 'blocking']],
+            $result['signals'],
+        );
+    }
+
     public function testResolvesClientSpecificAsNotCandidateYet(): void
     {
         $result = $this->resolver()->resolve(

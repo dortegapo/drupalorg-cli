@@ -374,6 +374,58 @@ class ModuleReviewResultValidatorTest extends TestCase
         $this->validator()->validate($result, self::files());
     }
 
+    public function testAcceptsReadyWithAdvisoryNotes(): void
+    {
+        $result = self::validResult();
+        $result['contrib_readiness']['advisory_notes'] = [self::finding('Optional generalization.')];
+
+        $validated = $this->validator()->validate($result, self::files());
+
+        self::assertSame('ready', $validated['contrib_readiness']['status']);
+        self::assertSame([], $validated['contrib_readiness']['required_changes']);
+        self::assertCount(1, $validated['contrib_readiness']['advisory_notes']);
+    }
+
+    public function testRejectsReadyWithRequiredChanges(): void
+    {
+        $result = self::validResult();
+        $result['contrib_readiness']['required_changes'] = [self::finding('Required change.')];
+
+        $this->expectInvalidResult();
+        $this->validator()->validate($result, self::files());
+    }
+
+    #[DataProvider('readinessStatusRequiringChangesProvider')]
+    public function testRequiresRequiredChangesForNonReadyStatus(string $status): void
+    {
+        $result = self::validResult();
+        $result['contrib_readiness']['status'] = $status;
+
+        $this->expectInvalidResult();
+        $this->validator()->validate($result, self::files());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function readinessStatusRequiringChangesProvider(): iterable
+    {
+        yield 'needs changes' => ['needs_changes'];
+        yield 'significant changes' => ['significant_changes'];
+    }
+
+    public function testAcceptsNonReadyStatusWithRequiredChanges(): void
+    {
+        $result = self::validResult();
+        $result['contrib_readiness']['status'] = 'needs_changes';
+        $result['contrib_readiness']['required_changes'] = [self::finding('Required change.')];
+
+        self::assertSame(
+            'needs_changes',
+            $this->validator()->validate($result, self::files())['contrib_readiness']['status'],
+        );
+    }
+
     public function testRejectsInvalidFindingSeverity(): void
     {
         $result = self::validResult();
@@ -417,7 +469,8 @@ class ModuleReviewResultValidatorTest extends TestCase
             ],
             'contrib_readiness' => [
                 'status' => 'ready',
-                'findings' => [],
+                'required_changes' => [],
+                'advisory_notes' => [],
             ],
             'analysis_limits' => [],
         ];
@@ -437,6 +490,21 @@ class ModuleReviewResultValidatorTest extends TestCase
             ],
             $terms,
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function finding(string $evidence): array
+    {
+        return [
+            'severity' => 'medium',
+            'file' => 'src/Profile.php',
+            'line' => 1,
+            'evidence' => $evidence,
+            'reason' => 'The supplied source supports this observation.',
+            'suggestion' => 'Review the behavior before contribution.',
+        ];
     }
 
     /**

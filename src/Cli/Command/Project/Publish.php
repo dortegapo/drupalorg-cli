@@ -348,11 +348,20 @@ class Publish extends Command
         $review = is_array($result['review'] ?? null) ? $result['review'] : [];
         $reusability = is_array($review['reusability'] ?? null) ? $review['reusability'] : [];
         $readiness = is_array($review['contrib_readiness'] ?? null) ? $review['contrib_readiness'] : [];
-        $this->stdOut->writeln(sprintf('Reusability: %s', (string) ($reusability['status'] ?? 'unknown')));
-        $this->stdOut->writeln(sprintf('Contrib readiness: %s', (string) ($readiness['status'] ?? 'unknown')));
+        $this->stdOut->writeln(sprintf(
+            'Reusability: %s',
+            $this->humanizeReusabilityLabel(is_string($reusability['status'] ?? null) ? $reusability['status'] : 'unknown'),
+        ));
+        $this->stdOut->writeln(sprintf(
+            'Contrib readiness: %s',
+            $this->humanizeReadinessLabel(is_string($readiness['status'] ?? null) ? $readiness['status'] : 'unknown'),
+        ));
 
         $comparison = is_array($result['comparison'] ?? null) ? $result['comparison'] : [];
-        $this->stdOut->writeln(sprintf('Drupal.org overlap: %s', (string) ($comparison['verdict'] ?? 'unknown')));
+        $this->stdOut->writeln(sprintf(
+            'Drupal.org overlap: %s',
+            $this->humanizeOverlapLabel(is_string($comparison['verdict'] ?? null) ? $comparison['verdict'] : 'unknown'),
+        ));
         $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
         $this->stdOut->writeln(sprintf('Candidate projects evaluated: %d', count($candidates)));
         $source = is_array($result['source'] ?? null) ? $result['source'] : [];
@@ -374,7 +383,12 @@ class Publish extends Command
             ));
         }
 
-        $this->writePotentialOverlaps($comparison);
+        $this->writePotentialOverlaps(
+            $comparison,
+            is_array($result['candidates'] ?? null) ? $result['candidates'] : [],
+            is_array($result['candidateCompatibility'] ?? null) ? $result['candidateCompatibility'] : [],
+            is_array($result['core'] ?? null) ? $result['core'] : [],
+        );
         $this->writePdfPath($pdfPath);
     }
 
@@ -423,6 +437,8 @@ class Publish extends Command
         $this->stdOut->writeln('');
         $this->stdOut->writeln('Drupal.org project searches are performed directly against Drupal.org.');
         $this->stdOut->writeln('The AI does not browse Drupal.org or invent the candidate project list.');
+        $this->stdOut->writeln('The module name and generated search queries are sent to Drupal.org public project search.');
+        $this->stdOut->writeln('Module source code is not sent to Drupal.org for this search.');
         $this->stdOut->writeln('');
         $this->stdOut->writeln('Only the selected module is analyzed.');
         $this->stdOut->writeln('Its source code will be sent to the configured Drupal AI provider:');
@@ -526,15 +542,35 @@ class Publish extends Command
 
     /**
      * @param array<string, mixed> $comparison
+     * @param list<array<string, mixed>> $candidates
+     * @param array<string, array<string, mixed>> $compatibilities
+     * @param array{runtimeVersion: ?string, targetMajor: ?int} $core
      */
-    private function writePotentialOverlaps(array $comparison): void
-    {
-        $matches = $comparison['candidates'] ?? [];
-        if (!is_array($matches) || $matches === []) {
+    private function writePotentialOverlaps(
+        array $comparison,
+        array $candidates,
+        array $compatibilities,
+        array $core,
+    ): void {
+        if (!array_key_exists('candidates', $comparison) || !is_array($comparison['candidates'])) {
+            return;
+        }
+        $matches = $comparison['candidates'];
+        if ($matches === []) {
             return;
         }
 
         $this->stdOut->writeln('Potential overlaps:');
+        $candidateTitles = [];
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate['machineName'] ?? null)) {
+                $candidateTitles[$candidate['machineName']] = is_string($candidate['title'] ?? null)
+                    && trim($candidate['title']) !== ''
+                    ? $candidate['title']
+                    : $candidate['machineName'];
+            }
+        }
+
         $shown = 0;
         foreach ($matches as $match) {
             if (!is_array($match) || !is_string($match['machine_name'] ?? null)) {
@@ -546,11 +582,73 @@ class Publish extends Command
                 continue;
             }
 
-            $this->stdOut->writeln(sprintf('  - %s (%s)', $match['machine_name'], $assessment));
+            $machineName = $match['machine_name'];
+            $title = $candidateTitles[$machineName] ?? $machineName;
+            $this->stdOut->writeln($title . ' (' . $machineName . ')');
+            $this->stdOut->writeln('  Functional assessment: ' . $this->humanizeReviewLabel($assessment));
+            $compatibility = is_array($compatibilities[$machineName] ?? null)
+                ? $compatibilities[$machineName]
+                : [];
+            $status = is_string($compatibility['status'] ?? null) ? $compatibility['status'] : 'unknown';
+            $targetMajor = is_int($compatibility['targetCoreMajor'] ?? null)
+                ? $compatibility['targetCoreMajor']
+                : (is_int($core['targetMajor'] ?? null) ? $core['targetMajor'] : null);
+            $this->stdOut->writeln('  Core compatibility: ' . $this->compatibilityLabel($status, $targetMajor));
             ++$shown;
             if ($shown === 5) {
                 break;
             }
         }
+    }
+
+    private function humanizeReviewLabel(string $value): string
+    {
+        return match ($value) {
+            'likely_duplicate' => 'Likely Duplicate',
+            'possible_overlap' => 'Possible Overlap',
+            default => 'Unknown',
+        };
+    }
+
+    private function humanizeOverlapLabel(string $value): string
+    {
+        return match ($value) {
+            'likely_duplicate' => 'Likely Duplicate',
+            'possible_overlap' => 'Possible Overlap',
+            'no_clear_duplicate' => 'No Clear Duplicate',
+            default => 'Unknown',
+        };
+    }
+
+    private function humanizeReusabilityLabel(string $value): string
+    {
+        return match ($value) {
+            'reusable' => 'Reusable',
+            'needs_generalization' => 'Needs Generalization',
+            'client_specific' => 'Client Specific',
+            'unclear' => 'Unclear',
+            default => 'Unknown',
+        };
+    }
+
+    private function humanizeReadinessLabel(string $value): string
+    {
+        return match ($value) {
+            'ready' => 'Ready',
+            'needs_changes' => 'Needs Changes',
+            'significant_changes' => 'Significant Changes',
+            'unclear' => 'Unclear',
+            default => 'Unknown',
+        };
+    }
+
+    private function compatibilityLabel(string $status, ?int $targetMajor): string
+    {
+        return match ($status) {
+            'compatible' => 'Compatible with ' . ($targetMajor === null ? 'target Drupal' : 'Drupal ' . $targetMajor),
+            'outdated' => 'Outdated for ' . ($targetMajor === null ? 'target Drupal' : 'Drupal ' . $targetMajor),
+            'requires_newer_core' => 'Requires a newer Drupal core',
+            default => 'Not verified',
+        };
     }
 }
