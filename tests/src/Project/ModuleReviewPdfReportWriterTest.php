@@ -212,7 +212,7 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Candidate discovery ranking', $html);
         self::assertStringContainsString('Weighted Reciprocal Rank Fusion (RRF)', $html);
         self::assertStringContainsString('not a duplicate probability', $html);
-        self::assertStringContainsString('12 unique candidates discovered.', $html);
+        self::assertStringContainsString('12 unique candidate projects discovered.', $html);
         self::assertStringContainsString('Top 10 shown below.', $html);
         self::assertStringContainsString('All discovered candidates were available to the semantic comparison stage.', $html);
         self::assertStringContainsString('<th>Rank</th><th>Project</th><th>Title</th><th>Matched queries</th>', $html);
@@ -284,6 +284,32 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Styles: 4', $html);
         self::assertStringContainsString(
             'Omitted files may contain additional evidence.',
+            $html,
+        );
+    }
+
+    public function testRendersDiscoveryPoolAndComparisonCountsSeparately(): void
+    {
+        $analysis = self::completeAnalysis();
+        $analysis['discovery'] = [
+            'searches' => 10,
+            'rawResultOccurrences' => 200,
+            'uniqueCandidatesDiscovered' => 150,
+            'multiQueryCandidates' => 23,
+            'candidatesSentToComparison' => 100,
+        ];
+
+        $html = $this->renderHtml($analysis);
+
+        self::assertStringContainsString('200 result occurrences returned by Drupal.org.', $html);
+        self::assertStringContainsString('150 unique candidate projects discovered.', $html);
+        self::assertStringContainsString('23 candidates were found by more than one search query.', $html);
+        self::assertStringContainsString(
+            'The top 100 candidates after Weighted Reciprocal Rank Fusion were available to the semantic comparison stage.',
+            $html,
+        );
+        self::assertStringNotContainsString(
+            'All discovered candidates were available to the semantic comparison stage.',
             $html,
         );
     }
