@@ -2,18 +2,25 @@
 
 declare(strict_types=1);
 
-namespace mglaman\DrupalOrg\Project;
+namespace mglaman\DrupalOrg\Action\Project;
 
-final class ProjectMetadataGenerator
+use mglaman\DrupalOrg\Action\ActionInterface;
+use mglaman\DrupalOrg\Project\DrupalAiBridge;
+use mglaman\DrupalOrg\Project\ProjectMetadataPromptBuilder;
+use mglaman\DrupalOrg\Project\ProjectMetadataResultValidator;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
+
+final class GenerateProjectMetadataAction implements ActionInterface
 {
     /**
-     * @var callable|null
+     * @param \Closure|null $structuredChat
      */
-    private $structuredChat;
-
-    public function __construct(?callable $structuredChat = null)
-    {
-        $this->structuredChat = $structuredChat;
+    public function __construct(
+        private readonly ?\Closure $structuredChat = null,
+        private readonly ?ProjectMetadataPromptBuilder $promptBuilder = null,
+        private readonly ?ProjectMetadataResultValidator $resultValidator = null,
+        private readonly ?DrupalAiBridge $aiBridge = null,
+    ) {
     }
 
     /**
@@ -33,27 +40,24 @@ final class ProjectMetadataGenerator
      *     sourceCoverage: 'full'|'partial',
      *     runtime: array<string, mixed>
      * } $input
-     *
-     * @return array{
-     *     metadata: array{summary: string, description: string, features: list<string>, integrations: list<string>},
-     *     providerId: string,
-     *     modelId: string,
-     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
-     * }
      */
-    public function generate(array $input): array
+    public function __invoke(array $input): ProjectMetadataResult
     {
-        $builder = new ProjectMetadataPromptBuilder();
+        $builder = $this->promptBuilder ?? new ProjectMetadataPromptBuilder();
         $prompts = $builder->build($input);
         $response = $this->callStructuredChat($input['runtime'], $prompts);
-        $metadata = (new ProjectMetadataResultValidator())->validate($response['result']);
+        $validator = $this->resultValidator ?? new ProjectMetadataResultValidator();
+        $metadata = $validator->validate($response['result']);
 
-        return [
-            'metadata' => $metadata,
-            'providerId' => $response['providerId'],
-            'modelId' => $response['modelId'],
-            'tokenUsage' => $response['tokenUsage'],
-        ];
+        return new ProjectMetadataResult(
+            summary: $metadata['summary'],
+            description: $metadata['description'],
+            features: $metadata['features'],
+            integrations: $metadata['integrations'],
+            providerId: $response['providerId'],
+            modelId: $response['modelId'],
+            tokenUsage: $response['tokenUsage'],
+        );
     }
 
     /**
@@ -70,9 +74,15 @@ final class ProjectMetadataGenerator
     private function callStructuredChat(array $runtime, array $prompts): array
     {
         if ($this->structuredChat !== null) {
-            $response = ($this->structuredChat)($runtime, $prompts['systemPrompt'], $prompts['userPrompt'], $prompts['schema']);
+            $response = ($this->structuredChat)(
+                $runtime,
+                $prompts['systemPrompt'],
+                $prompts['userPrompt'],
+                $prompts['schema'],
+            );
         } else {
-            $response = (new DrupalAiBridge())->structuredChat(
+            $bridge = $this->aiBridge ?? new DrupalAiBridge();
+            $response = $bridge->structuredChat(
                 $runtime,
                 $prompts['systemPrompt'],
                 $prompts['userPrompt'],
