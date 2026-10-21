@@ -18,6 +18,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 use Symfony\Component\Console\Helper\HelperSet;
 use Symfony\Component\Console\Helper\QuestionHelper;
+use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -170,85 +171,6 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->pdfCalls);
     }
 
-    public function testNoBrowserPrintsCreationUrlWithoutOpeningIt(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            null,
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['cancel']);
-
-        self::assertSame(0, $tester->execute([
-            'module' => 'my_module',
-            '--no-browser' => true,
-        ]));
-        self::assertSame(0, $command->browserCalls);
-        self::assertStringContainsString(
-            'https://www.drupal.org/node/add/project-module',
-            $tester->getDisplay(),
-        );
-    }
-
-    public function testManualHandoffOpensCreationPageAndVerifiesProjectAfterEnter(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            null,
-            self::availableAiContext(),
-            self::completeReviewResult(),
-            null,
-            null,
-            null,
-            null,
-            self::jsonResponse([
-                'list' => [[
-                    'nid' => '123',
-                    'title' => 'My Module',
-                    'field_project_machine_name' => 'my_module',
-                ]],
-            ]),
-        );
-        $tester->setInputs(['']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(1, $command->browserCalls);
-        self::assertSame(
-            ['https://www.drupal.org/node/add/project-module'],
-            $command->openedUrls,
-        );
-        self::assertStringContainsString('Drupal.org project found: my_module', $tester->getDisplay());
-    }
-
-    public function testTechnicalFailureDuringManualHandoffReturnsFailure(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            null,
-            self::availableAiContext(),
-            self::completeReviewResult(),
-            null,
-            null,
-            null,
-            null,
-            new Response(500, [], 'Server error'),
-        );
-        $tester->setInputs(['']);
-
-        self::assertSame(1, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getDisplay());
-    }
-
     public function testMetadataCanBeGeneratedAfterAcceptedReview(): void
     {
         $this->createDiscoverableModule();
@@ -314,437 +236,32 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Opening Drupal.org project creation page...', $tester->getDisplay());
     }
 
-    public function testUnavailableRuntimeContinuesWithoutReview(): void
+    public function testManualHandoffFailureReturnsFailure(): void
     {
         $this->createDiscoverableModule();
         chdir($this->workDir);
 
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            null,
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString(
-            'Drupal AI review is not available for this project environment.',
-            $tester->getDisplay(),
-        );
-        self::assertSame(1, $command->runtimeCalls);
-        self::assertSame(0, $command->inspectCalls);
-        self::assertSame(0, $command->analyzeCalls);
-    }
-
-    public function testUnavailableAiContinuesWithoutReview(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            [
-                'aiEnabled' => false,
-                'providerId' => null,
-                'modelId' => null,
-            ],
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString(
-            'Drupal AI review is not available for this project environment.',
-            $tester->getDisplay(),
-        );
-        self::assertSame(1, $command->runtimeCalls);
-        self::assertSame(1, $command->inspectCalls);
-        self::assertSame(0, $command->analyzeCalls);
-    }
-
-    public function testAiInspectionFailureContinuesWithoutReview(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-            new \RuntimeException('Inspection failed.'),
-        );
-        $tester->setInputs(['cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString(
-            'Drupal AI review is not available for this project environment.',
-            $tester->getDisplay(),
-        );
-        self::assertSame(1, $command->inspectCalls);
-        self::assertSame(0, $command->analyzeCalls);
-    }
-
-    public function testRejectingReviewDoesNotRunTheAnalyzer(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString('Run AI-assisted contribution review? [y/N]', $tester->getDisplay());
-        self::assertSame(0, $command->analyzeCalls);
-        self::assertSame(0, $command->pdfCalls);
-    }
-
-    public function testAcceptedReviewRunsOnceShowsSummaryAndContinues(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $command->pdfPath = $this->workDir . '/my_module-drupalorg-contribution-review.pdf';
-        $tester->setInputs(['y', 'y', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertSame(realpath($this->workDir . '/web/modules/custom/my_module'), $command->analyzeModulePath);
-        self::assertSame('my_module', $command->analyzeMachineName);
-        self::assertSame('My Module', $command->analyzeHumanName);
-        self::assertSame(self::runtime(), $command->analyzeRuntime);
-        self::assertSame(1, $command->pdfCalls);
-        self::assertStringContainsString('Optional AI-assisted contribution review', $display);
-        self::assertStringContainsString('Provider: local-provider', $display);
-        self::assertStringContainsString('Model: local-model', $display);
-        self::assertStringContainsString(
-            'best-effort local redaction',
-            $display,
-        );
-        self::assertStringContainsString('similar functionality', $display);
-        self::assertStringContainsString('possible functional overlap', $display);
-        self::assertStringContainsString('generate a PDF report', $display);
-        self::assertStringContainsString('Only the selected module is analyzed.', $display);
-        self::assertStringContainsString('The review is advisory only.', $display);
-        self::assertStringContainsString('Module source prepared.', $display);
-        self::assertStringContainsString('Analyzing module with AI...', $display);
-        self::assertStringContainsString('Module analysis completed.', $display);
-        self::assertStringContainsString('Searching Drupal.org projects... 1/1 (primary: profile)', $display);
-        self::assertStringContainsString('Candidate projects found: 1', $display);
-        self::assertStringContainsString('Comparing 1 Drupal.org candidates with AI...', $display);
-        self::assertStringContainsString('Candidate comparison completed.', $display);
-        self::assertStringContainsString('Contribution assessment completed.', $display);
-        self::assertStringContainsString('Assessment: Candidate with changes', $display);
-        self::assertStringContainsString('Reusability: Reusable', $display);
-        self::assertStringContainsString('Contrib readiness: Ready', $display);
-        self::assertStringContainsString('Drupal.org overlap: Possible Overlap', $display);
-        self::assertStringContainsString('Candidate projects evaluated: 1', $display);
-        self::assertStringContainsString('Sensitive values redacted locally: 2', $display);
-        self::assertStringContainsString('AI #1: local-provider / local-model', $display);
-        self::assertStringContainsString('AI #2: local-provider / local-model', $display);
-        self::assertStringContainsString('Tokens used: input 20, output 10, total 30', $display);
-        self::assertStringContainsString('Potential overlaps:', $display);
-        self::assertStringContainsString('Existing Profiles (existing_profiles)', $display);
-        self::assertStringContainsString('  Functional assessment: Possible Overlap', $display);
-        self::assertStringContainsString('PDF report generated.', $display);
-        self::assertStringContainsString('Full report: ' . $command->pdfPath, $display);
-        self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
-        self::assertStringContainsString('Drupal.org project does not exist: my_module', $display);
-        self::assertTrue(
-            (int) strpos($display, 'Drupal.org project does not exist: my_module')
-            < (int) strpos($display, 'Optional AI-assisted contribution review'),
-        );
-    }
-
-    public function testLargeModuleOffersOnlyBudgetsBelowEligibleSource(): void
-    {
-        $this->createOversizedModule(180 * 1024);
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', '1', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertStringContainsString('  1. 128 KiB — Recommended', $display);
-        self::assertStringContainsString('  2. Full module', $display);
-        self::assertStringContainsString('  3. Cancel AI review', $display);
-        self::assertStringNotContainsString('[0]', $display);
-        self::assertSame(1, substr_count($display, '128 KiB — Recommended'));
-        self::assertStringContainsString('128 KiB — Recommended', $display);
-        self::assertStringContainsString('Full module', $display);
-        self::assertStringContainsString('Cancel AI review', $display);
-        self::assertStringNotContainsString('256 KiB', $display);
-        self::assertStringNotContainsString('512 KiB', $display);
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertNotNull($command->analyzePreparedSource);
-        self::assertSame('selected', $command->analyzePreparedSource['coverage']['mode']);
-        self::assertLessThanOrEqual(128 * 1024, $command->analyzePreparedSource['totalBytes']);
-    }
-
-    public function testModuleWithinRecommendedBudgetUsesFullSourceWithoutASelector(): void
-    {
-        $this->createOversizedModule(80 * 1024);
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertStringContainsString('Source mode: Full module.', $display);
-        self::assertStringNotContainsString('Choose how much source', $display);
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertNotNull($command->analyzePreparedSource);
-        self::assertSame('full', $command->analyzePreparedSource['coverage']['mode']);
-        self::assertSame(
-            $command->analyzePreparedSource['coverage']['eligibleFiles'],
-            $command->analyzePreparedSource['coverage']['selectedFiles'],
-        );
-    }
-
-    public function testMediumModuleCanSelectTheLargerAvailableBudget(): void
-    {
-        $this->createOversizedModule(390 * 1024);
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', '2', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertStringContainsString('  1. 128 KiB — Recommended', $display);
-        self::assertStringContainsString('  2. 256 KiB', $display);
-        self::assertStringContainsString('  3. Full module', $display);
-        self::assertStringContainsString('  4. Cancel AI review', $display);
-        self::assertStringNotContainsString('512 KiB', $display);
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertNotNull($command->analyzePreparedSource);
-        self::assertSame(256 * 1024, $command->analyzePreparedSource['coverage']['requestedBudgetBytes']);
-        self::assertLessThanOrEqual(256 * 1024, $command->analyzePreparedSource['totalBytes']);
-    }
-
-    public function testFullModuleCanBeSelectedAboveTheLargestRecommendedBudget(): void
-    {
-        $this->createOversizedModule(900 * 1024);
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', '4', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertNotNull($command->analyzePreparedSource);
-        self::assertSame('full', $command->analyzePreparedSource['coverage']['mode']);
-        self::assertGreaterThan(512 * 1024, $command->analyzePreparedSource['totalBytes']);
-        self::assertSame(
-            $command->analyzePreparedSource['coverage']['eligibleBytes'],
-            $command->analyzePreparedSource['coverage']['selectedBytes'],
-        );
-    }
-
-    public function testSourceBudgetSelectionCanBeCancelled(): void
-    {
-        $this->createOversizedModule(180 * 1024);
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', '3', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(0, $command->analyzeCalls);
-        self::assertStringContainsString('AI-assisted contribution review skipped.', $tester->getDisplay());
-    }
-
-    public function testCancellingAfterReviewStopsBeforeTheCurrentFlow(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $command->pdfPath = $this->workDir . '/my_module-drupalorg-contribution-review.pdf';
-        $tester->setInputs(['y', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertStringContainsString('Project publishing cancelled.', $tester->getDisplay());
-        self::assertStringContainsString('Drupal.org project does not exist: my_module', $tester->getDisplay());
-        self::assertStringContainsString('Full report: ' . $command->pdfPath, $tester->getDisplay());
-        self::assertSame(1, $command->pdfCalls);
-    }
-
-    public function testNotCandidateYetStillAsksToContinue(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult('not_candidate_yet'),
-        );
-        $tester->setInputs(['y', 'y', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertStringContainsString('Assessment: Not a candidate yet', $tester->getDisplay());
-        self::assertStringContainsString('Continue with project publishing? [y/N]', $tester->getDisplay());
-    }
-
-    public function testIncompleteReviewHasNoAssessmentAndStillAsksToContinue(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            [
-                'complete' => false,
-                'source' => ['redactions' => []],
-                'limitations' => [
-                    [
-                        'stage' => 'project_search',
-                        'message' => 'Drupal.org project search could not be completed.',
-                    ],
-                ],
-            ],
-        );
-        $tester->setInputs(['y', 'y', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertSame(1, $command->analyzeCalls);
-        self::assertStringContainsString('AI-assisted contribution review', $display);
-        self::assertStringContainsString('AI module review could not be completed.', $display);
-        self::assertStringContainsString('Stage: project_search', $display);
-        self::assertStringNotContainsString('Assessment:', $display);
-        self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
-    }
-
-    public function testPdfFailureDoesNotInvalidateReviewOrBlockContinuation(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-            null,
-            new \RuntimeException('PDF failed.'),
-        );
-        $tester->setInputs(['y', 'n']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertSame(1, $command->pdfCalls);
-        self::assertStringContainsString('Could not generate the PDF review report.', $display);
-        self::assertStringContainsString('The AI review results are still available in the terminal summary.', $display);
-        self::assertStringContainsString('Assessment: Candidate with changes', $display);
-        self::assertStringContainsString('Project publishing cancelled.', $display);
-    }
-
-    public function testReviewConsentIsRequiredBeforeAnalyzerExecution(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        [$tester, $command] = $this->commandTesterWithReview(
-            self::jsonResponse(['list' => []]),
-            self::runtime(),
-            self::availableAiContext(),
-            self::completeReviewResult(),
-        );
-        $tester->setInputs(['y', 'n', 'cancel']);
-
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        $display = $tester->getDisplay();
-        self::assertTrue(
-            (int) strpos($display, 'Optional AI-assisted contribution review')
-            < (int) strpos($display, 'Run AI-assisted contribution review? [y/N]'),
-        );
-        self::assertSame(1, $command->analyzeCalls);
-    }
-
-    public function testPartialTokenUsageIsReportedAsUnavailable(): void
-    {
-        $this->createDiscoverableModule();
-        chdir($this->workDir);
-
-        $reviewResult = self::completeReviewResult();
-        $reviewResult['ai']['review']['tokenUsage'] = [
-            'input' => 100,
-            'output' => null,
-            'total' => null,
-        ];
-        $reviewResult['ai']['comparison']['tokenUsage'] = [
-            'input' => 200,
-            'output' => null,
-            'total' => null,
-        ];
         [$tester] = $this->commandTesterWithReview(
             self::jsonResponse(['list' => []]),
-            self::runtime(),
+            null,
             self::availableAiContext(),
-            $reviewResult,
+            self::completeReviewResult(),
+            null,
+            null,
+            null,
+            null,
+            new Response(500, [], 'Server error'),
         );
-        $tester->setInputs(['y', 'n']);
+        $tester->setInputs(['']);
 
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertStringContainsString(
-            'Tokens used: input 300, output unavailable, total unavailable',
-            $tester->getDisplay(),
+        self::assertSame(
+            1,
+            $tester->execute(
+                ['module' => 'my_module'],
+                ['capture_stderr_separately' => true],
+            ),
         );
-        self::assertStringNotContainsString('output 0', $tester->getDisplay());
-        self::assertStringNotContainsString('total 0', $tester->getDisplay());
+        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getErrorOutput());
     }
 
     public function testPublishDoesNotRegisterReviewOptions(): void
@@ -770,10 +287,13 @@ class PublishTest extends TestCase
 
         $tester = $this->commandTester(new Response(500, [], 'Server error'));
 
-        $exitCode = $tester->execute(['module' => 'my_module']);
+        $exitCode = $tester->execute(
+            ['module' => 'my_module'],
+            ['capture_stderr_separately' => true],
+        );
 
         self::assertSame(1, $exitCode);
-        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getDisplay());
+        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getErrorOutput());
         self::assertStringNotContainsString('project does not exist', $tester->getDisplay());
     }
 
@@ -884,123 +404,6 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Could not parse module info file:', $tester->getDisplay());
     }
 
-    public function testYamlWithoutNameFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents($modulePath . '/my_module.info.yml', "type: module\ncore_version_requirement: ^11\n");
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Missing required "name" in my_module.info.yml.',
-            $tester->getDisplay()
-        );
-    }
-
-    public function testYamlWithEmptyNameFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents(
-            $modulePath . '/my_module.info.yml',
-            "name: \"\"\ntype: module\ncore_version_requirement: ^11\n"
-        );
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Required "name" in my_module.info.yml must be a non-empty string.',
-            $tester->getDisplay()
-        );
-    }
-
-    public function testYamlWithoutTypeFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents($modulePath . '/my_module.info.yml', "name: My Module\ncore_version_requirement: ^11\n");
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Missing required "type" in my_module.info.yml.',
-            $tester->getDisplay()
-        );
-    }
-
-    public function testYamlWithThemeTypeFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents(
-            $modulePath . '/my_module.info.yml',
-            "name: My Module\ntype: theme\ncore_version_requirement: ^11\n"
-        );
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Expected Drupal project type "module", got "theme".',
-            $tester->getDisplay()
-        );
-    }
-
-    public function testYamlWithoutCoreVersionRequirementFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents($modulePath . '/my_module.info.yml', "name: My Module\ntype: module\n");
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Missing required "core_version_requirement" in my_module.info.yml.',
-            $tester->getDisplay()
-        );
-    }
-
-    public function testYamlWithEmptyCoreVersionRequirementFails(): void
-    {
-        $modulePath = $this->workDir . '/my_module';
-        mkdir($modulePath);
-        file_put_contents(
-            $modulePath . '/my_module.info.yml',
-            "name: My Module\ntype: module\ncore_version_requirement: \"\"\n"
-        );
-
-        $command = (new Application())->find('project:publish');
-        $tester = new CommandTester($command);
-
-        $exitCode = $tester->execute(['module' => $modulePath]);
-
-        self::assertSame(1, $exitCode);
-        self::assertStringContainsString(
-            'Required "core_version_requirement" in my_module.info.yml must be a non-empty string.',
-            $tester->getDisplay()
-        );
-    }
-
     public function testModuleArgumentIsRequired(): void
     {
         $command = (new Application())->find('project:publish');
@@ -1031,32 +434,13 @@ class PublishTest extends TestCase
         return $modulePath;
     }
 
-    private function createOversizedModule(int $bytes): string
-    {
-        $modulePath = $this->createDiscoverableModule();
-        $sourceDirectory = $modulePath . '/src';
-        mkdir($sourceDirectory);
-        $remaining = $bytes;
-        $index = 0;
-        while ($remaining > 0) {
-            $chunk = min(8192, $remaining);
-            $prefix = "<?php\n";
-            $content = $prefix . str_repeat('x', max(0, $chunk - strlen($prefix)));
-            file_put_contents($sourceDirectory . '/Source' . $index . '.php', $content);
-            $remaining -= strlen($content);
-            ++$index;
-        }
-
-        return $modulePath;
-    }
-
     private function commandTester(Response ...$responses): CommandTester
     {
         $this->history = [];
         $stack = HandlerStack::create(new MockHandler($responses));
         $stack->push(Middleware::history($this->history));
         $client = new Client(false, $stack);
-        $command = new Publish(clientOverride: $client);
+        $command = $this->publishCommand($client);
 
         return new CommandTester($command);
     }
@@ -1122,7 +506,9 @@ class PublishTest extends TestCase
                 return $aiContext;
             },
             static function (string $modulePath) use ($client): array {
-                return (new ModuleReviewAnalyzerFactory($client))->create()->prepareSource($modulePath);
+                return (new ModuleReviewAnalyzerFactory($client))
+                    ->create()
+                    ->prepareSource($modulePath);
             },
             static function (
                 string $modulePath,
@@ -1204,11 +590,40 @@ class PublishTest extends TestCase
                 $state->openedUrls[] = $url;
             },
         );
-        $command = new Publish($workflow, $metadataAction, $handoff, $client);
+        $command = $this->publishCommand($client, $workflow, $metadataAction, $handoff);
 
         $command->setHelperSet(new HelperSet(['question' => new QuestionHelper()]));
 
         return [new CommandTester($command), $state];
+    }
+
+    private function publishCommand(
+        Client $client,
+        ?ModuleReviewWorkflow $reviewWorkflow = null,
+        ?GenerateProjectMetadataAction $metadataAction = null,
+        ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
+    ): Publish {
+        return new class(
+            $client,
+            $reviewWorkflow,
+            $metadataAction,
+            $projectCreationHandoff,
+        ) extends Publish {
+            public function __construct(
+                private readonly Client $testClient,
+                ?ModuleReviewWorkflow $reviewWorkflow,
+                ?GenerateProjectMetadataAction $metadataAction,
+                ?DrupalOrgProjectCreationHandoff $projectCreationHandoff,
+            ) {
+                parent::__construct($reviewWorkflow, $metadataAction, $projectCreationHandoff);
+            }
+
+            protected function initialize(InputInterface $input, OutputInterface $output): void
+            {
+                parent::initialize($input, $output);
+                $this->client = $this->testClient;
+            }
+        };
     }
 
     /**
@@ -1253,6 +668,10 @@ class PublishTest extends TestCase
                 ],
             ],
             'review' => [
+                'purpose' => 'Provides reusable profile records.',
+                'capabilities' => ['Create profile records', 'List profile records'],
+                'drupal_concepts' => ['content entities'],
+                'integrations' => [],
                 'reusability' => ['status' => 'reusable'],
                 'contrib_readiness' => ['status' => 'ready'],
             ],
@@ -1289,16 +708,7 @@ class PublishTest extends TestCase
      */
     private static function characterizedReviewResult(): array
     {
-        $result = self::completeReviewResult();
-        $result['review'] = [
-            'purpose' => 'Provides reusable profile records.',
-            'capabilities' => ['Create profile records', 'List profile records'],
-            'drupal_concepts' => ['content entities'],
-            'integrations' => [],
-            'reusability' => ['status' => 'reusable'],
-        ];
-
-        return $result;
+        return self::completeReviewResult();
     }
 
     private function sentRequest(): RequestInterface

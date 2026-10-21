@@ -164,10 +164,20 @@ final class ModuleReviewWorkflow
         ))) {
             $output->writeln('Project publishing cancelled.');
 
-            return new ModuleReviewWorkflowResult(false, $runtime, $result);
+            return new ModuleReviewWorkflowResult(
+                false,
+                $runtime,
+                $result,
+                $this->sourceCoverage($result),
+            );
         }
 
-        return new ModuleReviewWorkflowResult(true, $runtime, $result);
+        return new ModuleReviewWorkflowResult(
+            true,
+            $runtime,
+            $result,
+            $this->sourceCoverage($result),
+        );
     }
 
     /**
@@ -404,5 +414,16 @@ final class ModuleReviewWorkflow
         $value = number_format($bytes / 1024, 1, '.', '');
 
         return rtrim(rtrim($value, '0'), '.') . ' KiB';
+    }
+
+    /**
+     * @param array<string, mixed> $analysisResult
+     */
+    private function sourceCoverage(array $analysisResult): string
+    {
+        $source = $analysisResult['source'] ?? null;
+        $coverage = is_array($source) ? $source['coverage'] ?? null : null;
+
+        return is_array($coverage) && ($coverage['mode'] ?? null) === 'selected' ? 'partial' : 'full';
     }
 }

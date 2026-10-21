@@ -91,6 +91,74 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
     }
 
+    public function testOpensCreationPageAndVerifiesProject(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                json_encode(['list' => [[
+                    'nid' => '1',
+                    'title' => 'Example',
+                    'field_project_machine_name' => 'example',
+                ]]], JSON_THROW_ON_ERROR),
+            )),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $output = new BufferedOutput();
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("\n"));
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+        self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
+    }
+
+    public function testTechnicalFailureWritesToErrorOutput(): void
+    {
+        $handoff = new DrupalOrgProjectCreationHandoff($this->client(new Response(500)));
+        $input = new ArrayInput(
+            ['--no-browser' => true],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $output = new BufferedOutput();
+        $errorOutput = new BufferedOutput();
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("\n"));
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            $errorOutput,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::FAILED, $result->status);
+        self::assertStringNotContainsString('Could not check Drupal.org project:', $output->fetch());
+        self::assertStringContainsString('Could not check Drupal.org project:', $errorOutput->fetch());
+    }
+
     private function client(?Response $response = null): Client
     {
         return new Client(false, HandlerStack::create(new MockHandler($response === null ? [] : [$response])));
