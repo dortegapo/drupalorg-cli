@@ -4,17 +4,17 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Tests\Project;
 
-use mglaman\DrupalOrg\Project\ProjectMetadataGenerator;
+use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
-#[CoversClass(ProjectMetadataGenerator::class)]
-class ProjectMetadataGeneratorTest extends TestCase
+#[CoversClass(GenerateProjectMetadataAction::class)]
+final class GenerateProjectMetadataActionTest extends TestCase
 {
-    public function testGeneratesAndValidatesMetadataUsingStructuredChat(): void
+    public function testGeneratesTypedMetadataUsingStructuredChat(): void
     {
         $calls = [];
-        $generator = new ProjectMetadataGenerator(
+        $action = new GenerateProjectMetadataAction(
             static function (...$arguments) use (&$calls): array {
                 $calls = $arguments;
 
@@ -32,11 +32,11 @@ class ProjectMetadataGeneratorTest extends TestCase
             },
         );
 
-        $result = $generator->generate(self::input());
+        $result = $action(self::input());
 
-        self::assertSame('local-provider', $result['providerId']);
-        self::assertSame(15, $result['tokenUsage']['total']);
-        self::assertSame('Manages reusable profile records.', $result['metadata']['summary']);
+        self::assertSame('local-provider', $result->providerId);
+        self::assertSame(15, $result->tokenUsage['total']);
+        self::assertSame('Manages reusable profile records.', $result->summary);
         self::assertCount(4, $calls);
         self::assertStringNotContainsString('source code', strtolower($calls[2]));
         self::assertStringNotContainsString('candidates', strtolower($calls[2]));
@@ -44,7 +44,7 @@ class ProjectMetadataGeneratorTest extends TestCase
 
     public function testPreservesUnavailableTokenUsage(): void
     {
-        $generator = new ProjectMetadataGenerator(
+        $action = new GenerateProjectMetadataAction(
             static fn (...$arguments): array => [
                 'providerId' => 'provider',
                 'modelId' => 'model',
@@ -60,13 +60,13 @@ class ProjectMetadataGeneratorTest extends TestCase
 
         self::assertSame(
             ['input' => null, 'output' => null, 'total' => null],
-            $generator->generate(self::input())['tokenUsage'],
+            $action(self::input())->tokenUsage,
         );
     }
 
     public function testPropagatesProviderFailure(): void
     {
-        $generator = new ProjectMetadataGenerator(
+        $action = new GenerateProjectMetadataAction(
             static function (): array {
                 throw new \RuntimeException('provider failed');
             },
@@ -74,7 +74,7 @@ class ProjectMetadataGeneratorTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('provider failed');
-        $generator->generate(self::input());
+        $action(self::input());
     }
 
     /**
