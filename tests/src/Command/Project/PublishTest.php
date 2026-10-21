@@ -6,11 +6,6 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
-use mglaman\DrupalOrg\Auth\AuthenticationResult;
-use mglaman\DrupalOrg\Auth\Authenticator;
-use mglaman\DrupalOrg\Auth\DeviceAuthorizationClient;
-use mglaman\DrupalOrg\Auth\OAuthConfiguration;
-use mglaman\DrupalOrg\Auth\TokenStorage;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
@@ -87,7 +82,10 @@ class PublishTest extends TestCase
 
         $tester = $this->commandTester(self::jsonResponse(['list' => []]));
 
-        $exitCode = $tester->execute(['module' => 'my_module']);
+        $exitCode = $tester->execute(
+            ['module' => 'my_module'],
+            ['interactive' => false],
+        );
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('Machine name: my_module', $tester->getDisplay());
@@ -169,66 +167,126 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->pdfCalls);
     }
 
-    public function testNewProjectUsesStoredAuthenticatorAfterTheReviewStage(): void
+    public function testNoBrowserPrintsCreationUrlWithoutOpeningIt(): void
     {
         $this->createDiscoverableModule();
         chdir($this->workDir);
-        $storage = new TokenStorage($this->workDir . '/auth');
-        $storage->write([
-            'access_token' => 'stored-access',
-            'expires_at' => 1790003600,
-        ]);
-        $authenticator = new Authenticator(
-            new DeviceAuthorizationClient(
-                new OAuthConfiguration(
-                    'https://accounts.example.test/oauth/device',
-                    'https://accounts.example.test/oauth/token',
-                    'drupalorg-cli',
-                    [],
-                ),
-                HandlerStack::create(new MockHandler()),
-            ),
-            $storage,
-            60,
-            static fn (): float => 1790000000.0,
-        );
-        [$tester, $command] = $this->commandTesterWithInjectedAuthenticator(
-            self::jsonResponse(['list' => []]),
-            $authenticator,
-        );
 
-        self::assertSame(0, $tester->execute(
-            ['module' => 'my_module'],
-            ['interactive' => false],
-        ));
-        self::assertSame('stored-access', $command->authenticatedAccessToken);
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            null,
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['cancel']);
+
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module',
+            '--no-browser' => true,
+        ]));
+        self::assertSame(0, $command->browserCalls);
+        self::assertStringContainsString(
+            'https://www.drupal.org/node/add/project-module',
+            $tester->getDisplay(),
+        );
     }
 
-    public function testCancelledReviewDoesNotCallAuthenticator(): void
+    public function testManualHandoffOpensCreationPageAndVerifiesProjectAfterEnter(): void
     {
         $this->createDiscoverableModule();
         chdir($this->workDir);
-        [$tester, $command] = $this->commandTesterWithReviewDecision(
+
+        [$tester, $command] = $this->commandTesterWithReview(
             self::jsonResponse(['list' => []]),
-            false,
+            null,
+            self::availableAiContext(),
+            self::completeReviewResult(),
+            null,
+            null,
+            null,
+            null,
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
         );
+        $tester->setInputs(['']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(0, $command->authenticationCalls);
+        self::assertSame(1, $command->browserCalls);
+        self::assertSame(
+            ['https://www.drupal.org/node/add/project-module'],
+            $command->openedUrls,
+        );
+        self::assertStringContainsString('Drupal.org project found: my_module', $tester->getDisplay());
     }
 
-    public function testAcceptedReviewCallsAuthenticatorOnce(): void
+    public function testMetadataCanBeGeneratedAfterAcceptedReview(): void
     {
         $this->createDiscoverableModule();
         chdir($this->workDir);
-        [$tester, $command] = $this->commandTesterWithReviewDecision(
+
+        [$tester, $command] = $this->commandTesterWithReview(
             self::jsonResponse(['list' => []]),
-            true,
+            self::runtime(),
+            self::availableAiContext(),
+            self::characterizedReviewResult(),
         );
+        $tester->setInputs(['y', 'y', 'y', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
-        self::assertSame(1, $command->authenticationCalls);
-        self::assertSame('test-access', $command->authenticatedAccessToken);
+        self::assertSame(1, $command->metadataCalls);
+        self::assertStringContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
+        self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
+        self::assertStringContainsString('Metadata AI: metadata-provider / metadata-model', $tester->getDisplay());
+    }
+
+    public function testMetadataGenerationCanBeSkipped(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::characterizedReviewResult(),
+        );
+        $tester->setInputs(['y', 'y', 'n', 'cancel']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $command->metadataCalls);
+        self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
+    }
+
+    public function testMetadataFailureDoesNotBlockManualHandoff(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::characterizedReviewResult(),
+            null,
+            null,
+            null,
+            new \RuntimeException('metadata failed'),
+        );
+        $tester->setInputs(['y', 'y', 'y', 'cancel']);
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(1, $command->metadataCalls);
+        self::assertStringContainsString(
+            'Could not generate Drupal.org project metadata automatically.',
+            $tester->getDisplay(),
+        );
+        self::assertStringContainsString('You can enter the project metadata manually on Drupal.org.', $tester->getDisplay());
+        self::assertStringContainsString('Opening Drupal.org project creation page...', $tester->getDisplay());
     }
 
     public function testUnavailableRuntimeContinuesWithoutReview(): void
@@ -242,6 +300,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
+        $tester->setInputs(['cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertStringContainsString(
@@ -268,6 +327,7 @@ class PublishTest extends TestCase
             ],
             self::completeReviewResult(),
         );
+        $tester->setInputs(['cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertStringContainsString(
@@ -291,6 +351,7 @@ class PublishTest extends TestCase
             self::completeReviewResult(),
             new \RuntimeException('Inspection failed.'),
         );
+        $tester->setInputs(['cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertStringContainsString(
@@ -312,7 +373,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
-        $tester->setInputs(['']);
+        $tester->setInputs(['', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertStringContainsString('Run AI-assisted contribution review? [y/N]', $tester->getDisplay());
@@ -332,7 +393,7 @@ class PublishTest extends TestCase
             self::completeReviewResult(),
         );
         $command->pdfPath = $this->workDir . '/my_module-drupalorg-contribution-review.pdf';
-        $tester->setInputs(['y', 'y']);
+        $tester->setInputs(['y', 'y', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         $display = $tester->getDisplay();
@@ -502,7 +563,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
-        $tester->setInputs(['y', '3']);
+        $tester->setInputs(['y', '3', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertSame(0, $command->analyzeCalls);
@@ -542,7 +603,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult('not_candidate_yet'),
         );
-        $tester->setInputs(['y', 'y']);
+        $tester->setInputs(['y', 'y', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertSame(1, $command->analyzeCalls);
@@ -570,7 +631,7 @@ class PublishTest extends TestCase
                 ],
             ],
         );
-        $tester->setInputs(['y', 'y']);
+        $tester->setInputs(['y', 'y', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         $display = $tester->getDisplay();
@@ -617,7 +678,7 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::completeReviewResult(),
         );
-        $tester->setInputs(['y', 'n']);
+        $tester->setInputs(['y', 'n', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         $display = $tester->getDisplay();
@@ -669,6 +730,14 @@ class PublishTest extends TestCase
         self::assertFalse($command->getDefinition()->hasOption('ai-metadata'));
     }
 
+    public function testNoBrowserOptionIsRegisteredAsValueNone(): void
+    {
+        $command = (new Application())->find('project:publish');
+
+        self::assertTrue($command->getDefinition()->hasOption('no-browser'));
+        self::assertFalse($command->getDefinition()->getOption('no-browser')->acceptValue());
+    }
+
     public function testDrupalOrgErrorIsNotReportedAsMissingProject(): void
     {
         $this->createValidModule();
@@ -716,15 +785,16 @@ class PublishTest extends TestCase
             . "Drupal.org project exists: no\n\n"
             . "Planned actions:\n"
             . "  1. Offer an optional AI-assisted contribution review and local PDF report.\n"
-            . "  2. Authenticate with Drupal.org automatically if required.\n"
-            . "  3. Create Drupal.org project \"my_module\".\n"
-            . "  4. Wait for repository provisioning.\n"
-            . "  5. Prepare an isolated temporary workspace.\n"
-            . "  6. Copy the module into the temporary workspace.\n"
-            . "  7. Initialize the publication Git repository.\n"
-            . "  8. Create the initial commit.\n"
-            . "  9. Configure the Drupal.org Git remote.\n"
-            . "  10. Push the initial branch.\n\n"
+            . "  2. Optionally generate Drupal.org project metadata from the AI module characterization.\n"
+            . "  3. Open the Drupal.org project creation page for manual project creation.\n"
+            . "  4. Verify that the Drupal.org project exists.\n"
+            . "  5. Wait for the Drupal.org Git repository to become available.\n"
+            . "  6. Prepare an isolated temporary workspace.\n"
+            . "  7. Copy the module into the temporary workspace.\n"
+            . "  8. Initialize the publication Git repository.\n"
+            . "  9. Create the initial commit.\n"
+            . "  10. Configure the Drupal.org Git remote.\n"
+            . "  11. Push the initial branch.\n\n"
             . "Publication execution is not implemented yet.\n"
             . "Dry run complete. No changes were made.\n",
             $tester->getDisplay()
@@ -955,112 +1025,6 @@ class PublishTest extends TestCase
         return $modulePath;
     }
 
-    /**
-     * @return array{0: CommandTester, 1: object}
-     */
-    private function commandTesterWithInjectedAuthenticator(
-        Response $response,
-        Authenticator $authenticator,
-    ): array {
-        $this->history = [];
-        $stack = HandlerStack::create(new MockHandler([$response]));
-        $stack->push(Middleware::history($this->history));
-        $client = new Client(false, $stack);
-        $command = new class($client, $authenticator) extends Publish {
-            public ?string $authenticatedAccessToken = null;
-
-            public function __construct(
-                private readonly Client $testClient,
-                Authenticator $authenticator,
-            ) {
-                parent::__construct($authenticator);
-            }
-
-            protected function initialize(InputInterface $input, OutputInterface $output): void
-            {
-                parent::initialize($input, $output);
-                $this->client = $this->testClient;
-            }
-
-            protected function createAuthenticatedClient(string $accessToken): Client
-            {
-                $this->authenticatedAccessToken = $accessToken;
-                return parent::createAuthenticatedClient($accessToken);
-            }
-        };
-
-        return [new CommandTester($command), $command];
-    }
-
-    /**
-     * @return array{0: CommandTester, 1: object}
-     */
-    private function commandTesterWithReviewDecision(Response $response, bool $reviewDecision): array
-    {
-        $this->history = [];
-        $stack = HandlerStack::create(new MockHandler([$response]));
-        $stack->push(Middleware::history($this->history));
-        $client = new Client(false, $stack);
-        $command = new class($client, $this->testAuthenticator(), $reviewDecision) extends Publish {
-            public int $authenticationCalls = 0;
-
-            public ?string $authenticatedAccessToken = null;
-
-            public function __construct(
-                private readonly Client $testClient,
-                Authenticator $authenticator,
-                private readonly bool $reviewDecision,
-            ) {
-                parent::__construct($authenticator);
-            }
-
-            protected function initialize(InputInterface $input, OutputInterface $output): void
-            {
-                parent::initialize($input, $output);
-                $this->client = $this->testClient;
-            }
-
-            protected function offerModuleReview(
-                InputInterface $input,
-                OutputInterface $output,
-                array $module,
-                array $moduleInfo,
-            ): bool {
-                return $this->reviewDecision;
-            }
-
-            protected function authenticateForPublishing(InputInterface $input): ?AuthenticationResult
-            {
-                ++$this->authenticationCalls;
-                return new AuthenticationResult('test-access', 'stored');
-            }
-
-            protected function createAuthenticatedClient(string $accessToken): Client
-            {
-                $this->authenticatedAccessToken = $accessToken;
-                return parent::createAuthenticatedClient($accessToken);
-            }
-        };
-
-        return [new CommandTester($command), $command];
-    }
-
-    private function testAuthenticator(): Authenticator
-    {
-        return new Authenticator(
-            new DeviceAuthorizationClient(
-                new OAuthConfiguration(
-                    'https://accounts.example.test/oauth/device',
-                    'https://accounts.example.test/oauth/token',
-                    'drupalorg-cli',
-                    [],
-                ),
-                HandlerStack::create(new MockHandler()),
-            ),
-            new TokenStorage($this->workDir . '/unused-auth'),
-        );
-    }
-
     private function commandTester(Response ...$responses): CommandTester
     {
         $this->history = [];
@@ -1089,6 +1053,9 @@ class PublishTest extends TestCase
      * @param array<string, mixed> $analysisResult
      * @param \RuntimeException|null $inspectFailure
      * @param \RuntimeException|null $pdfFailure
+     * @param array<string, mixed>|null $metadataResult
+     * @param \RuntimeException|null $metadataFailure
+     * @param Response ...$additionalResponses
      *
      * @return array{0: CommandTester, 1: object}
      */
@@ -1099,12 +1066,24 @@ class PublishTest extends TestCase
         array $analysisResult,
         ?\RuntimeException $inspectFailure = null,
         ?\RuntimeException $pdfFailure = null,
+        ?array $metadataResult = null,
+        ?\RuntimeException $metadataFailure = null,
+        Response ...$additionalResponses,
     ): array {
         $this->history = [];
-        $stack = HandlerStack::create(new MockHandler([$response]));
+        $stack = HandlerStack::create(new MockHandler([$response, ...$additionalResponses]));
         $stack->push(Middleware::history($this->history));
         $client = new Client(false, $stack);
-        $command = new class($client, $runtime, $aiContext, $analysisResult, $inspectFailure, $pdfFailure) extends Publish {
+        $command = new class(
+            $client,
+            $runtime,
+            $aiContext,
+            $analysisResult,
+            $inspectFailure,
+            $pdfFailure,
+            $metadataResult,
+            $metadataFailure,
+        ) extends Publish {
             public int $runtimeCalls = 0;
 
             public int $inspectCalls = 0;
@@ -1112,6 +1091,13 @@ class PublishTest extends TestCase
             public int $analyzeCalls = 0;
 
             public int $pdfCalls = 0;
+
+            public int $metadataCalls = 0;
+
+            public int $browserCalls = 0;
+
+            /** @var list<string> */
+            public array $openedUrls = [];
 
             public string $pdfPath = '/tmp/module-review.pdf';
 
@@ -1140,12 +1126,19 @@ class PublishTest extends TestCase
 
             private ?\RuntimeException $pdfFailure;
 
+            /** @var array<string, mixed>|null */
+            private ?array $metadataResult;
+
+            private ?\RuntimeException $metadataFailure;
+
             /**
              * @param array<string, mixed>|null $runtime
              * @param array<string, mixed> $aiContext
              * @param array<string, mixed> $analysisResult
              * @param \RuntimeException|null $inspectFailure
              * @param \RuntimeException|null $pdfFailure
+             * @param array<string, mixed>|null $metadataResult
+             * @param \RuntimeException|null $metadataFailure
              */
             public function __construct(
                 private readonly Client $testClient,
@@ -1154,6 +1147,8 @@ class PublishTest extends TestCase
                 array $analysisResult,
                 ?\RuntimeException $inspectFailure,
                 ?\RuntimeException $pdfFailure,
+                ?array $metadataResult,
+                ?\RuntimeException $metadataFailure,
             ) {
                 parent::__construct();
                 $this->runtime = $runtime;
@@ -1161,6 +1156,8 @@ class PublishTest extends TestCase
                 $this->analysisResult = $analysisResult;
                 $this->inspectFailure = $inspectFailure;
                 $this->pdfFailure = $pdfFailure;
+                $this->metadataResult = $metadataResult;
+                $this->metadataFailure = $metadataFailure;
             }
 
             protected function initialize(InputInterface $input, OutputInterface $output): void
@@ -1233,6 +1230,39 @@ class PublishTest extends TestCase
                 }
 
                 return $this->pdfPath;
+            }
+
+            protected function generateProjectMetadata(
+                array $module,
+                array $moduleInfo,
+                array $analysisResult,
+                ?array $runtime,
+            ): array {
+                ++$this->metadataCalls;
+                if ($this->metadataFailure !== null) {
+                    throw $this->metadataFailure;
+                }
+                if ($this->metadataResult === null) {
+                    return [
+                        'metadata' => [
+                            'summary' => 'Generated summary.',
+                            'description' => 'Generated description.',
+                            'features' => ['Generated feature'],
+                            'integrations' => [],
+                        ],
+                        'providerId' => 'metadata-provider',
+                        'modelId' => 'metadata-model',
+                        'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
+                    ];
+                }
+
+                return $this->metadataResult;
+            }
+
+            protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): void
+            {
+                ++$this->browserCalls;
+                $this->openedUrls[] = $url;
             }
         };
 
@@ -1312,6 +1342,23 @@ class PublishTest extends TestCase
                 ],
             ],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function characterizedReviewResult(): array
+    {
+        $result = self::completeReviewResult();
+        $result['review'] = [
+            'purpose' => 'Provides reusable profile records.',
+            'capabilities' => ['Create profile records', 'List profile records'],
+            'drupal_concepts' => ['content entities'],
+            'integrations' => [],
+            'reusability' => ['status' => 'reusable'],
+        ];
+
+        return $result;
     }
 
     private function sentRequest(): RequestInterface

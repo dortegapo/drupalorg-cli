@@ -3,8 +3,6 @@
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use GuzzleHttp\Exception\RequestException;
-use mglaman\DrupalOrg\Auth\AuthenticationResult;
-use mglaman\DrupalOrg\Auth\Authenticator;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
 use mglaman\DrupalOrg\Project\DrupalAiBridge;
@@ -14,6 +12,7 @@ use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\ModuleReviewPdfReportWriter;
 use mglaman\DrupalOrg\Project\ModuleReviewSourceSelector;
+use mglaman\DrupalOrg\Project\ProjectMetadataGenerator;
 use mglaman\DrupalOrgCli\BrowserTrait;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Helper\QuestionHelper;
@@ -29,14 +28,6 @@ class Publish extends Command
 
     use BrowserTrait;
 
-    protected ?Client $authenticatedClient = null;
-
-    public function __construct(
-        private readonly ?Authenticator $authenticator = null,
-    ) {
-        parent::__construct();
-    }
-
     protected function configure(): void
     {
         $this
@@ -47,6 +38,12 @@ class Publish extends Command
                 null,
                 InputOption::VALUE_NONE,
                 'Show what would be done without making publication changes.'
+            )
+            ->addOption(
+                'no-browser',
+                null,
+                InputOption::VALUE_NONE,
+                'Do not open the Drupal.org project creation page automatically.'
             )
             ->setDescription('Publishes a project');
     }
@@ -104,9 +101,10 @@ class Publish extends Command
             $plannedActions = $project === null
                 ? [
                     'Offer an optional AI-assisted contribution review and local PDF report.',
-                    'Authenticate with Drupal.org automatically if required.',
-                    sprintf('Create Drupal.org project "%s".', $module['moduleName']),
-                    'Wait for repository provisioning.',
+                    'Optionally generate Drupal.org project metadata from the AI module characterization.',
+                    'Open the Drupal.org project creation page for manual project creation.',
+                    'Verify that the Drupal.org project exists.',
+                    'Wait for the Drupal.org Git repository to become available.',
                     'Prepare an isolated temporary workspace.',
                     'Copy the module into the temporary workspace.',
                     'Initialize the publication Git repository.',
@@ -146,59 +144,52 @@ class Publish extends Command
             $module['moduleName']
         ));
 
-        if ($project === null && $input->isInteractive()) {
-            if (!$this->offerModuleReview($input, $output, $module, $moduleInfo)) {
-                return self::SUCCESS;
+        if ($project !== null) {
+            return self::SUCCESS;
+        }
+
+        if (!$input->isInteractive()) {
+            $this->writeNonInteractiveProjectCreationInstructions($module['moduleName']);
+            return self::SUCCESS;
+        }
+
+        $reviewOutcome = $this->offerModuleReview($input, $output, $module, $moduleInfo);
+        if (!$reviewOutcome['continuePublishing']) {
+            return self::SUCCESS;
+        }
+
+        $metadata = null;
+        if ($this->hasUsableReviewCharacterization($reviewOutcome['analysisResult'] ?? null)) {
+            if ($this->askConfirmation(
+                $input,
+                $output,
+                'Generate Drupal.org project metadata automatically? [Y/n] ',
+                true,
+            )) {
+                try {
+                    $metadata = $this->generateProjectMetadata(
+                        $module,
+                        $moduleInfo,
+                        $reviewOutcome['analysisResult'],
+                        $reviewOutcome['runtime'],
+                    );
+                    $this->writeProjectMetadataPreview($metadata, $module, $moduleInfo);
+                } catch (\Throwable) {
+                    $this->stdOut->writeln('Could not generate Drupal.org project metadata automatically.');
+                    $this->stdOut->writeln('You can enter the project metadata manually on Drupal.org.');
+                }
             }
         }
 
-        if ($project === null && $this->authenticator !== null) {
-            try {
-                $authentication = $this->authenticateForPublishing($input);
-                if ($authentication !== null) {
-                    $this->authenticatedClient = $this->createAuthenticatedClient($authentication->accessToken);
-                    if ($authentication->method === 'refreshed') {
-                        $this->stdOut->writeln('Authentication refreshed.');
-                    } elseif ($authentication->method === 'device') {
-                        $this->stdOut->writeln('Authentication successful.');
-                    }
-                }
-            } catch (\RuntimeException $exception) {
-                $this->stdErr->writeln(sprintf('<error>%s</error>', $exception->getMessage()));
-                return self::FAILURE;
-            }
-        }
+        $this->completeManualProjectHandoff(
+            $input,
+            $output,
+            $module,
+            $moduleInfo,
+            $metadata,
+        );
 
         return self::SUCCESS;
-    }
-
-    /**
-     * Authenticate only after the optional review has been accepted.
-     */
-    protected function authenticateForPublishing(InputInterface $input): ?AuthenticationResult
-    {
-        if ($this->authenticator === null) {
-            return null;
-        }
-
-        return $this->authenticator->authenticate(
-            interactive: $input->isInteractive(),
-            onDeviceAuthorization: function (array $deviceAuthorization): void {
-                $verificationUri = $deviceAuthorization['verification_uri_complete']
-                    ?? $deviceAuthorization['verification_uri'];
-                $this->openUrl($verificationUri, $this->stdErr, $this->stdOut);
-                if (!isset($deviceAuthorization['verification_uri_complete'])) {
-                    $this->stdOut->writeln('Enter code:');
-                    $this->stdOut->writeln($deviceAuthorization['user_code']);
-                }
-                $this->stdOut->writeln('Waiting for authorization...');
-            },
-        );
-    }
-
-    protected function createAuthenticatedClient(string $accessToken): Client
-    {
-        return new Client(accessToken: $accessToken);
     }
 
     /**
@@ -211,36 +202,58 @@ class Publish extends Command
      *     projectRoot: ?string,
      *     webRoot: ?string
      * } $module
-     * @param array{name: string, type: string, coreVersionRequirement: string} $moduleInfo
+     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
+     *
+     * @return array{
+     *     continuePublishing: bool,
+     *     runtime: array<string, mixed>|null,
+     *     analysisResult: array<string, mixed>|null
+     * }
      */
     protected function offerModuleReview(
         InputInterface $input,
         OutputInterface $output,
         array $module,
         array $moduleInfo,
-    ): bool {
+    ): array {
         $runtime = $this->resolveDrupalRuntime($module['projectRoot']);
         if ($runtime === null) {
             $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
-            return true;
+            return [
+                'continuePublishing' => true,
+                'runtime' => null,
+                'analysisResult' => null,
+            ];
         }
 
         try {
             $aiContext = $this->inspectDrupalAi($runtime);
         } catch (\RuntimeException) {
             $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
-            return true;
+            return [
+                'continuePublishing' => true,
+                'runtime' => null,
+                'analysisResult' => null,
+            ];
         }
 
         if (!$aiContext['aiEnabled'] || $aiContext['providerId'] === null || $aiContext['modelId'] === null) {
             $this->stdOut->writeln('Drupal AI review is not available for this project environment.');
-            return true;
+            return [
+                'continuePublishing' => true,
+                'runtime' => null,
+                'analysisResult' => null,
+            ];
         }
 
         $this->writeModuleReviewConsent($aiContext);
 
         if (!$this->askConfirmation($input, $output, 'Run AI-assisted contribution review? [y/N] ', false)) {
-            return true;
+            return [
+                'continuePublishing' => true,
+                'runtime' => $runtime,
+                'analysisResult' => null,
+            ];
         }
 
         $this->stdOut->writeln('Preparing module source...');
@@ -248,7 +261,11 @@ class Publish extends Command
             $preparedSource = $this->prepareModuleSource($module['resolvedPath']);
         } catch (\RuntimeException) {
             $this->stdOut->writeln('AI-assisted contribution review could not prepare the module source.');
-            return true;
+            return [
+                'continuePublishing' => true,
+                'runtime' => $runtime,
+                'analysisResult' => null,
+            ];
         }
 
         $selector = new ModuleReviewSourceSelector();
@@ -265,7 +282,11 @@ class Publish extends Command
             $sourceBudget = $this->askSourceBudget($input, $output, $eligibleBytes);
             if ($sourceBudget === false) {
                 $this->stdOut->writeln('AI-assisted contribution review skipped.');
-                return true;
+                return [
+                    'continuePublishing' => true,
+                    'runtime' => $runtime,
+                    'analysisResult' => null,
+                ];
             }
         }
 
@@ -318,10 +339,290 @@ class Publish extends Command
 
         if (!$this->askConfirmation($input, $output, 'Continue with project publishing? [y/N] ', false)) {
             $this->stdOut->writeln('Project publishing cancelled.');
+            return [
+                'continuePublishing' => false,
+                'runtime' => $runtime,
+                'analysisResult' => $result,
+            ];
+        }
+
+        return [
+            'continuePublishing' => true,
+            'runtime' => $runtime,
+            'analysisResult' => $result,
+        ];
+    }
+
+    /**
+     * @param array{
+     *     resolvedPath: string,
+     *     moduleName: string,
+     *     infoFile: string,
+     *     projectRoot: ?string,
+     *     webRoot: ?string
+     * } $module
+     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
+     * @param array<string, mixed> $analysisResult
+     * @param array<string, mixed>|null $runtime
+     *
+     * @return array{
+     *     metadata: array{summary: string, description: string, features: list<string>, integrations: list<string>},
+     *     providerId: string,
+     *     modelId: string,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * }
+     */
+    protected function generateProjectMetadata(
+        array $module,
+        array $moduleInfo,
+        array $analysisResult,
+        ?array $runtime,
+    ): array {
+        if ($runtime === null) {
+            throw new \RuntimeException('The Drupal runtime is unavailable for project metadata generation.');
+        }
+
+        $review = $analysisResult['review'];
+
+        return (new ProjectMetadataGenerator())->generate([
+            'moduleName' => $module['moduleName'],
+            'moduleTitle' => $moduleInfo['name'],
+            'type' => $moduleInfo['type'],
+            'coreVersionRequirement' => $moduleInfo['coreVersionRequirement'],
+            'dependencies' => $moduleInfo['dependencies'],
+            'review' => $review,
+            'sourceCoverage' => $this->sourceCoverage($analysisResult),
+            'runtime' => $runtime,
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed>|null $analysisResult
+     */
+    private function hasUsableReviewCharacterization(?array $analysisResult): bool
+    {
+        if (!is_array($analysisResult) || !is_array($analysisResult['review'] ?? null)) {
             return false;
         }
 
-        return true;
+        $review = $analysisResult['review'];
+        foreach (['purpose', 'capabilities', 'drupal_concepts', 'integrations'] as $field) {
+            if ($field === 'purpose') {
+                if (!is_string($review[$field] ?? null)) {
+                    return false;
+                }
+                continue;
+            }
+            if (!is_array($review[$field] ?? null) || !array_is_list($review[$field])) {
+                return false;
+            }
+            foreach ($review[$field] as $value) {
+                if (!is_string($value)) {
+                    return false;
+                }
+            }
+        }
+
+        return is_array($review['reusability'] ?? null)
+            && is_string($review['reusability']['status'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed> $analysisResult
+     */
+    private function sourceCoverage(array $analysisResult): string
+    {
+        $source = $analysisResult['source'] ?? null;
+        $coverage = is_array($source) ? $source['coverage'] ?? null : null;
+
+        return is_array($coverage) && ($coverage['mode'] ?? null) === 'selected' ? 'partial' : 'full';
+    }
+
+    /**
+     * @param array{
+     *     metadata: array{summary: string, description: string, features: list<string>, integrations: list<string>},
+     *     providerId: string,
+     *     modelId: string,
+     *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+     * } $metadata
+     * @param array{moduleName: string} $module
+     * @param array{name: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
+     */
+    private function writeProjectMetadataPreview(array $metadata, array $module, array $moduleInfo): void
+    {
+        $projectMetadata = $metadata['metadata'];
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Drupal.org project metadata');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Title');
+        $this->stdOut->writeln($moduleInfo['name']);
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Machine name');
+        $this->stdOut->writeln($module['moduleName']);
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Summary');
+        $this->stdOut->writeln($projectMetadata['summary']);
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Description');
+        $this->stdOut->writeln($projectMetadata['description']);
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Features');
+        foreach ($projectMetadata['features'] as $feature) {
+            $this->stdOut->writeln('- ' . $feature);
+        }
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Integrations');
+        if ($projectMetadata['integrations'] === []) {
+            $this->stdOut->writeln('None declared/generated.');
+        } else {
+            foreach ($projectMetadata['integrations'] as $integration) {
+                $this->stdOut->writeln('- ' . $integration);
+            }
+        }
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Core requirement');
+        $this->stdOut->writeln($moduleInfo['coreVersionRequirement']);
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Declared dependencies');
+        if ($moduleInfo['dependencies'] === []) {
+            $this->stdOut->writeln('None declared.');
+        } else {
+            foreach ($moduleInfo['dependencies'] as $dependency) {
+                $this->stdOut->writeln('- ' . $dependency);
+            }
+        }
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln(sprintf('Metadata AI: %s / %s', $metadata['providerId'], $metadata['modelId']));
+        $tokenUsage = $metadata['tokenUsage'];
+        $this->stdOut->writeln(sprintf(
+            'Tokens used: input %s, output %s, total %s',
+            $this->formatTokenValue($tokenUsage['input']),
+            $this->formatTokenValue($tokenUsage['output']),
+            $this->formatTokenValue($tokenUsage['total']),
+        ));
+    }
+
+    /**
+     * @param array{moduleName: string} $module
+     * @param array{name: string, coreVersionRequirement: string} $moduleInfo
+     * @param array<string, mixed>|null $metadata
+     */
+    private function completeManualProjectHandoff(
+        InputInterface $input,
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+        ?array $metadata,
+    ): void {
+        $url = 'https://www.drupal.org/node/add/project-module';
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Drupal.org does not currently provide a supported API for creating contributed projects.');
+        $this->stdOut->writeln('The project must be created once through Drupal.org before publication can continue.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Project to create');
+        $this->stdOut->writeln('Title: ' . $moduleInfo['name']);
+        $this->stdOut->writeln('Machine name: ' . $module['moduleName']);
+        $this->stdOut->writeln('Type: Module');
+        $this->stdOut->writeln('Core requirement: ' . $moduleInfo['coreVersionRequirement']);
+        if ($metadata !== null) {
+            $this->stdOut->writeln('Use the generated metadata above when completing the Drupal.org project page.');
+        }
+
+        $this->openProjectCreationPage($input, $url);
+        $this->stdOut->writeln('Create the Drupal.org project using machine name "' . $module['moduleName'] . '".');
+        $action = $this->askProjectCreationAction(
+            $input,
+            $output,
+            'Press Enter after the project has been created, or type "cancel" to stop: ',
+        );
+
+        while ($action !== 'cancel') {
+            if ($action === 'open') {
+                $this->openProjectCreationPage($input, $url);
+            } else {
+                try {
+                    $project = $this->client->getProject($module['moduleName']);
+                } catch (RequestException $exception) {
+                    if ($exception->getResponse()?->getStatusCode() !== 404) {
+                        $this->stdErr->writeln(sprintf(
+                            '<error>Could not check Drupal.org project: %s</error>',
+                            $exception->getMessage(),
+                        ));
+                        return;
+                    }
+                    $project = null;
+                } catch (\Exception $exception) {
+                    $this->stdErr->writeln(sprintf(
+                        '<error>Could not check Drupal.org project: %s</error>',
+                        $exception->getMessage(),
+                    ));
+                    return;
+                }
+
+                if ($project !== null) {
+                    $this->stdOut->writeln('Drupal.org project found: ' . $project->machineName);
+                    $this->stdOut->writeln('Title: ' . $project->title);
+                    $this->stdOut->writeln('Drupal.org: https://www.drupal.org/project/' . $project->machineName);
+                    $this->stdOut->writeln('Repository setup is not implemented yet.');
+                    return;
+                }
+
+                $this->stdOut->writeln('Drupal.org project "' . $module['moduleName'] . '" was not found yet.');
+            }
+
+            $action = $this->askProjectCreationAction(
+                $input,
+                $output,
+                'Press Enter to check again, type "open" to reopen the project page, or "cancel" to stop: ',
+            );
+        }
+
+        $this->stdOut->writeln('Project publishing cancelled.');
+    }
+
+    private function openProjectCreationPage(InputInterface $input, string $url): void
+    {
+        if ((bool) $input->getOption('no-browser')) {
+            $this->stdOut->writeln('Open this page to create the project:');
+            $this->stdOut->writeln($url);
+            return;
+        }
+
+        $this->stdOut->writeln('Opening Drupal.org project creation page...');
+        $this->openUrl($url, $this->stdErr, $this->stdOut);
+    }
+
+    private function askProjectCreationAction(
+        InputInterface $input,
+        OutputInterface $output,
+        string $questionText,
+    ): string {
+        $helper = $this->getHelper('question');
+        if (!$helper instanceof QuestionHelper) {
+            throw new \LogicException('The question helper is not available.');
+        }
+
+        $question = new Question($questionText, '');
+        $question->setValidator(static function (mixed $value): string {
+            $value = strtolower(trim((string) $value));
+            if ($value !== '' && !in_array($value, ['open', 'cancel'], true)) {
+                throw new \InvalidArgumentException('Type "open", "cancel", or press Enter to continue.');
+            }
+
+            return $value;
+        });
+
+        return (string) $helper->ask($input, $output, $question);
+    }
+
+    private function writeNonInteractiveProjectCreationInstructions(string $machineName): void
+    {
+        $this->stdOut->writeln('The Drupal.org project does not exist and must be created manually before non-interactive publishing can continue.');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Create:');
+        $this->stdOut->writeln('https://www.drupal.org/node/add/project-module');
+        $this->stdOut->writeln('');
+        $this->stdOut->writeln('Machine name: ' . $machineName);
     }
 
     /**
@@ -405,7 +706,8 @@ class Publish extends Command
      * @param array{
      *     name: string,
      *     type: string,
-     *     coreVersionRequirement: string
+     *     coreVersionRequirement: string,
+     *     dependencies: list<string>
      * } $moduleInfo
      */
     protected function writeModuleReviewPdf(array $result, array $module, array $moduleInfo): string
@@ -602,7 +904,7 @@ class Publish extends Command
      *     projectRoot: ?string,
      *     webRoot: ?string
      * } $module
-     * @param array{name: string, type: string, coreVersionRequirement: string} $moduleInfo
+     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
      */
     private function writeModuleContext(array $module, array $moduleInfo): void
     {
