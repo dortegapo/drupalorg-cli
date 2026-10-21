@@ -6,15 +6,18 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
+use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Client;
+use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrgCli\Application;
+use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
+use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
 use Symfony\Component\Console\Helper\HelperSet;
 use Symfony\Component\Console\Helper\QuestionHelper;
-use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -222,6 +225,28 @@ class PublishTest extends TestCase
             $command->openedUrls,
         );
         self::assertStringContainsString('Drupal.org project found: my_module', $tester->getDisplay());
+    }
+
+    public function testTechnicalFailureDuringManualHandoffReturnsFailure(): void
+    {
+        $this->createDiscoverableModule();
+        chdir($this->workDir);
+
+        [$tester] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            null,
+            self::availableAiContext(),
+            self::completeReviewResult(),
+            null,
+            null,
+            null,
+            null,
+            new Response(500, [], 'Server error'),
+        );
+        $tester->setInputs(['']);
+
+        self::assertSame(1, $tester->execute(['module' => 'my_module']));
+        self::assertStringContainsString('Could not check Drupal.org project:', $tester->getDisplay());
     }
 
     public function testMetadataCanBeGeneratedAfterAcceptedReview(): void
@@ -1031,18 +1056,7 @@ class PublishTest extends TestCase
         $stack = HandlerStack::create(new MockHandler($responses));
         $stack->push(Middleware::history($this->history));
         $client = new Client(false, $stack);
-        $command = new class($client) extends Publish {
-            public function __construct(private readonly Client $testClient)
-            {
-                parent::__construct();
-            }
-
-            protected function initialize(InputInterface $input, OutputInterface $output): void
-            {
-                parent::initialize($input, $output);
-                $this->client = $this->testClient;
-            }
-        };
+        $command = new Publish(clientOverride: $client);
 
         return new CommandTester($command);
     }
@@ -1074,129 +1088,60 @@ class PublishTest extends TestCase
         $stack = HandlerStack::create(new MockHandler([$response, ...$additionalResponses]));
         $stack->push(Middleware::history($this->history));
         $client = new Client(false, $stack);
-        $command = new class(
-            $client,
-            $runtime,
-            $aiContext,
-            $analysisResult,
-            $inspectFailure,
-            $pdfFailure,
-            $metadataResult,
-            $metadataFailure,
-        ) extends Publish {
+        $state = new class {
             public int $runtimeCalls = 0;
-
             public int $inspectCalls = 0;
-
             public int $analyzeCalls = 0;
-
             public int $pdfCalls = 0;
-
             public int $metadataCalls = 0;
-
             public int $browserCalls = 0;
-
             /** @var list<string> */
             public array $openedUrls = [];
-
             public string $pdfPath = '/tmp/module-review.pdf';
-
             public ?string $analyzeModulePath = null;
-
             public ?string $analyzeMachineName = null;
-
             public ?string $analyzeHumanName = null;
-
             /** @var array<string, mixed>|null */
             public ?array $analyzeRuntime = null;
-
             /** @var array<string, mixed>|null */
             public ?array $analyzePreparedSource = null;
+        };
 
-            /** @var array<string, mixed>|null */
-            private ?array $runtime;
-
-            /** @var array<string, mixed> */
-            private array $aiContext;
-
-            /** @var array<string, mixed> */
-            private array $analysisResult;
-
-            private ?\RuntimeException $inspectFailure;
-
-            private ?\RuntimeException $pdfFailure;
-
-            /** @var array<string, mixed>|null */
-            private ?array $metadataResult;
-
-            private ?\RuntimeException $metadataFailure;
-
-            /**
-             * @param array<string, mixed>|null $runtime
-             * @param array<string, mixed> $aiContext
-             * @param array<string, mixed> $analysisResult
-             * @param \RuntimeException|null $inspectFailure
-             * @param \RuntimeException|null $pdfFailure
-             * @param array<string, mixed>|null $metadataResult
-             * @param \RuntimeException|null $metadataFailure
-             */
-            public function __construct(
-                private readonly Client $testClient,
-                ?array $runtime,
-                array $aiContext,
-                array $analysisResult,
-                ?\RuntimeException $inspectFailure,
-                ?\RuntimeException $pdfFailure,
-                ?array $metadataResult,
-                ?\RuntimeException $metadataFailure,
-            ) {
-                parent::__construct();
-                $this->runtime = $runtime;
-                $this->aiContext = $aiContext;
-                $this->analysisResult = $analysisResult;
-                $this->inspectFailure = $inspectFailure;
-                $this->pdfFailure = $pdfFailure;
-                $this->metadataResult = $metadataResult;
-                $this->metadataFailure = $metadataFailure;
-            }
-
-            protected function initialize(InputInterface $input, OutputInterface $output): void
-            {
-                parent::initialize($input, $output);
-                $this->client = $this->testClient;
-            }
-
-            protected function resolveDrupalRuntime(?string $projectRoot): ?array
-            {
-                ++$this->runtimeCalls;
-                return $this->runtime;
-            }
-
-            protected function inspectDrupalAi(array $runtime): array
-            {
-                ++$this->inspectCalls;
-                if ($this->inspectFailure !== null) {
-                    throw $this->inspectFailure;
+        $workflow = new ModuleReviewWorkflow(
+            $client,
+            static function (?string $projectRoot) use ($state, $runtime): ?array {
+                ++$state->runtimeCalls;
+                return $runtime;
+            },
+            static function (array $runtime) use ($state, $aiContext, $inspectFailure): array {
+                ++$state->inspectCalls;
+                if ($inspectFailure !== null) {
+                    throw $inspectFailure;
                 }
 
-                return $this->aiContext;
-            }
-
-            protected function analyzeModule(
+                return $aiContext;
+            },
+            static function (string $modulePath) use ($client): array {
+                return (new ModuleReviewAnalyzerFactory($client))->create()->prepareSource($modulePath);
+            },
+            static function (
                 string $modulePath,
                 string $machineName,
                 array $runtime,
                 ?callable $progress = null,
                 ?string $humanName = null,
                 ?array $preparedSource = null,
+            ) use (
+                $state,
+                $analysisResult,
             ): array {
-                ++$this->analyzeCalls;
-                $this->analyzeModulePath = $modulePath;
-                $this->analyzeMachineName = $machineName;
-                $this->analyzeHumanName = $humanName;
-                $this->analyzeRuntime = $runtime;
-                $this->analyzePreparedSource = $preparedSource;
-                if ($progress !== null && ($this->analysisResult['complete'] ?? false) === true) {
+                ++$state->analyzeCalls;
+                $state->analyzeModulePath = $modulePath;
+                $state->analyzeMachineName = $machineName;
+                $state->analyzeHumanName = $humanName;
+                $state->analyzeRuntime = $runtime;
+                $state->analyzePreparedSource = $preparedSource;
+                if ($progress !== null && ($analysisResult['complete'] ?? false) === true) {
                     $progress('source_prepared', ['files' => 1]);
                     $progress('review_ai_started', []);
                     $progress('review_ai_completed', []);
@@ -1209,66 +1154,61 @@ class PublishTest extends TestCase
                     ]);
                     $progress('project_search_completed', ['total' => 1]);
                     $progress('candidate_ranking_completed', [
-                        'candidateCount' => count($this->analysisResult['candidates'] ?? []),
+                        'candidateCount' => count($analysisResult['candidates'] ?? []),
                     ]);
                     $progress('comparison_ai_started', [
-                        'candidateCount' => count($this->analysisResult['candidates'] ?? []),
+                        'candidateCount' => count($analysisResult['candidates'] ?? []),
                     ]);
                     $progress('comparison_ai_completed', []);
                     $progress('assessment_completed', []);
                     $progress('analysis_completed', []);
                 }
 
-                return $this->analysisResult;
-            }
-
-            protected function writeModuleReviewPdf(array $result, array $module, array $moduleInfo): string
-            {
-                ++$this->pdfCalls;
-                if ($this->pdfFailure !== null) {
-                    throw $this->pdfFailure;
+                return $analysisResult;
+            },
+            static function (string $targetPath, array $result, array $moduleInfo) use ($state, $pdfFailure): string {
+                ++$state->pdfCalls;
+                if ($pdfFailure !== null) {
+                    throw $pdfFailure;
                 }
 
-                return $this->pdfPath;
-            }
+                return $state->pdfPath;
+            },
+        );
 
-            protected function generateProjectMetadata(
-                array $module,
-                array $moduleInfo,
-                array $analysisResult,
-                ?array $runtime,
-            ): array {
-                ++$this->metadataCalls;
-                if ($this->metadataFailure !== null) {
-                    throw $this->metadataFailure;
-                }
-                if ($this->metadataResult === null) {
-                    return [
-                        'metadata' => [
-                            'summary' => 'Generated summary.',
-                            'description' => 'Generated description.',
-                            'features' => ['Generated feature'],
-                            'integrations' => [],
-                        ],
-                        'providerId' => 'metadata-provider',
-                        'modelId' => 'metadata-model',
-                        'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
-                    ];
+        $metadataAction = new GenerateProjectMetadataAction(
+            static function (...$arguments) use ($state, $metadataResult, $metadataFailure): array {
+                ++$state->metadataCalls;
+                if ($metadataFailure !== null) {
+                    throw $metadataFailure;
                 }
 
-                return $this->metadataResult;
-            }
+                return $metadataResult ?? [
+                    'providerId' => 'metadata-provider',
+                    'modelId' => 'metadata-model',
+                    'result' => [
+                        'summary' => 'Generated summary.',
+                        'description' => 'Generated description.',
+                        'features' => ['Generated feature'],
+                        'integrations' => [],
+                    ],
+                    'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
+                ];
+            },
+        );
 
-            protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): void
-            {
-                ++$this->browserCalls;
-                $this->openedUrls[] = $url;
-            }
-        };
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $client,
+            static function (string $url, OutputInterface $stdErr, OutputInterface $stdOut) use ($state): void {
+                ++$state->browserCalls;
+                $state->openedUrls[] = $url;
+            },
+        );
+        $command = new Publish($workflow, $metadataAction, $handoff, $client);
 
         $command->setHelperSet(new HelperSet(['question' => new QuestionHelper()]));
 
-        return [new CommandTester($command), $command];
+        return [new CommandTester($command), $state];
     }
 
     /**
