@@ -3,8 +3,6 @@
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
-use mglaman\DrupalOrg\Action\Project\GetProjectAction;
-use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
@@ -23,13 +21,11 @@ class Publish extends Command
      * @param ModuleReviewWorkflow|null $reviewWorkflow
      * @param GenerateProjectMetadataAction|null $metadataAction
      * @param DrupalOrgProjectCreationHandoff|null $projectCreationHandoff
-     * @param Client|null $clientOverride
      */
     public function __construct(
         private readonly ?ModuleReviewWorkflow $reviewWorkflow = null,
         private readonly ?GenerateProjectMetadataAction $metadataAction = null,
         private readonly ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
-        private readonly ?Client $clientOverride = null,
     ) {
         parent::__construct();
     }
@@ -54,14 +50,6 @@ class Publish extends Command
             ->setDescription('Publishes a project');
     }
 
-    protected function initialize(InputInterface $input, OutputInterface $output): void
-    {
-        parent::initialize($input, $output);
-        if ($this->clientOverride !== null) {
-            $this->client = $this->clientOverride;
-        }
-    }
-
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $modulePath = (string) $input->getArgument('module');
@@ -76,7 +64,7 @@ class Publish extends Command
         }
 
         try {
-            $project = (new GetProjectAction($this->client))($module['moduleName']);
+            $project = $this->client->getProject($module['moduleName']);
         } catch (\Exception $exception) {
             $this->stdErr->writeln(sprintf(
                 '<error>Could not check Drupal.org project: %s</error>',
@@ -202,7 +190,8 @@ class Publish extends Command
         array $moduleInfo,
         ModuleReviewWorkflowResult $review,
     ): ?ProjectMetadataResult {
-        if (!$this->hasUsableReviewCharacterization($review->analysisResult)) {
+        $analysis = $review->analysisResult;
+        if ($review->runtime === null || !is_array($analysis) || !is_array($analysis['review'] ?? null)) {
             return null;
         }
 
@@ -216,21 +205,26 @@ class Publish extends Command
         }
 
         try {
-            if ($review->runtime === null) {
-                throw new \RuntimeException('The Drupal runtime is unavailable for project metadata generation.');
-            }
-            $analysis = $review->analysisResult;
-            $metadata = ($this->metadataAction ?? new GenerateProjectMetadataAction())([
-                'moduleName' => $module['moduleName'],
-                'moduleTitle' => $moduleInfo['name'],
-                'type' => $moduleInfo['type'],
-                'coreVersionRequirement' => $moduleInfo['coreVersionRequirement'],
-                'dependencies' => $moduleInfo['dependencies'],
-                'review' => $analysis['review'],
-                'sourceCoverage' => $this->sourceCoverage($analysis),
-                'runtime' => $review->runtime,
-            ]);
-            (new ProjectMetadataRenderer())->render($output, $metadata, $module, $moduleInfo);
+            /** @var array{
+             *     review: array{
+             *         purpose: string,
+             *         capabilities: list<string>,
+             *         drupal_concepts: list<string>,
+             *         integrations: list<string>,
+             *         reusability: array{status: string}
+             *     }
+             * } $analysis */
+            $metadata = ($this->metadataAction ?? new GenerateProjectMetadataAction())(
+                $review->runtime,
+                $module['moduleName'],
+                $moduleInfo['name'],
+                $moduleInfo['type'],
+                $moduleInfo['coreVersionRequirement'],
+                $moduleInfo['dependencies'],
+                $analysis['review'],
+                $review->sourceCoverage,
+            );
+            (new ProjectMetadataRenderer())->render($output, $metadata);
 
             return $metadata;
         } catch (\Throwable) {
@@ -239,48 +233,6 @@ class Publish extends Command
 
             return null;
         }
-    }
-
-    /**
-     * @param array<string, mixed>|null $analysisResult
-     */
-    private function hasUsableReviewCharacterization(?array $analysisResult): bool
-    {
-        if (!is_array($analysisResult) || !is_array($analysisResult['review'] ?? null)) {
-            return false;
-        }
-
-        $review = $analysisResult['review'];
-        foreach (['purpose', 'capabilities', 'drupal_concepts', 'integrations'] as $field) {
-            if ($field === 'purpose') {
-                if (!is_string($review[$field] ?? null)) {
-                    return false;
-                }
-                continue;
-            }
-            if (!is_array($review[$field] ?? null) || !array_is_list($review[$field])) {
-                return false;
-            }
-            foreach ($review[$field] as $value) {
-                if (!is_string($value)) {
-                    return false;
-                }
-            }
-        }
-
-        return is_array($review['reusability'] ?? null)
-            && is_string($review['reusability']['status'] ?? null);
-    }
-
-    /**
-     * @param array<string, mixed> $analysisResult
-     */
-    private function sourceCoverage(array $analysisResult): string
-    {
-        $source = $analysisResult['source'] ?? null;
-        $coverage = is_array($source) ? $source['coverage'] ?? null : null;
-
-        return is_array($coverage) && ($coverage['mode'] ?? null) === 'selected' ? 'partial' : 'full';
     }
 
     /**
