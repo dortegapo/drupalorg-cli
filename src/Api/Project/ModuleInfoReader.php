@@ -14,7 +14,8 @@ final class ModuleInfoReader
      * @return array{
      *   name: string,
      *   type: string,
-     *   coreVersionRequirement: string
+     *   coreVersionRequirement: string,
+     *   dependencies: list<string>
      * }
      */
     public function read(string $infoFile, string $moduleName): array
@@ -73,10 +74,27 @@ final class ModuleInfoReader
             ));
         }
 
+        $dependencies = array_key_exists('dependencies', $metadata) ? $metadata['dependencies'] : [];
+        if (!is_array($dependencies) || !array_is_list($dependencies)) {
+            throw new \RuntimeException(sprintf(
+                '"dependencies" in %s must be a list.',
+                $infoFileName,
+            ));
+        }
+        foreach ($dependencies as $dependency) {
+            if (!is_string($dependency) || trim($dependency) === '') {
+                throw new \RuntimeException(sprintf(
+                    'Each "dependencies" entry in %s must be a non-empty string.',
+                    $infoFileName,
+                ));
+            }
+        }
+
         return [
             'name' => $metadata['name'],
             'type' => $type,
             'coreVersionRequirement' => $metadata['core_version_requirement'],
+            'dependencies' => $dependencies,
         ];
     }
 }
