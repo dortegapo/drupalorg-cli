@@ -14,6 +14,7 @@ final class ModuleReviewWorkflowResult
         public readonly bool $continuePublishing,
         public readonly ?array $runtime,
         public readonly ?array $analysisResult,
+        public readonly string $sourceCoverage = 'full',
     ) {
     }
 }

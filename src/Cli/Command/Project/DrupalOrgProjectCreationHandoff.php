@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrgCli\Command\Project;
 
-use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Entity\Project;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
@@ -67,9 +66,9 @@ final class DrupalOrgProjectCreationHandoff
                 $this->openProjectCreationPage($input, $output, $errorOutput);
             } else {
                 try {
-                    $project = (new GetProjectAction($this->client))($machineName);
+                    $project = $this->client->getProject($machineName);
                 } catch (\Exception $exception) {
-                    $output->writeln(sprintf(
+                    $errorOutput->writeln(sprintf(
                         '<error>Could not check Drupal.org project: %s</error>',
                         $exception->getMessage(),
                     ));
