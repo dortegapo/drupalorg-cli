@@ -32,8 +32,13 @@ final class GenerateProjectMetadataActionTest extends TestCase
             },
         );
 
-        $result = $action(self::input());
+        $result = $action(...self::input());
 
+        self::assertSame('Example Module', $result->title);
+        self::assertSame('example_module', $result->machineName);
+        self::assertSame('module', $result->projectType);
+        self::assertSame('^11', $result->coreVersionRequirement);
+        self::assertSame([], $result->dependencies);
         self::assertSame('local-provider', $result->providerId);
         self::assertSame(15, $result->tokenUsage['total']);
         self::assertSame('Manages reusable profile records.', $result->summary);
@@ -60,7 +65,7 @@ final class GenerateProjectMetadataActionTest extends TestCase
 
         self::assertSame(
             ['input' => null, 'output' => null, 'total' => null],
-            $action(self::input())->tokenUsage,
+            $action(...self::input())->tokenUsage,
         );
     }
 
@@ -74,18 +79,38 @@ final class GenerateProjectMetadataActionTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('provider failed');
-        $action(self::input());
+        $action(...self::input());
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array{
+     *     runtime: array{type: 'local-drush', workingDirectory: string, command: list<string>},
+     *     machineName: string,
+     *     title: string,
+     *     projectType: string,
+     *     coreVersionRequirement: string,
+     *     dependencies: list<string>,
+     *     review: array{
+     *         purpose: string,
+     *         capabilities: list<string>,
+     *         drupal_concepts: list<string>,
+     *         integrations: list<string>,
+     *         reusability: array{status: string}
+     *     },
+     *     sourceCoverage: 'full'|'partial'
+     * }
      */
     private static function input(): array
     {
         return [
-            'moduleName' => 'example_module',
-            'moduleTitle' => 'Example Module',
-            'type' => 'module',
+            'runtime' => [
+                'type' => 'local-drush',
+                'workingDirectory' => '/tmp',
+                'command' => ['drush'],
+            ],
+            'machineName' => 'example_module',
+            'title' => 'Example Module',
+            'projectType' => 'module',
             'coreVersionRequirement' => '^11',
             'dependencies' => [],
             'review' => [
@@ -96,11 +121,6 @@ final class GenerateProjectMetadataActionTest extends TestCase
                 'reusability' => ['status' => 'reusable'],
             ],
             'sourceCoverage' => 'full',
-            'runtime' => [
-                'type' => 'local-drush',
-                'workingDirectory' => '/tmp',
-                'command' => ['drush'],
-            ],
         ];
     }
 }

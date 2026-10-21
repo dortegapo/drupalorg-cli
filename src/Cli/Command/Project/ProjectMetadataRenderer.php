@@ -9,24 +9,21 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 final class ProjectMetadataRenderer
 {
-    /**
-     * @param array{moduleName: string} $module
-     * @param array{name: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
-     */
     public function render(
         OutputInterface $output,
         ProjectMetadataResult $metadata,
-        array $module,
-        array $moduleInfo,
     ): void {
         $output->writeln('');
         $output->writeln('Drupal.org project metadata');
         $output->writeln('');
         $output->writeln('Title');
-        $output->writeln($moduleInfo['name']);
+        $output->writeln($metadata->title);
         $output->writeln('');
         $output->writeln('Machine name');
-        $output->writeln($module['moduleName']);
+        $output->writeln($metadata->machineName);
+        $output->writeln('');
+        $output->writeln('Project type');
+        $output->writeln($metadata->projectType);
         $output->writeln('');
         $output->writeln('Summary');
         $output->writeln($metadata->summary);
@@ -49,13 +46,13 @@ final class ProjectMetadataRenderer
         }
         $output->writeln('');
         $output->writeln('Core requirement');
-        $output->writeln($moduleInfo['coreVersionRequirement']);
+        $output->writeln($metadata->coreVersionRequirement);
         $output->writeln('');
         $output->writeln('Declared dependencies');
-        if ($moduleInfo['dependencies'] === []) {
+        if ($metadata->dependencies === []) {
             $output->writeln('None declared.');
         } else {
-            foreach ($moduleInfo['dependencies'] as $dependency) {
+            foreach ($metadata->dependencies as $dependency) {
                 $output->writeln('- ' . $dependency);
             }
         }
