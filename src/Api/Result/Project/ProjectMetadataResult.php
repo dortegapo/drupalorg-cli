@@ -9,11 +9,17 @@ use mglaman\DrupalOrg\Result\ResultInterface;
 final class ProjectMetadataResult implements ResultInterface
 {
     /**
+     * @param list<string> $dependencies
      * @param list<string> $features
      * @param list<string> $integrations
      * @param array{input: ?int, output: ?int, total: ?int} $tokenUsage
      */
     public function __construct(
+        public readonly string $title,
+        public readonly string $machineName,
+        public readonly string $projectType,
+        public readonly string $coreVersionRequirement,
+        public readonly array $dependencies,
         public readonly string $summary,
         public readonly string $description,
         public readonly array $features,
@@ -27,6 +33,11 @@ final class ProjectMetadataResult implements ResultInterface
     public function jsonSerialize(): mixed
     {
         return [
+            'title' => $this->title,
+            'machine_name' => $this->machineName,
+            'project_type' => $this->projectType,
+            'core_version_requirement' => $this->coreVersionRequirement,
+            'dependencies' => $this->dependencies,
             'summary' => $this->summary,
             'description' => $this->description,
             'features' => $this->features,
