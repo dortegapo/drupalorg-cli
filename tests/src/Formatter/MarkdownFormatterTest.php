@@ -15,6 +15,7 @@ use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillItem;
@@ -155,6 +156,36 @@ class MarkdownFormatterTest extends TestCase
         self::assertStringContainsString('1234567', $output);
         self::assertStringContainsString('RTBC', $output);
         self::assertStringContainsString('[Fix the thing](https://www.drupal.org/node/1234567)', $output);
+    }
+
+    public function testProjectMetadataResult(): void
+    {
+        $result = new ProjectMetadataResult(
+            title: 'Example Module',
+            machineName: 'example_module',
+            projectType: 'module',
+            coreVersionRequirement: '^11',
+            dependencies: ['drupal:views'],
+            summary: 'Manages reusable records.',
+            description: 'Provides reusable record management.',
+            features: ['Create records'],
+            integrations: ['Views'],
+            providerId: 'provider',
+            modelId: 'model',
+            tokenUsage: ['input' => 1, 'output' => 2, 'total' => 3],
+        );
+
+        $output = (new MarkdownFormatter())->format($result);
+
+        self::assertStringContainsString('# Example Module', $output);
+        self::assertStringContainsString('**Machine name:** example_module', $output);
+        self::assertStringContainsString('**Project type:** module', $output);
+        self::assertStringContainsString('**Core requirement:** ^11', $output);
+        self::assertStringContainsString('Manages reusable records.', $output);
+        self::assertStringContainsString('Provides reusable record management.', $output);
+        self::assertStringContainsString('- Create records', $output);
+        self::assertStringContainsString('- Views', $output);
+        self::assertStringContainsString('- drupal:views', $output);
     }
 
     public function testMaintainerIssuesResult(): void

@@ -19,6 +19,7 @@ use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
 use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
@@ -109,6 +110,48 @@ XML;
             $items .= "    </item>\n";
         }
         return "<drupal_context>\n  <project>{$projectTitle}</project>\n  <items>\n{$items}  </items>\n</drupal_context>";
+    }
+
+    protected function formatProjectMetadata(ProjectMetadataResult $result): string
+    {
+        $title = $this->xmlEscape($result->title);
+        $machineName = $this->xmlEscape($result->machineName);
+        $projectType = $this->xmlEscape($result->projectType);
+        $coreRequirement = $this->xmlEscape($result->coreVersionRequirement);
+        $summary = $this->xmlEscape($result->summary);
+        $description = $this->cdataWrap($result->description);
+
+        $dependencies = '';
+        foreach ($result->dependencies as $dependency) {
+            $dependencies .= '    <dependency>' . $this->xmlEscape($dependency) . "</dependency>\n";
+        }
+
+        $features = '';
+        foreach ($result->features as $feature) {
+            $features .= '    <feature>' . $this->xmlEscape($feature) . "</feature>\n";
+        }
+
+        $integrations = '';
+        foreach ($result->integrations as $integration) {
+            $integrations .= '    <integration>' . $this->xmlEscape($integration) . "</integration>\n";
+        }
+
+        return <<<XML
+<project_metadata>
+  <title>{$title}</title>
+  <machine_name>{$machineName}</machine_name>
+  <project_type>{$projectType}</project_type>
+  <core_version_requirement>{$coreRequirement}</core_version_requirement>
+  <dependencies>
+{$dependencies}  </dependencies>
+  <summary>{$summary}</summary>
+  <description>{$description}</description>
+  <features>
+{$features}  </features>
+  <integrations>
+{$integrations}  </integrations>
+</project_metadata>
+XML;
     }
 
     protected function formatMaintainerIssues(MaintainerIssuesResult $result): string

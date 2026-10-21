@@ -18,6 +18,7 @@ use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
 use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
@@ -31,6 +32,7 @@ abstract class AbstractFormatter implements FormatterInterface
             $result instanceof IssueForkResult => $this->formatIssueFork($result),
             $result instanceof IssueSearchResult => $this->formatIssueSearch($result),
             $result instanceof ProjectIssuesResult => $this->formatProjectIssues($result),
+            $result instanceof ProjectMetadataResult => $this->formatProjectMetadata($result),
             $result instanceof MaintainerIssuesResult => $this->formatMaintainerIssues($result),
             $result instanceof ProjectReleasesResult => $this->formatProjectReleases($result),
             $result instanceof ProjectContainsResult => $this->formatProjectContains($result),
@@ -55,6 +57,7 @@ abstract class AbstractFormatter implements FormatterInterface
     abstract protected function formatIssueFork(IssueForkResult $result): string;
     abstract protected function formatIssueSearch(IssueSearchResult $result): string;
     abstract protected function formatProjectIssues(ProjectIssuesResult $result): string;
+    abstract protected function formatProjectMetadata(ProjectMetadataResult $result): string;
     abstract protected function formatMaintainerIssues(MaintainerIssuesResult $result): string;
     abstract protected function formatProjectReleases(ProjectReleasesResult $result): string;
     abstract protected function formatProjectContains(ProjectContainsResult $result): string;

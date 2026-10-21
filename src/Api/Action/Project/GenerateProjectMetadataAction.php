@@ -17,39 +17,53 @@ final class GenerateProjectMetadataAction implements ActionInterface
      */
     public function __construct(
         private readonly ?\Closure $structuredChat = null,
-        private readonly ?ProjectMetadataPromptBuilder $promptBuilder = null,
-        private readonly ?ProjectMetadataResultValidator $resultValidator = null,
-        private readonly ?DrupalAiBridge $aiBridge = null,
     ) {
     }
 
     /**
      * @param array{
-     *     moduleName: string,
-     *     moduleTitle: string,
-     *     type: string,
-     *     coreVersionRequirement: string,
-     *     dependencies: list<string>,
-     *     review: array{
-     *         purpose: string,
-     *         capabilities: list<string>,
-     *         drupal_concepts: list<string>,
-     *         integrations: list<string>,
-     *         reusability: array{status: string}
-     *     },
-     *     sourceCoverage: 'full'|'partial',
-     *     runtime: array<string, mixed>
-     * } $input
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
+     * @param list<string> $dependencies
+     * @param array{
+     *     purpose: string,
+     *     capabilities: list<string>,
+     *     drupal_concepts: list<string>,
+     *     integrations: list<string>,
+     *     reusability: array{status: string}
+     * } $review
+     * @param 'full'|'partial' $sourceCoverage
      */
-    public function __invoke(array $input): ProjectMetadataResult
-    {
-        $builder = $this->promptBuilder ?? new ProjectMetadataPromptBuilder();
-        $prompts = $builder->build($input);
-        $response = $this->callStructuredChat($input['runtime'], $prompts);
-        $validator = $this->resultValidator ?? new ProjectMetadataResultValidator();
-        $metadata = $validator->validate($response['result']);
+    public function __invoke(
+        array $runtime,
+        string $machineName,
+        string $title,
+        string $projectType,
+        string $coreVersionRequirement,
+        array $dependencies,
+        array $review,
+        string $sourceCoverage,
+    ): ProjectMetadataResult {
+        $prompts = (new ProjectMetadataPromptBuilder())->build([
+            'moduleName' => $machineName,
+            'moduleTitle' => $title,
+            'type' => $projectType,
+            'coreVersionRequirement' => $coreVersionRequirement,
+            'dependencies' => $dependencies,
+            'review' => $review,
+            'sourceCoverage' => $sourceCoverage,
+        ]);
+        $response = $this->callStructuredChat($runtime, $prompts);
+        $metadata = (new ProjectMetadataResultValidator())->validate($response['result']);
 
         return new ProjectMetadataResult(
+            title: $title,
+            machineName: $machineName,
+            projectType: $projectType,
+            coreVersionRequirement: $coreVersionRequirement,
+            dependencies: $dependencies,
             summary: $metadata['summary'],
             description: $metadata['description'],
             features: $metadata['features'],
@@ -61,7 +75,11 @@ final class GenerateProjectMetadataAction implements ActionInterface
     }
 
     /**
-     * @param array<string, mixed> $runtime
+     * @param array{
+     *     type: 'ddev'|'lando'|'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * } $runtime
      * @param array{systemPrompt: string, userPrompt: string, schema: array<string, mixed>} $prompts
      *
      * @return array{
@@ -73,22 +91,19 @@ final class GenerateProjectMetadataAction implements ActionInterface
      */
     private function callStructuredChat(array $runtime, array $prompts): array
     {
-        if ($this->structuredChat !== null) {
-            $response = ($this->structuredChat)(
+        $response = $this->structuredChat !== null
+            ? ($this->structuredChat)(
+                $runtime,
+                $prompts['systemPrompt'],
+                $prompts['userPrompt'],
+                $prompts['schema'],
+            )
+            : (new DrupalAiBridge())->structuredChat(
                 $runtime,
                 $prompts['systemPrompt'],
                 $prompts['userPrompt'],
                 $prompts['schema'],
             );
-        } else {
-            $bridge = $this->aiBridge ?? new DrupalAiBridge();
-            $response = $bridge->structuredChat(
-                $runtime,
-                $prompts['systemPrompt'],
-                $prompts['userPrompt'],
-                $prompts['schema'],
-            );
-        }
 
         if (!is_array($response)
             || !is_string($response['providerId'] ?? null)
@@ -108,7 +123,12 @@ final class GenerateProjectMetadataAction implements ActionInterface
             }
         }
 
-        /** @var array{providerId: string, modelId: string, result: array<string, mixed>, tokenUsage: array{input: ?int, output: ?int, total: ?int}} $response */
+        /** @var array{
+         *     providerId: string,
+         *     modelId: string,
+         *     result: array<string, mixed>,
+         *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
+         * } $response */
         return $response;
     }
 }

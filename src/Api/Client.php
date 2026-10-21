@@ -2,6 +2,7 @@
 
 namespace mglaman\DrupalOrg;
 
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
 use GuzzleRetry\GuzzleRetryMiddleware;
 use mglaman\DrupalOrg\Entity\File;
@@ -31,7 +32,6 @@ class Client
     public function __construct(
         bool $noCache = false,
         ?HandlerStack $handler = null,
-        ?string $accessToken = null,
     ) {
         $stack = $handler ?? HandlerStack::create();
         $stack->push(GuzzleRetryMiddleware::factory([
@@ -49,10 +49,6 @@ class Client
             $headers['Cache-Control'] = 'no-cache, no-store, max-age=0';
             $headers['Pragma'] = 'no-cache';
         }
-        if ($accessToken !== null && $accessToken !== '') {
-            $headers['Authorization'] = 'Bearer ' . $accessToken;
-        }
-
         $this->client = new \GuzzleHttp\Client(
             [
                 'base_uri' => self::API_URL,
@@ -126,14 +122,22 @@ class Client
 
     public function getProject(string $machineName): ?Project
     {
-        $data = $this->request(
-            new Request(
-                'node.json',
-                [
-                    'field_project_machine_name' => $machineName,
-                ]
-            )
-        );
+        try {
+            $data = $this->request(
+                new Request(
+                    'node.json',
+                    [
+                        'field_project_machine_name' => $machineName,
+                    ]
+                )
+            );
+        } catch (RequestException $exception) {
+            if ($exception->getResponse()?->getStatusCode() === 404) {
+                return null;
+            }
+
+            throw $exception;
+        }
         $list = (array) ($data->list ?? []);
         if ($list === []) {
             return null;
