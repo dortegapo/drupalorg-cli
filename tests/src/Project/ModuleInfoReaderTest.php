@@ -33,7 +33,61 @@ class ModuleInfoReaderTest extends TestCase
             'name' => 'My Module',
             'type' => 'module',
             'coreVersionRequirement' => '^11',
+            'dependencies' => [],
         ], (new ModuleInfoReader())->read($infoFile, 'my_module'));
+    }
+
+    public function testReadsDeclaredDependenciesWithoutResolvingThem(): void
+    {
+        $infoFile = $this->writeInfo(
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies:\n  - drupal:node\n  - example/example\n"
+        );
+
+        self::assertSame([
+            'name' => 'My Module',
+            'type' => 'module',
+            'coreVersionRequirement' => '^11',
+            'dependencies' => ['drupal:node', 'example/example'],
+        ], (new ModuleInfoReader())->read($infoFile, 'my_module'));
+    }
+
+    public function testMissingDependenciesBecomeAnEmptyList(): void
+    {
+        $infoFile = $this->writeInfo("name: My Module\ntype: module\ncore_version_requirement: ^11\n");
+
+        self::assertSame([], (new ModuleInfoReader())->read($infoFile, 'my_module')['dependencies']);
+    }
+
+    public function testRejectsDependenciesMapping(): void
+    {
+        $this->assertMetadataError(
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies:\n  foo: bar\n",
+            '"dependencies" in my_module.info.yml must be a list.',
+        );
+    }
+
+    public function testRejectsDependenciesScalar(): void
+    {
+        $this->assertMetadataError(
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies: foo\n",
+            '"dependencies" in my_module.info.yml must be a list.',
+        );
+    }
+
+    public function testRejectsEmptyDependency(): void
+    {
+        $this->assertMetadataError(
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies:\n  - \"\"\n",
+            'Each "dependencies" entry in my_module.info.yml must be a non-empty string.',
+        );
+    }
+
+    public function testRejectsNonStringDependency(): void
+    {
+        $this->assertMetadataError(
+            "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies:\n  - 123\n",
+            'Each "dependencies" entry in my_module.info.yml must be a non-empty string.',
+        );
     }
 
     public function testReportsInvalidYamlAndPreservesTheParseException(): void
