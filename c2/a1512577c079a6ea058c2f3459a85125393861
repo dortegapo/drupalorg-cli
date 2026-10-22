@@ -1,0 +1,273 @@
+box.json
+  s_3d42c7fee62a03::t_f5bac5b235ab6d 15-18
+compose.keycloak.yml
+  s_3d42c7fee62a03::t_e1d1be4ac925ba 1-11
+composer.json
+  s_3d42c7fee62a03::t_bff910768276ac 8-9,11,16,22-24,52
+composer.lock
+  s_3d42c7fee62a03::t_8187e329046010 7,82-146,440-594,1073-1139,2284-2361,2781-2848,3751-3826,5924,5931
+src/Api/Action/Project/GenerateProjectMetadataAction.php
+  s_3d42c7fee62a03::t_6bdf3d351cf917 1-134
+src/Api/Auth/AuthenticationRequiredException.php
+  s_3d42c7fee62a03::t_808e4d99be9f6e 1-13
+src/Api/Auth/AuthenticationResult.php
+  s_3d42c7fee62a03::t_f73aaf9e2a24c8 1-32
+src/Api/Auth/Authenticator.php
+  s_3d42c7fee62a03::t_24d5f4d7d534c3 1-157
+src/Api/Auth/ConfigDirectoryResolver.php
+  s_3d42c7fee62a03::t_4fcc9df71dad51 1-67
+src/Api/Auth/DeviceAuthorizationClient.php
+  s_3d42c7fee62a03::t_39e5fb9f6eac02 1-400
+src/Api/Auth/OAuthConfiguration.php
+  s_3d42c7fee62a03::t_20b60fc4ae54c8 1-47
+src/Api/Auth/RefreshTokenRejectedException.php
+  s_3d42c7fee62a03::t_118ceec4690741 1-13
+src/Api/Auth/TokenStorage.php
+  s_3d42c7fee62a03::t_f2f3d3fd170d36 1-185
+src/Api/Client.php
+  s_3d42c7fee62a03::t_2b3747afa27d90 5,32-35,125-140
+src/Api/IssueTrait.php
+  s_3d42c7fee62a03::t_48c58c177fb536 75-90
+src/Api/Project/ComposerContextLocator.php
+  s_3d42c7fee62a03::t_d6acee8ff8e6e0 1-102
+src/Api/Project/DrupalCoreVersionInspector.php
+  s_3d42c7fee62a03::t_26c20e3db7e638 1-60
+src/Api/Project/DrupalOrgProjectCompatibilityResolver.php
+  s_3d42c7fee62a03::t_3a664449ec92c2 1-166
+src/Api/Project/DrupalOrgProjectSearch.php
+  s_3d42c7fee62a03::t_a0a4cea766813d 1-142
+src/Api/Project/DrupalRuntimeResolver.php
+  s_3d42c7fee62a03::t_34c04e261e4662 1-69
+src/Api/Project/ModuleContributionAssessmentResolver.php
+  s_3d42c7fee62a03::t_50e18cc31b7b9f 1-133
+src/Api/Project/ModuleInfoReader.php
+  s_3d42c7fee62a03::t_6690bd9dc6e977 1-100
+src/Api/Project/ModuleLocator.php
+  s_3d42c7fee62a03::t_793f5ac230d4e3 1-166
+src/Api/Project/ModuleReviewAnalyzer.php
+  s_3d42c7fee62a03::t_b4128fe6315b72 1-703
+src/Api/Project/ModuleReviewAnalyzerFactory.php
+  s_3d42c7fee62a03::t_6a97b83dd376de 1-33
+src/Api/Project/ModuleReviewCandidateRanker.php
+  s_3d42c7fee62a03::t_d931f43f506ad9 1-201
+src/Api/Project/ModuleReviewCollector.php
+  s_3d42c7fee62a03::t_7039222b311ce6 1-255
+src/Api/Project/ModuleReviewComparisonPromptBuilder.php
+  s_3d42c7fee62a03::t_e6a40117af7c29 1-316
+src/Api/Project/ModuleReviewComparisonResultValidator.php
+  s_3d42c7fee62a03::t_7648ff73a10f92 1-266
+src/Api/Project/ModuleReviewPdfReportWriter.php
+  s_3d42c7fee62a03::t_0ed2b08b17ebd5 1-1065
+src/Api/Project/ModuleReviewPromptBuilder.php
+  s_3d42c7fee62a03::t_6ab02235b05994 1-387
+src/Api/Project/ModuleReviewResultValidator.php
+  s_3d42c7fee62a03::t_34c1000f3d12c5 1-339
+src/Api/Project/ModuleReviewSensitiveDataSanitizer.php
+  s_3d42c7fee62a03::t_d7c9c9f8afb81d 1-429
+src/Api/Project/ModuleReviewSourceSelector.php
+  s_3d42c7fee62a03::t_05e7d007d03824 1-347
+src/Api/Project/ProjectMetadataPromptBuilder.php
+  s_3d42c7fee62a03::t_713deb8c7b7b83 1-123
+src/Api/Project/ProjectMetadataResultValidator.php
+  s_3d42c7fee62a03::t_df0c65718a7502 1-88
+src/Api/Result/Issue/IssueResult.php
+  s_3d42c7fee62a03::t_e25fe9339d61f2 7,12-13,62,64,66,68,70
+src/Api/Result/Project/ProjectMetadataResult.php
+  s_3d42c7fee62a03::t_e412c35c010814 1-50
+src/Cli/BrowserTrait.php
+  s_3d42c7fee62a03::t_df5112c52e16bc 12-14,16,27,36-63
+src/Cli/Command/Auth/AuthCommandFactory.php
+  s_3d42c7fee62a03::t_f611b2d9151553 1-53
+src/Cli/Command/Auth/Logout.php
+  s_3d42c7fee62a03::t_4a4fa665aecabb 1-49
+src/Cli/Command/Auth/Status.php
+  s_3d42c7fee62a03::t_6634075edfbe3e 1-67
+src/Cli/Command/Mcp/Serve.php
+  s_3d42c7fee62a03::t_7441b7923c514a 6,9,13,47-59,62-63
+src/Cli/Command/Project/DrupalOrgProjectCreationHandoff.php
+  s_3d42c7fee62a03::t_59c039a0ea151f 1-147
+src/Cli/Command/Project/ModuleReviewProgressRenderer.php
+  s_3d42c7fee62a03::t_48f40beb958674 1-136
+src/Cli/Command/Project/ModuleReviewSummaryRenderer.php
+  s_3d42c7fee62a03::t_3416fd1d1ccebd 1-266
+src/Cli/Command/Project/ModuleReviewWorkflowResult.php
+  s_3d42c7fee62a03::t_0b63e8318f99e9 1-20
+src/Cli/Command/Project/ProjectCreationHandoffResult.php
+  s_3d42c7fee62a03::t_74bd81e7701343 1-22
+src/Cli/Command/Project/ProjectMetadataRenderer.php
+  s_3d42c7fee62a03::t_ff2c2b5681e556 1-73
+src/Cli/Command/Project/Publish.php
+  s_3d42c7fee62a03::t_2bb019b857f576 1-284
+tests/fixtures/keycloak/drupalorg-cli-dev-realm.json
+  s_3d42c7fee62a03::t_35198b851fa502 1-45
+tests/integration/auth/device-flow-smoke.php
+  s_3d42c7fee62a03::t_0c41b011a9bb1f 1-37
+tests/src/Action/Issue/GetIssueActionTest.php
+  s_3d42c7fee62a03::t_2ca694121d4075 161-165
+tests/src/Action/Project/SearchProjectsActionTest.php
+  s_83e07987b2b8a8::t_124faa833c0d0c 1-42
+tests/src/ApplicationTest.php
+  s_3d42c7fee62a03::t_eef924b32c1fdd 1-22
+tests/src/Auth/AuthenticatorTest.php
+  s_3d42c7fee62a03::t_9d7db6ccf7a84d 1-352
+tests/src/Auth/ConfigDirectoryResolverTest.php
+  s_3d42c7fee62a03::t_061e91cbae4386 1-128
+tests/src/Auth/DeviceAuthorizationClientTest.php
+  s_3d42c7fee62a03::t_e2d2b2a28e0e0d 1-754
+tests/src/Auth/OAuthConfigurationTest.php
+  s_3d42c7fee62a03::t_7a50a56adb9179 1-74
+tests/src/Auth/TokenStorageTest.php
+  s_3d42c7fee62a03::t_68be2b13ed9db3 1-203
+tests/src/BrowserTraitTest.php
+  s_3d42c7fee62a03::t_ccf2ee0bfda3d5 1-98
+tests/src/ClientTest.php
+  s_3d42c7fee62a03::t_3255335e0d5b46 100-114,130-145
+tests/src/Command/Auth/AuthCommandFactoryTest.php
+  s_3d42c7fee62a03::t_9ee7f087144b1f 1-26
+tests/src/Command/Auth/LoginTest.php
+  s_3d42c7fee62a03::t_e2e6160257263a 1-458
+tests/src/Command/Auth/LogoutTest.php
+  s_3d42c7fee62a03::t_1ab692b84675af 1-139
+tests/src/Command/Auth/StatusTest.php
+  s_3d42c7fee62a03::t_b6da07d42a1adf 1-169
+tests/src/Command/Mcp/ServeTest.php
+  s_3d42c7fee62a03::t_3fce74015f0704 1-105
+tests/src/Command/Project/DrupalOrgProjectCreationHandoffTest.php
+  s_3d42c7fee62a03::t_752f13d02d7bb7 1-177
+tests/src/Command/Project/ModuleReviewProgressRendererTest.php
+  s_3d42c7fee62a03::t_326db14d02d4d8 1-68
+tests/src/Command/Project/ModuleReviewSummaryRendererTest.php
+  s_3d42c7fee62a03::t_9aa44946c98933 1-48
+tests/src/Command/Project/ModuleReviewWorkflowTest.php
+  s_3d42c7fee62a03::t_c01e1d0e1e3eb3 1-453
+tests/src/Command/Project/ProjectMetadataRendererTest.php
+  s_3d42c7fee62a03::t_628a79f694344f 1-48
+tests/src/Command/Project/PublishTest.php
+  s_3d42c7fee62a03::t_875fb97c0b9d5e 1-744
+tests/src/Formatter/JsonFormatterTest.php
+  s_3d42c7fee62a03::t_da194c0b36d241 6,61-84
+tests/src/Formatter/LlmFormatterTest.php
+  s_3d42c7fee62a03::t_a49f7e3bf3e397 14,172-203
+tests/src/Formatter/MarkdownFormatterTest.php
+  s_3d42c7fee62a03::t_9f491a5559b912 15,158-187
+tests/src/Project/ComposerContextLocatorTest.php
+  s_3d42c7fee62a03::t_5a230c819af320 1-148
+tests/src/Project/DrupalAiBridgeTest.php
+  s_3d42c7fee62a03::t_a287c6139b8887 1-707
+tests/src/Project/DrupalCoreVersionInspectorTest.php
+  s_3d42c7fee62a03::t_e672e899115774 1-104
+tests/src/Project/DrupalOrgProjectCompatibilityResolverTest.php
+  s_3d42c7fee62a03::t_c50649a547eea2 1-196
+tests/src/Project/DrupalOrgProjectSearchTest.php
+  s_3d42c7fee62a03::t_5d93e9e4f4d4bb 1-346
+tests/src/Project/DrupalRuntimeResolverTest.php
+  s_3d42c7fee62a03::t_073b1cd1ea7755 1-188
+tests/src/Project/GenerateProjectMetadataActionTest.php
+  s_3d42c7fee62a03::t_fe657ef4de83aa 1-126
+tests/src/Project/ModuleContributionAssessmentResolverTest.php
+  s_3d42c7fee62a03::t_2120c980f8e8b7 1-339
+tests/src/Project/ModuleInfoReaderTest.php
+  s_3d42c7fee62a03::t_662937c3edcb7a 1-191
+tests/src/Project/ModuleLocatorTest.php
+  s_3d42c7fee62a03::t_041f598f55f4e3 1-389
+tests/src/Project/ModuleReviewAnalyzerTest.php
+  s_3d42c7fee62a03::t_a6030f9e8864b3 1-992
+tests/src/Project/ModuleReviewCandidateRankerTest.php
+  s_3d42c7fee62a03::t_ddb4bee7897087 1-308
+tests/src/Project/ModuleReviewCollectorTest.php
+  s_3d42c7fee62a03::t_f8b348ebacc866 1-277
+tests/src/Project/ModuleReviewComparisonPromptBuilderTest.php
+  s_3d42c7fee62a03::t_8aa3538eb7ef1d 1-270
+tests/src/Project/ModuleReviewComparisonResultValidatorTest.php
+  s_3d42c7fee62a03::t_1c0c42e5578307 1-396
+tests/src/Project/ModuleReviewPdfReportWriterTest.php
+  s_3d42c7fee62a03::t_a4140ce139b322 1-519
+tests/src/Project/ModuleReviewPromptBuilderTest.php
+  s_3d42c7fee62a03::t_131e351aadb570 1-538
+tests/src/Project/ModuleReviewResultValidatorTest.php
+  s_3d42c7fee62a03::t_3f9160e9247c50 1-547
+tests/src/Project/ModuleReviewSensitiveDataSanitizerTest.php
+  s_3d42c7fee62a03::t_e4f1202bee75af 1-280
+tests/src/Project/ModuleReviewSourceSelectorTest.php
+  s_3d42c7fee62a03::t_f88a91d883bcda 1-172
+tests/src/Project/ProjectMetadataPromptBuilderTest.php
+  s_3d42c7fee62a03::t_f69e02d2f1f3a7 1-113
+tests/src/Project/ProjectMetadataResultValidatorTest.php
+  s_3d42c7fee62a03::t_c6856f631f21f3 1-63
+tests/src/Support/BrowserTraitTestDouble.php
+  s_3d42c7fee62a03::t_58877e09acd7e8 1-54
+.github/workflows/desktop.yml
+  s_3d42c7fee62a03::t_4cafc68e2412a0 1-76
+.gitignore
+  s_3d42c7fee62a03::t_a87323bcfc3a26 3-7,18-20
+README.md
+  s_3d42c7fee62a03::t_a1aaea147a0b53 7-20
+index.html
+  s_3d42c7fee62a03::t_78bc36d9d903db 1-13
+package-lock.json
+  s_3d42c7fee62a03::t_ce0cc7f361da90 1-1412
+package.json
+  s_3d42c7fee62a03::t_95896498f49157 1-20
+src-tauri/Cargo.toml
+  s_3d42c7fee62a03::t_ac6e8bab9fb24e 1-22
+src-tauri/build.rs
+  s_3d42c7fee62a03::t_1015f43133b16c 1-3
+src-tauri/capabilities/default.json
+  s_3d42c7fee62a03::t_35afc125aa6024 1-12
+src-tauri/icons/icon.svg
+  s_3d42c7fee62a03::t_05ef6c1cf75205 1-5
+src-tauri/resources/.gitkeep
+  s_3d42c7fee62a03::t_5b780afbcb63c2 1
+src-tauri/src/main.rs
+  s_3d42c7fee62a03::t_bec1ac167fcf32 1-5
+src-tauri/tauri.conf.json
+  s_3d42c7fee62a03::t_d4e54cbcc90d48 1-35
+src/Api/Action/Project/SearchProjectsAction.php
+  s_3d42c7fee62a03::t_5fdf4ebeb733af 1-25
+src/Api/Project/DrupalAiBridge.php
+  s_3d42c7fee62a03::t_c6ff305fb92c45 1-601
+src/Api/Result/Project/ProjectSearchResult.php
+  s_3d42c7fee62a03::t_516428c1454836 1-27
+src/Cli/Application.php
+  s_3d42c7fee62a03::t_ad73347e93a007 65-66,94-96
+src/Cli/Command/Auth/Login.php
+  s_3d42c7fee62a03::t_d38088ffe75bef 1-106
+src/Cli/Command/Project/ModuleReviewWorkflow.php
+  s_3d42c7fee62a03::t_68cde42bb877ef 1-454
+src/Cli/Command/Project/Search.php
+  s_3d42c7fee62a03::t_c34e2f63749fd5 1-46
+src/Cli/Formatter/AbstractFormatter.php
+  s_3d42c7fee62a03::t_b83c2c86a94c10 17-18,32-33,54-55
+src/Cli/Formatter/LlmFormatter.php
+  s_3d42c7fee62a03::t_c16f0858b3981b 18-19,112-173
+src/Cli/Formatter/MarkdownFormatter.php
+  s_3d42c7fee62a03::t_43f76e3d5a298e 18-19,90-145
+tsconfig.json
+  s_3d42c7fee62a03::t_cec7b15ebc1021 1-14
+vite.config.ts
+  s_3d42c7fee62a03::t_422a94e97eb4c6 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2a1512577c079a6ea058c2f3459a85125393861",
+  "prompts": {},
+  "sessions": {
+    "s_3d42c7fee62a03": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a163e5-f2d7-7d22-a011-30336427b0f3",
+        "model": "gpt-5.6-luna"
+      },
+      "human_author": "Pablo Alberto Grande García <pabloaggar@ext.inditex.com>"
+    },
+    "s_83e07987b2b8a8": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "eba4f3af-f068-49d0-a13d-e8cb2c6993e5",
+        "model": "copilot/claude-opus-5.5"
+      },
+      "human_author": "Pablo Alberto Grande García <pabloaggar@ext.inditex.com>"
+    }
+  }
+}
