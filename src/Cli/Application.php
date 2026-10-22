@@ -62,6 +62,8 @@ class Application extends ParentApplication
         $commands[] = new Command\Issue\Apply();
         $commands[] = new Command\Issue\Show();
         $commands[] = new Command\Project\Link();
+        $commands[] = new Command\Project\Publish();
+        $commands[] = new Command\Project\Search();
         $commands[] = new Command\Project\Kanban();
         $commands[] = new Command\Project\ProjectIssues();
         $commands[] = new Command\Issue\Search();
@@ -89,6 +91,9 @@ class Application extends ParentApplication
         $commands[] = new Command\MergeRequest\GetLogs();
         $commands[] = new Command\Mcp\Serve();
         $commands[] = new Command\Mcp\Config();
+
+        $commands = array_merge($commands, (new Command\Auth\AuthCommandFactory())->create());
+
         return $commands;
     }
 

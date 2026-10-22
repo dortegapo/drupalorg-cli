@@ -4,6 +4,20 @@ Drupal.org CLI
 
 A command line tool for interfacing with Drupal.org and GitLab (git.drupalcode.org). Uses the Drupal.org REST API and GitLab REST API.
 
+## Drupal Workbench desktop app
+
+This repository also contains a Tauri desktop workbench for the project workflow. It keeps the CLI and its reusable actions as the domain layer and adds an onboarding wizard, an embedded Drupal.org login window, AI provider settings, project workspaces, Drupal.org module discovery, and custom-module publication preparation.
+
+The development prerequisites are PHP 8.1+, Composer, Node.js 22+, and Rust. Start the app with:
+
+```bash
+composer install
+npm install
+npm run tauri:dev
+```
+
+The packaged app invokes the bundled `drupalorg.phar`. To create a local production build, build the phar first and place it at `src-tauri/resources/drupalorg.phar`; the GitHub Desktop workflow does this automatically for Windows, Linux, and macOS releases. Builds are currently unsigned, so each platform may show its normal first-run security warning.
+
 ## Requirements
 
 * PHP 8.1 or higher, with cURL support

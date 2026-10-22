@@ -1,5 +1,10 @@
 .idea
 vendor
+/node_modules/
+/dist/
+/src-tauri/target/
+/src-tauri/gen/
+/src-tauri/resources/drupalorg.phar
 cache
 .DS_Store
 /.claude/settings.local.json
@@ -10,3 +15,6 @@ cache
 /box.phar
 /drupalorg.phar
 
+
+# graphify-axet
+.graphify/

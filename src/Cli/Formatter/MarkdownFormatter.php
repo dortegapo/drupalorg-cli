@@ -15,6 +15,8 @@ use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSearchResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
@@ -82,6 +84,62 @@ class MarkdownFormatter extends AbstractFormatter
             $url = "https://www.drupal.org/node/{$issue->nid}";
             $lines[] = "- **{$issue->nid}** [{$status}] [{$issue->title}]({$url})";
         }
+        return implode("\n", $lines);
+    }
+
+    protected function formatProjectMetadata(ProjectMetadataResult $result): string
+    {
+        $lines = [];
+        $lines[] = '# ' . $result->title;
+        $lines[] = '';
+        $lines[] = '- **Machine name:** ' . $result->machineName;
+        $lines[] = '- **Project type:** ' . $result->projectType;
+        $lines[] = '- **Core requirement:** ' . $result->coreVersionRequirement;
+        $lines[] = '';
+        $lines[] = '## Summary';
+        $lines[] = '';
+        $lines[] = $result->summary;
+        $lines[] = '';
+        $lines[] = '## Description';
+        $lines[] = '';
+        $lines[] = $result->description;
+        $lines[] = '';
+        $lines[] = '## Features';
+        $lines[] = '';
+        foreach ($result->features as $feature) {
+            $lines[] = '- ' . $feature;
+        }
+        $lines[] = '';
+        $lines[] = '## Integrations';
+        $lines[] = '';
+        if ($result->integrations === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->integrations as $integration) {
+                $lines[] = '- ' . $integration;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '## Dependencies';
+        $lines[] = '';
+        if ($result->dependencies === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->dependencies as $dependency) {
+                $lines[] = '- ' . $dependency;
+            }
+        }
+
+        return implode("\n", $lines);
+    }
+
+    protected function formatProjectSearch(ProjectSearchResult $result): string
+    {
+        $lines = ['# Drupal.org project search', '', '**Query:** ' . $result->query, ''];
+        foreach ($result->projects as $project) {
+            $lines[] = sprintf('- [%s](%s) — %s', $project['title'], $project['url'], $project['description']);
+        }
+
         return implode("\n", $lines);
     }
 

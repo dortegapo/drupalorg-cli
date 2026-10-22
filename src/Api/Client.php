@@ -2,6 +2,7 @@
 
 namespace mglaman\DrupalOrg;
 
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\HandlerStack;
 use GuzzleRetry\GuzzleRetryMiddleware;
 use mglaman\DrupalOrg\Entity\File;
@@ -28,8 +29,10 @@ class Client
      *   Tests pass a stack built around a MockHandler so they can assert on the
      *   requests this client sends. Production callers pass nothing.
      */
-    public function __construct(bool $noCache = false, ?HandlerStack $handler = null)
-    {
+    public function __construct(
+        bool $noCache = false,
+        ?HandlerStack $handler = null,
+    ) {
         $stack = $handler ?? HandlerStack::create();
         $stack->push(GuzzleRetryMiddleware::factory([
             'max_retry_attempts' => 5,
@@ -46,7 +49,6 @@ class Client
             $headers['Cache-Control'] = 'no-cache, no-store, max-age=0';
             $headers['Pragma'] = 'no-cache';
         }
-
         $this->client = new \GuzzleHttp\Client(
             [
                 'base_uri' => self::API_URL,
@@ -120,14 +122,22 @@ class Client
 
     public function getProject(string $machineName): ?Project
     {
-        $data = $this->request(
-            new Request(
-                'node.json',
-                [
-                    'field_project_machine_name' => $machineName,
-                ]
-            )
-        );
+        try {
+            $data = $this->request(
+                new Request(
+                    'node.json',
+                    [
+                        'field_project_machine_name' => $machineName,
+                    ]
+                )
+            );
+        } catch (RequestException $exception) {
+            if ($exception->getResponse()?->getStatusCode() === 404) {
+                return null;
+            }
+
+            throw $exception;
+        }
         $list = (array) ($data->list ?? []);
         if ($list === []) {
             return null;
