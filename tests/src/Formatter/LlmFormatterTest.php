@@ -11,6 +11,7 @@ use mglaman\DrupalOrg\Result\Maintainer\MaintainerIssuesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestItem;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillItem;
@@ -166,6 +167,38 @@ class LlmFormatterTest extends TestCase
         self::assertStringContainsString('<title>Fix the thing</title>', $output);
         self::assertStringContainsString('<status>RTBC</status>', $output);
         self::assertStringContainsString('<url>https://www.drupal.org/node/1234567</url>', $output);
+    }
+
+    public function testProjectMetadataResult(): void
+    {
+        $result = new ProjectMetadataResult(
+            title: 'Example <Module>',
+            machineName: 'example_module',
+            projectType: 'module',
+            coreVersionRequirement: '^11',
+            dependencies: ['drupal:views'],
+            summary: 'Manages reusable records.',
+            description: 'Provides reusable record management.',
+            features: ['Create records'],
+            integrations: ['Views'],
+            providerId: 'provider',
+            modelId: 'model',
+            tokenUsage: ['input' => 1, 'output' => 2, 'total' => 3],
+        );
+
+        $output = (new LlmFormatter())->format($result);
+
+        self::assertStringStartsWith('<project_metadata>', $output);
+        self::assertStringContainsString('<title>Example &lt;Module&gt;</title>', $output);
+        self::assertStringContainsString('<machine_name>example_module</machine_name>', $output);
+        self::assertStringContainsString('<project_type>module</project_type>', $output);
+        self::assertStringContainsString('<core_version_requirement>^11</core_version_requirement>', $output);
+        self::assertStringContainsString('<dependency>drupal:views</dependency>', $output);
+        self::assertStringContainsString('<summary>Manages reusable records.</summary>', $output);
+        self::assertStringContainsString('<description><![CDATA[Provides reusable record management.]]></description>', $output);
+        self::assertStringContainsString('<feature>Create records</feature>', $output);
+        self::assertStringContainsString('<integration>Views</integration>', $output);
+        self::assertStringEndsWith('</project_metadata>', $output);
     }
 
     public function testMaintainerIssuesResult(): void

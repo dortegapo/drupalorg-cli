@@ -97,6 +97,21 @@ class ClientTest extends TestCase
         );
     }
 
+    public function testGetProjectReturnsProjectFromList(): void
+    {
+        $project = $this->clientResponding([
+            'list' => [[
+                'nid' => '3060',
+                'title' => 'Drupal',
+                'field_project_machine_name' => 'drupal',
+            ]],
+        ])->getProject('drupal');
+
+        self::assertNotNull($project);
+        self::assertSame('3060', $project->nid);
+        self::assertSame('drupal', $project->machineName);
+    }
+
     public function testKeepsCookiesBetweenRequests(): void
     {
         $client = $this->client(
@@ -110,6 +125,22 @@ class ClientTest extends TestCase
 
         self::assertFalse($this->sentRequest(0)->hasHeader('Cookie'));
         self::assertSame('SESS=abc123', $this->sentRequest(1)->getHeaderLine('Cookie'));
+    }
+
+    public function testGetProjectReturnsNullForAnEmptyList(): void
+    {
+        self::assertNull($this->clientResponding(['list' => []])->getProject('missing'));
+    }
+
+    public function testGetProjectReturnsNullForNotFoundResponse(): void
+    {
+        self::assertNull($this->client(false, new Response(404))->getProject('missing'));
+    }
+
+    public function testGetProjectRethrowsServerErrors(): void
+    {
+        $this->expectException(\GuzzleHttp\Exception\RequestException::class);
+        $this->client(false, new Response(500, [], 'Server error'))->getProject('example');
     }
 
     public function testRetriesAfterServiceUnavailable(): void

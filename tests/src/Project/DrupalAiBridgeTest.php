@@ -1,0 +1,707 @@
+<?php
+
+declare(strict_types=1);
+
+namespace mglaman\DrupalOrg\Tests\Project;
+
+use mglaman\DrupalOrg\Project\DrupalAiBridge;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\TestCase;
+
+#[CoversClass(DrupalAiBridge::class)]
+class DrupalAiBridgeTest extends TestCase
+{
+    private string $workDir;
+
+    protected function setUp(): void
+    {
+        $this->workDir = sys_get_temp_dir() . '/drupalorg-cli-ai-bridge-' . uniqid();
+        mkdir($this->workDir);
+    }
+
+    protected function tearDown(): void
+    {
+        self::removeDirectory($this->workDir);
+    }
+
+    public function testInspectsConfiguredProviderAndModel(): void
+    {
+        self::assertSame(
+            [
+                'aiEnabled' => true,
+                'providerId' => 'openai',
+                'modelId' => 'gpt-5.4',
+            ],
+            $this->runBridge(
+                '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":true,"provider_id":"openai","model_id":"gpt-5.4"}'
+            )
+        );
+    }
+
+    public function testAcceptsAnArbitraryProvider(): void
+    {
+        self::assertSame(
+            [
+                'aiEnabled' => true,
+                'providerId' => 'some_provider',
+                'modelId' => 'some-model',
+            ],
+            $this->runBridge(
+                '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":true,"provider_id":"some_provider","model_id":"some-model"}'
+            )
+        );
+    }
+
+    public function testReportsDisabledAi(): void
+    {
+        self::assertSame(
+            [
+                'aiEnabled' => false,
+                'providerId' => null,
+                'modelId' => null,
+            ],
+            $this->runBridge(
+                '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":false,"provider_id":null,"model_id":null}'
+            )
+        );
+    }
+
+    public function testReportsEnabledAiWithoutDefault(): void
+    {
+        self::assertSame(
+            [
+                'aiEnabled' => true,
+                'providerId' => null,
+                'modelId' => null,
+            ],
+            $this->runBridge(
+                '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":true,"provider_id":null,"model_id":null}'
+            )
+        );
+    }
+
+    public function testIgnoresAdditionalOutputAroundMarkedResponse(): void
+    {
+        self::assertSame(
+            [
+                'aiEnabled' => true,
+                'providerId' => 'x',
+                'modelId' => 'y',
+            ],
+            $this->runBridge(
+                "Drupal warning\nSome other text\n"
+                . '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":true,"provider_id":"x","model_id":"y"}'
+                . "\nMore text\n"
+            )
+        );
+    }
+
+    public function testRejectsInvalidJson(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runBridge('__DRUPALORG_CLI_AI_CONTEXT__={broken');
+    }
+
+    public function testRejectsMissingMarker(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runBridge('normal drush output');
+    }
+
+    public function testRejectsInvalidTypes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runBridge('__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":"yes","provider_id":123,"model_id":[]}');
+    }
+
+    public function testReportsProcessFailureWithoutExposingOutput(): void
+    {
+        try {
+            $this->runBridge('', 7, null, 'private stderr');
+            self::fail('Expected the bridge to report the process failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'Could not inspect Drupal AI configuration (exit code 7).',
+                $exception->getMessage()
+            );
+            self::assertStringNotContainsString('private stderr', $exception->getMessage());
+        }
+    }
+
+    public function testPassesTheDrupalAiInspectionScriptThroughStdin(): void
+    {
+        $capturedInput = $this->workDir . '/stdin.txt';
+
+        $this->runBridge(
+            '__DRUPALORG_CLI_AI_CONTEXT__={"ai_enabled":false,"provider_id":null,"model_id":null}',
+            0,
+            $capturedInput
+        );
+
+        $script = file_get_contents($capturedInput);
+        self::assertIsString($script);
+        self::assertStringContainsString('ai.provider', $script);
+        self::assertStringContainsString('chat_with_structured_response', $script);
+        self::assertStringNotContainsString('<?php', $script);
+        self::assertStringNotContainsString('->chat(', $script);
+    }
+
+    public function testStructuredChatReturnsStructuredResultAndTokenUsage(): void
+    {
+        self::assertSame(
+            [
+                'providerId' => 'some_provider',
+                'modelId' => 'some_model',
+                'result' => [
+                    'status' => 'ok',
+                    'items' => ['a', 'b'],
+                ],
+                'tokenUsage' => [
+                    'input' => 100,
+                    'output' => 20,
+                    'total' => 120,
+                ],
+            ],
+            $this->runStructuredBridge(
+                self::structuredOutput([
+                    'ok' => true,
+                    'provider_id' => 'some_provider',
+                    'model_id' => 'some_model',
+                    'result' => [
+                        'status' => 'ok',
+                        'items' => ['a', 'b'],
+                    ],
+                    'token_usage' => [
+                        'input' => 100,
+                        'output' => 20,
+                        'total' => 120,
+                    ],
+                ])
+            )
+        );
+    }
+
+    public function testStructuredChatAcceptsNullTokenUsage(): void
+    {
+        self::assertSame(
+            [
+                'providerId' => 'some_provider',
+                'modelId' => 'some_model',
+                'result' => ['status' => 'ok'],
+                'tokenUsage' => [
+                    'input' => null,
+                    'output' => null,
+                    'total' => null,
+                ],
+            ],
+            $this->runStructuredBridge(
+                self::structuredOutput([
+                    'ok' => true,
+                    'provider_id' => 'some_provider',
+                    'model_id' => 'some_model',
+                    'result' => ['status' => 'ok'],
+                    'token_usage' => [
+                        'input' => null,
+                        'output' => null,
+                        'total' => null,
+                    ],
+                ])
+            )
+        );
+    }
+
+    public function testStructuredChatInvokesWaitCallbackWhileProcessIsRunning(): void
+    {
+        $waitCalls = 0;
+        $result = $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => ['status' => 'ok'],
+                'token_usage' => [
+                    'input' => null,
+                    'output' => null,
+                    'total' => null,
+                ],
+            ]),
+            'test system prompt',
+            'test user prompt',
+            ['type' => 'object'],
+            0,
+            null,
+            '',
+            static function () use (&$waitCalls): void {
+                ++$waitCalls;
+            },
+            200000,
+        );
+
+        self::assertSame(['status' => 'ok'], $result['result']);
+        self::assertGreaterThan(0, $waitCalls);
+    }
+
+    public function testStructuredChatReportsDisabledAi(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI is not enabled in the target Drupal project.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => false,
+                'error' => 'ai_disabled',
+            ])
+        );
+    }
+
+    public function testStructuredChatReportsMissingProvider(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage(
+            'Drupal AI has no default structured chat provider/model configured.'
+        );
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => false,
+                'error' => 'no_structured_provider',
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsInvalidJson(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runStructuredBridge('__DRUPALORG_CLI_AI_RESULT__={broken');
+    }
+
+    public function testStructuredChatRejectsMissingMarker(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runStructuredBridge('normal drush output');
+    }
+
+    public function testStructuredChatRejectsInvalidEnvelopeTypes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => 'yes',
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsMissingProviderOrModel(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'result' => [],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsNonArrayResult(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => 'invalid',
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsInvalidTokenUsageTypes(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI bridge returned an invalid response.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [],
+                'token_usage' => [
+                    'input' => '1',
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatReportsProcessFailureWithoutExposingOutput(): void
+    {
+        try {
+            $this->runStructuredBridge(
+                '',
+                'trusted system prompt',
+                'untrusted user prompt',
+                ['type' => 'object'],
+                7,
+                null,
+                'private stderr'
+            );
+            self::fail('Expected the bridge to report the process failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                'Drupal AI bridge returned an invalid response.',
+                $exception->getMessage()
+            );
+            self::assertStringNotContainsString('private stderr', $exception->getMessage());
+        }
+    }
+
+    public function testStructuredChatRejectsEmptyListResult(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsNonEmptyListResult(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => [
+                    ['purpose' => 'example'],
+                ],
+                'token_usage' => [
+                    'input' => 1,
+                    'output' => 1,
+                    'total' => 2,
+                ],
+            ])
+        );
+    }
+
+    public function testStructuredChatReportsProviderFailureWithoutExposingDetails(): void
+    {
+        try {
+            $this->runStructuredBridge(
+                "SUPER_SECRET_PROVIDER_ERROR\n" . self::structuredOutput([
+                    'ok' => false,
+                    'error' => 'provider_failure',
+                ]),
+                'trusted system prompt',
+                'untrusted user prompt',
+                ['type' => 'object'],
+                0,
+                null,
+                'SUPER_SECRET_PROVIDER_ERROR'
+            );
+            self::fail('Expected the bridge to report the provider failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Drupal AI provider invocation failed.', $exception->getMessage());
+            self::assertStringNotContainsString('SUPER_SECRET_PROVIDER_ERROR', $exception->getMessage());
+        }
+    }
+
+    public function testStructuredChatReportsInvalidStructuredOutput(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Drupal AI returned invalid structured output.');
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => false,
+                'error' => 'invalid_structured_output',
+            ])
+        );
+    }
+
+    public function testStructuredChatRejectsEmptyPromptBeforeStartingProcess(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The Drupal AI system prompt cannot be empty.');
+
+        (new DrupalAiBridge())->structuredChat(
+            $this->invalidRuntime(),
+            '',
+            'test user prompt',
+            ['type' => 'object']
+        );
+    }
+
+    public function testStructuredChatRejectsWhitespacePromptBeforeStartingProcess(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The Drupal AI user prompt cannot be empty.');
+
+        (new DrupalAiBridge())->structuredChat(
+            $this->invalidRuntime(),
+            'test system prompt',
+            " \t\n",
+            ['type' => 'object']
+        );
+    }
+
+    public function testStructuredChatRejectsEmptySchemaBeforeStartingProcess(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The Drupal AI JSON schema cannot be empty.');
+
+        (new DrupalAiBridge())->structuredChat(
+            $this->invalidRuntime(),
+            'test prompt',
+            'test user prompt',
+            []
+        );
+    }
+
+    public function testStructuredChatPassesSafePayloadAndExpectedScriptThroughStdin(): void
+    {
+        $capturedInput = $this->workDir . '/structured-stdin.txt';
+        $systemPrompt = 'SECRET-TEST-SYSTEM-PROMPT-\'"\\PHP';
+        $userPrompt = 'SECRET-TEST-USER-PROMPT-\'"\\PHP';
+        $schema = [
+            'type' => 'object',
+            'properties' => [
+                'message' => ['type' => 'string'],
+            ],
+        ];
+
+        $this->runStructuredBridge(
+            self::structuredOutput([
+                'ok' => true,
+                'provider_id' => 'some_provider',
+                'model_id' => 'some_model',
+                'result' => ['message' => 'ok'],
+                'token_usage' => [
+                    'input' => null,
+                    'output' => null,
+                    'total' => null,
+                ],
+            ]),
+            $systemPrompt,
+            $userPrompt,
+            $schema,
+            0,
+            $capturedInput
+        );
+
+        $script = file_get_contents($capturedInput);
+        self::assertIsString($script);
+        self::assertStringContainsString('chat_with_structured_response', $script);
+        self::assertStringContainsString('StructuredOutputSchema', $script);
+        self::assertStringContainsString('setChatStructuredJsonSchema', $script);
+        self::assertStringContainsString('->chat(', $script);
+        self::assertStringContainsString('getTokenUsage', $script);
+        self::assertStringContainsString('$tokenUsage = [', $script);
+        self::assertStringContainsString("'input' => null", $script);
+        self::assertStringContainsString(
+            'Token usage is observability metadata and must not invalidate a valid response.',
+            $script,
+        );
+        self::assertStringNotContainsString('<?php', $script);
+        self::assertStringNotContainsString($systemPrompt, $script);
+        self::assertStringNotContainsString($userPrompt, $script);
+        self::assertStringContainsString("'system'", $script);
+        self::assertStringContainsString("'user'", $script);
+        self::assertLessThan(
+            (int) strpos($script, "'user'"),
+            (int) strpos($script, "'system'")
+        );
+
+        $matches = [];
+        self::assertSame(
+            1,
+            preg_match("/base64_decode\\('([A-Za-z0-9+\\/=]+)'/", $script, $matches)
+        );
+        self::assertArrayHasKey(1, $matches);
+        self::assertIsString($matches[1]);
+        $decodedPayload = base64_decode($matches[1], true);
+        self::assertIsString($decodedPayload);
+        self::assertSame(
+            [
+                'system_prompt' => $systemPrompt,
+                'user_prompt' => $userPrompt,
+                'schema' => $schema,
+            ],
+            json_decode($decodedPayload, true, 512, JSON_THROW_ON_ERROR)
+        );
+    }
+
+    private function runBridge(
+        string $stdout,
+        int $exitCode = 0,
+        ?string $captureInput = null,
+        string $stderr = ''
+    ): array {
+        return (new DrupalAiBridge())->inspect(
+            $this->createFakeRuntime($stdout, $exitCode, $captureInput, $stderr)
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $jsonSchema
+     *
+     * @return array<string, mixed>
+     */
+    private function runStructuredBridge(
+        string $stdout,
+        string $systemPrompt = 'test system prompt',
+        string $userPrompt = 'test user prompt',
+        array $jsonSchema = ['type' => 'object'],
+        int $exitCode = 0,
+        ?string $captureInput = null,
+        string $stderr = '',
+        ?callable $onWait = null,
+        int $delayMicros = 0,
+    ): array {
+        return (new DrupalAiBridge())->structuredChat(
+            $this->createFakeRuntime($stdout, $exitCode, $captureInput, $stderr, $delayMicros),
+            $systemPrompt,
+            $userPrompt,
+            $jsonSchema,
+            $onWait,
+        );
+    }
+
+    /**
+     * @return array{
+     *     type: 'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * }
+     */
+    private function createFakeRuntime(
+        string $stdout,
+        int $exitCode = 0,
+        ?string $captureInput = null,
+        string $stderr = '',
+        int $delayMicros = 0,
+    ): array {
+        $responseFile = $this->workDir . '/response.txt';
+        file_put_contents($responseFile, $stdout);
+        $fakeExecutable = $this->workDir . '/fake-drush.php';
+        file_put_contents(
+            $fakeExecutable,
+            <<<'PHP'
+<?php
+$responseFile = $argv[1];
+$exitCode = (int) $argv[2];
+$captureFile = $argv[3] ?? '';
+$stderr = $argv[4] ?? '';
+$delayMicros = (int) ($argv[5] ?? 0);
+$input = stream_get_contents(STDIN);
+if ($captureFile !== '') {
+    file_put_contents($captureFile, $input);
+}
+if ($stderr !== '') {
+    fwrite(STDERR, $stderr);
+}
+if ($delayMicros > 0) {
+    usleep($delayMicros);
+}
+fwrite(STDOUT, (string) file_get_contents($responseFile));
+exit($exitCode);
+PHP
+        );
+
+        $command = [PHP_BINARY, $fakeExecutable, $responseFile, (string) $exitCode];
+        $command[] = $captureInput ?? '';
+        $command[] = $stderr;
+        $command[] = (string) $delayMicros;
+
+        return [
+            'type' => 'local-drush',
+            'workingDirectory' => $this->workDir,
+            'command' => $command,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private static function structuredOutput(array $payload): string
+    {
+        return '__DRUPALORG_CLI_AI_RESULT__=' . json_encode($payload, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @return array{
+     *     type: 'local-drush',
+     *     workingDirectory: string,
+     *     command: list<string>
+     * }
+     */
+    private function invalidRuntime(): array
+    {
+        return [
+            'type' => 'local-drush',
+            'workingDirectory' => $this->workDir,
+            'command' => ['/definitely/not-a-command'],
+        ];
+    }
+
+    private static function removeDirectory(string $directory): void
+    {
+        $entries = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($entries as $entry) {
+            $entry->isDir() ? rmdir($entry->getPathname()) : unlink($entry->getPathname());
+        }
+        rmdir($directory);
+    }
+}

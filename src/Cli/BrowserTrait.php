@@ -9,11 +9,11 @@ trait BrowserTrait
 
     protected function getDefaultBrowser(): ?string
     {
-        $potential = ['xdg-open', 'open', 'start'];
+        $potential = $this->isWindowsSubsystemForLinux()
+            ? ['wslview', 'cmd.exe', 'xdg-open', 'open', 'start']
+            : ['xdg-open', 'open', 'start'];
         foreach ($potential as $browser) {
-            // Check if command exists by executing help flag.
-            $output = (int) shell_exec("command -v $browser; echo $?");
-            if ($output === 0) {
+            if ($this->browserCommandExists($browser)) {
                 return $browser;
             }
         }
@@ -24,8 +24,7 @@ trait BrowserTrait
     {
         $browser = $this->getDefaultBrowser();
         if ($browser !== null) {
-            $opened = (int) shell_exec("$browser $url 2>&1; echo $?");
-            if ($opened === 0) {
+            if ($this->launchBrowser($browser, $url)) {
                 $stdErr->writeln("<info>Opened</info>: $url");
                 return;
             }
@@ -33,5 +32,33 @@ trait BrowserTrait
             $stdErr->writeln("<error>Browser not found: $browser</error>");
         }
         $stdOut->writeln($url);
+    }
+
+    protected function isWindowsSubsystemForLinux(): bool
+    {
+        if (getenv('WSL_INTEROP') !== false || getenv('WSL_DISTRO_NAME') !== false) {
+            return true;
+        }
+
+        $version = @file_get_contents('/proc/version');
+        return is_string($version) && str_contains(strtolower($version), 'microsoft');
+    }
+
+    protected function browserCommandExists(string $browser): bool
+    {
+        $output = shell_exec(sprintf('command -v %s', escapeshellarg($browser)));
+        return is_string($output) && trim($output) !== '';
+    }
+
+    protected function launchBrowser(string $browser, string $url): bool
+    {
+        $command = $browser === 'cmd.exe'
+            ? sprintf('%s /c start "" %s', escapeshellcmd($browser), escapeshellarg($url))
+            : sprintf('%s %s', escapeshellcmd($browser), escapeshellarg($url));
+        $output = [];
+        $exitCode = 1;
+        exec($command . ' 2>&1', $output, $exitCode);
+
+        return $exitCode === 0;
     }
 }
