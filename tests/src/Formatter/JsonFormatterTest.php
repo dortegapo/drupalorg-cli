@@ -3,6 +3,7 @@
 namespace mglaman\DrupalOrg\Tests\Formatter;
 
 use mglaman\DrupalOrg\Result\Issue\IssueResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Formatter\JsonFormatter;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -56,5 +57,29 @@ class JsonFormatterTest extends TestCase
         $output = $formatter->format(self::makeIssueResult());
 
         self::assertStringContainsString("\n", $output);
+    }
+
+    public function testProjectMetadataResultIsSerialized(): void
+    {
+        $result = new ProjectMetadataResult(
+            title: 'Example Module',
+            machineName: 'example_module',
+            projectType: 'module',
+            coreVersionRequirement: '^11',
+            dependencies: ['drupal:views'],
+            summary: 'Summary.',
+            description: 'Description.',
+            features: ['Create records'],
+            integrations: [],
+            providerId: 'provider',
+            modelId: 'model',
+            tokenUsage: ['input' => 1, 'output' => 2, 'total' => 3],
+        );
+
+        $decoded = json_decode((new JsonFormatter())->format($result), true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertSame('Example Module', $decoded['title']);
+        self::assertSame('example_module', $decoded['machine_name']);
+        self::assertSame(['drupal:views'], $decoded['dependencies']);
     }
 }
