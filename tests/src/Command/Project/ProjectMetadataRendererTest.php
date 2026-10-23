@@ -9,6 +9,7 @@ use mglaman\DrupalOrgCli\Command\Project\ProjectMetadataRenderer;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Output\BufferedOutput;
+use Symfony\Component\Console\Output\OutputInterface;
 
 #[CoversClass(ProjectMetadataRenderer::class)]
 final class ProjectMetadataRendererTest extends TestCase
@@ -34,15 +35,43 @@ final class ProjectMetadataRendererTest extends TestCase
         (new ProjectMetadataRenderer())->render($output, $metadata);
 
         $display = $output->fetch();
-        self::assertStringContainsString("Title\nExample Module", $display);
-        self::assertStringContainsString("Machine name\nexample_module", $display);
-        self::assertStringContainsString("Project type\nmodule", $display);
+        self::assertStringContainsString('DRUPAL.ORG METADATA', $display);
         self::assertStringContainsString("Summary\nManages reusable records.", $display);
         self::assertStringContainsString("Description\nProvides reusable record management.", $display);
         self::assertStringContainsString("Features\n- Create records", $display);
         self::assertStringContainsString("Integrations\n- Views", $display);
-        self::assertStringContainsString("Core requirement\n^11", $display);
-        self::assertStringContainsString("Declared dependencies\n- drupal:views", $display);
-        self::assertStringContainsString('Tokens used: input 1, output 2, total 3', $display);
+        self::assertStringNotContainsString('Title', $display);
+        self::assertStringNotContainsString('Declared dependencies', $display);
+        self::assertStringNotContainsString('Tokens:', $display);
+    }
+
+    public function testVerboseOutputIncludesMetadataDetails(): void
+    {
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_VERBOSE);
+        $metadata = new ProjectMetadataResult(
+            title: 'Example Module',
+            machineName: 'example_module',
+            projectType: 'module',
+            coreVersionRequirement: '^11',
+            dependencies: ['drupal:views'],
+            summary: 'Manages reusable records.',
+            description: 'Provides reusable record management.',
+            features: ['Create records'],
+            integrations: ['Views'],
+            providerId: 'provider',
+            modelId: 'model',
+            tokenUsage: ['input' => 1, 'output' => 2, 'total' => 3],
+        );
+
+        (new ProjectMetadataRenderer())->render($output, $metadata);
+
+        $display = $output->fetch();
+        self::assertStringContainsString('Metadata details', $display);
+        self::assertStringContainsString('Title: Example Module', $display);
+        self::assertStringContainsString('Machine name: example_module', $display);
+        self::assertStringContainsString('Declared dependencies:', $display);
+        self::assertStringContainsString('  - drupal:views', $display);
+        self::assertStringContainsString('AI: provider / model', $display);
+        self::assertStringContainsString('Tokens: input 1 · output 2 · total 3', $display);
     }
 }

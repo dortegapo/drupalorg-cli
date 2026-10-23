@@ -18,6 +18,7 @@ use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputDefinition;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\BufferedOutput;
+use Symfony\Component\Console\Output\OutputInterface;
 
 #[CoversClass(DrupalOrgProjectCreationHandoff::class)]
 final class DrupalOrgProjectCreationHandoffTest extends TestCase
@@ -89,6 +90,37 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         );
 
         self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+    }
+
+    public function testVerboseOutputIncludesProjectContext(): void
+    {
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            static function (): void {
+            },
+        );
+        $input = new ArrayInput(
+            ['--no-browser' => true],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_VERBOSE);
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("cancel\n"));
+
+        $handoff->run(
+            $input,
+            $output,
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+        );
+
+        $display = $output->fetch();
+        self::assertStringContainsString('Type          Module', $display);
+        self::assertStringContainsString('Core          ^11', $display);
     }
 
     public function testOpensCreationPageAndVerifiesProject(): void

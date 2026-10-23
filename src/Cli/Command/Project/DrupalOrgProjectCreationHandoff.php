@@ -40,25 +40,30 @@ final class DrupalOrgProjectCreationHandoff
         ?ProjectMetadataResult $metadata = null,
     ): ProjectCreationHandoffResult {
         $output->writeln('');
-        $output->writeln('Drupal.org does not currently provide a supported API for creating contributed projects.');
-        $output->writeln('The project must be created once through Drupal.org before publication can continue.');
+        $output->writeln('<fg=cyan;options=bold>CREATE PROJECT ON DRUPAL.ORG</>');
         $output->writeln('');
-        $output->writeln('Project to create');
-        $output->writeln('Title: ' . $title);
-        $output->writeln('Machine name: ' . $machineName);
-        $output->writeln('Type: ' . ucfirst($type));
-        $output->writeln('Core requirement: ' . $coreVersionRequirement);
+        $output->writeln('Drupal.org currently requires contributed projects to be created');
+        $output->writeln('through its web form.');
+        $output->writeln('');
+        $output->writeln('Title         ' . $title);
+        $output->writeln('Machine name  ' . $machineName);
+        if ($output->isVerbose()) {
+            $output->writeln('Type          ' . ucfirst($type));
+            $output->writeln('Core          ' . $coreVersionRequirement);
+        }
         if ($metadata !== null) {
-            $output->writeln('Use the generated metadata above when completing the Drupal.org project page.');
+            $output->writeln('');
+            $output->writeln('Use the generated metadata above when completing the form.');
         }
 
         $this->openProjectCreationPage($input, $output, $errorOutput);
-        $output->writeln('Create the Drupal.org project using machine name "' . $machineName . '".');
+        $output->writeln('');
+        $output->writeln('After creating the project:');
         $action = $this->askProjectCreationAction(
             $input,
             $output,
             $helper,
-            'Press Enter after the project has been created, type "open" to reopen the page, or "cancel" to stop: ',
+            'Press Enter to verify · type "open" to reopen · "cancel" to stop: ',
         );
 
         while ($action !== 'cancel') {
@@ -82,14 +87,14 @@ final class DrupalOrgProjectCreationHandoff
                     return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FOUND, $project);
                 }
 
-                $output->writeln('Drupal.org project "' . $machineName . '" was not found yet.');
+                $output->writeln('Project not found yet.');
             }
 
             $action = $this->askProjectCreationAction(
                 $input,
                 $output,
                 $helper,
-                'Press Enter to check again, type "open" to reopen the project page, or "cancel" to stop: ',
+                'Press Enter to check again · type "open" to reopen · "cancel" to stop: ',
             );
         }
 
@@ -139,9 +144,14 @@ final class DrupalOrgProjectCreationHandoff
 
     private function writeFoundProject(OutputInterface $output, Project $project): void
     {
-        $output->writeln('Drupal.org project found: ' . $project->machineName);
-        $output->writeln('Title: ' . $project->title);
-        $output->writeln('Drupal.org: https://www.drupal.org/project/' . $project->machineName);
+        $output->writeln('');
+        $output->writeln($this->status('FOUND', 'green') . ' Drupal.org project: ' . $project->machineName);
+        $output->writeln('  https://www.drupal.org/project/' . $project->machineName);
         $output->writeln('Repository setup is not implemented yet.');
+    }
+
+    private function status(string $value, string $color): string
+    {
+        return sprintf('<fg=%s;options=bold>%s</>', $color, $value);
     }
 }

@@ -86,7 +86,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         self::assertInstanceOf(ModuleReviewWorkflowResult::class, $result);
         self::assertSame(1, $state->analyzeCalls);
         self::assertSame(1, $state->pdfCalls);
-        self::assertStringContainsString('Assessment: Candidate with changes', $display);
+        self::assertStringContainsString('Assessment           CANDIDATE WITH CHANGES', $display);
         self::assertStringContainsString('Full report:', $display);
     }
 
@@ -100,7 +100,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         );
 
         self::assertTrue($result->continuePublishing);
-        self::assertStringContainsString('Assessment: Not a candidate yet', $display);
+        self::assertStringContainsString('Assessment           NOT A CANDIDATE YET', $display);
         self::assertStringContainsString('Continue with project publishing? [y/N]', $display);
     }
 
@@ -136,7 +136,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         self::assertNotNull($state->analyzePreparedSource);
         self::assertSame('selected', $state->analyzePreparedSource['coverage']['mode']);
         self::assertLessThanOrEqual(128 * 1024, $state->analyzePreparedSource['totalBytes']);
-        self::assertStringContainsString('128 KiB — Recommended', $display);
+        self::assertStringContainsString('128 KiB  Recommended · lowest token usage', $display);
         self::assertStringContainsString('Cancel AI review', $display);
     }
 
@@ -154,7 +154,7 @@ final class ModuleReviewWorkflowTest extends TestCase
 
         self::assertTrue($result->continuePublishing);
         self::assertSame('full', $state->analyzePreparedSource['coverage']['mode']);
-        self::assertStringContainsString('Source mode: Full module.', $display);
+        self::assertStringContainsString('Preparing module source... done', $display);
         self::assertStringNotContainsString('Choose how much source', $display);
     }
 
@@ -241,8 +241,8 @@ final class ModuleReviewWorkflowTest extends TestCase
 
         self::assertFalse($result->continuePublishing);
         self::assertSame(1, $state->pdfCalls);
-        self::assertStringContainsString('Could not generate the PDF review report.', $display);
-        self::assertStringContainsString('Assessment: Candidate with changes', $display);
+        self::assertStringContainsString('PDF report could not be generated.', $display);
+        self::assertStringContainsString('Assessment           CANDIDATE WITH CHANGES', $display);
     }
 
     public function testPartialTokenUsageIsRenderedAsUnavailable(): void
@@ -258,10 +258,7 @@ final class ModuleReviewWorkflowTest extends TestCase
             "y\nn\n",
         );
 
-        self::assertStringContainsString(
-            'Tokens used: input 300, output unavailable, total unavailable',
-            $display,
-        );
+        self::assertStringNotContainsString('Tokens:', $display);
     }
 
     /**

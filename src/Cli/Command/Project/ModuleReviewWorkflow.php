@@ -84,22 +84,24 @@ final class ModuleReviewWorkflow
             return new ModuleReviewWorkflowResult(true, $runtime, null);
         }
 
-        $output->writeln('Preparing module source...');
         try {
             $preparedSource = $this->prepareModuleSource($module['resolvedPath']);
         } catch (\RuntimeException) {
-            $output->writeln('AI-assisted contribution review could not prepare the module source.');
+            $output->writeln('<comment>Preparing module source... failed</comment>');
 
             return new ModuleReviewWorkflowResult(true, $runtime, null);
         }
 
         $selector = new ModuleReviewSourceSelector();
         $eligibleBytes = $preparedSource['totalBytes'];
-        $output->writeln(sprintf(
-            'Eligible module source: %s across %d files.',
-            $this->formatKilobytes($eligibleBytes),
-            count($preparedSource['files']),
-        ));
+        $output->writeln('Preparing module source... done');
+        if ($output->isVerbose()) {
+            $output->writeln(sprintf(
+                '<comment>Eligible source: %s across %d files.</comment>',
+                $this->formatKilobytes($eligibleBytes),
+                count($preparedSource['files']),
+            ));
+        }
 
         $sourceBudget = null;
         if ($eligibleBytes > ModuleReviewSourceSelector::DEFAULT_BUDGET_BYTES) {
@@ -116,18 +118,19 @@ final class ModuleReviewWorkflow
         $preparedSource['totalBytes'] = $selection['selectedBytes'];
         $preparedSource['coverage'] = $selection['coverage'];
         if ($selection['coverage']['mode'] === 'selected') {
-            $output->writeln('Selecting functionally relevant source...');
-            $output->writeln(sprintf(
-                'Selected: %s across %d files.',
-                $this->formatKilobytes($selection['selectedBytes']),
-                count($selection['files']),
-            ));
-            $output->writeln(sprintf(
-                'Omitted due to source budget: %d files.',
-                count($selection['omitted']),
-            ));
-        } else {
-            $output->writeln('Source mode: Full module.');
+            if ($output->isVerbose()) {
+                $output->writeln(sprintf(
+                    '<comment>Selected source: %s across %d files.</comment>',
+                    $this->formatKilobytes($selection['selectedBytes']),
+                    count($selection['files']),
+                ));
+                $output->writeln(sprintf(
+                    '<comment>Omitted due to source budget: %d files.</comment>',
+                    count($selection['omitted']),
+                ));
+            }
+        } elseif ($output->isVerbose()) {
+            $output->writeln('<comment>Source mode: Full module.</comment>');
         }
 
         $progressRenderer = new ModuleReviewProgressRenderer($output);
@@ -148,13 +151,12 @@ final class ModuleReviewWorkflow
         }
 
         $pdfPath = null;
-        $output->writeln('Generating PDF report...');
         try {
             $pdfPath = $this->writeModuleReviewPdf($result, $module, $moduleInfo);
-            $output->writeln('PDF report generated.');
+            $output->writeln('Generating PDF report... done');
         } catch (\Throwable) {
-            $output->writeln('<comment>Could not generate the PDF review report.</comment>');
-            $output->writeln('The AI review results are still available in the terminal summary.');
+            $output->writeln('<comment>PDF report could not be generated.</comment>');
+            $output->writeln('<comment>Review results are still available above.</comment>');
         }
         (new ModuleReviewSummaryRenderer($output))->render($result, $pdfPath);
 
@@ -186,39 +188,20 @@ final class ModuleReviewWorkflow
     private function writeConsent(OutputInterface $output, array $aiContext): void
     {
         $output->writeln('');
-        $output->writeln('Optional AI-assisted contribution review');
+        $output->writeln('<fg=cyan;options=bold>AI CONTRIBUTION REVIEW</>');
         $output->writeln('');
-        $output->writeln('Before publishing, drupalorg-cli can analyze this module to:');
-        $output->writeln('  - understand its purpose and reusable capabilities;');
-        $output->writeln('  - assess whether it is reusable enough for Drupal.org contribution;');
-        $output->writeln('  - identify changes that may be needed before contributing it;');
-        $output->writeln('  - search Drupal.org for existing projects with similar functionality;');
-        $output->writeln('  - compare those projects with this module for possible functional overlap;');
-        $output->writeln('  - generate a PDF report with the findings.');
+        $output->writeln('Analyzes the selected module source and searches Drupal.org for');
+        $output->writeln('potentially overlapping projects.');
         $output->writeln('');
-        $output->writeln('The review normally uses two AI requests:');
-        $output->writeln('  1. Module analysis.');
-        $output->writeln('  2. Semantic comparison against Drupal.org candidates.');
-        $output->writeln('');
-        $output->writeln('Drupal.org project searches are performed directly against Drupal.org.');
-        $output->writeln('The AI does not browse Drupal.org or invent the candidate project list.');
-        $output->writeln('The module name and generated search queries are sent to Drupal.org public project search.');
-        $output->writeln('Module source code is not sent to Drupal.org for this search.');
-        $output->writeln('');
-        $output->writeln('Only the selected module is analyzed.');
-        $output->writeln('Its source code will be sent to the configured Drupal AI provider:');
-        $output->writeln(sprintf('  Provider: %s', $aiContext['providerId']));
-        $output->writeln(sprintf('  Model: %s', $aiContext['modelId']));
-        $output->writeln('');
-        $output->writeln('The CLI excludes known sensitive files and performs best-effort local redaction');
-        $output->writeln('of common secrets before sending source code. Files from other modules, vendor,');
-        $output->writeln('or unrelated project directories are not intentionally included.');
-        $output->writeln('');
-        $output->writeln('The PDF is generated locally from the structured review results.');
-        $output->writeln('Generating the PDF itself does not make an additional AI request.');
-        $output->writeln('');
-        $output->writeln('The analysis may consume tokens from your configured AI provider.');
-        $output->writeln('The review is advisory only. Its result will not prevent you from continuing with project publishing.');
+        $output->writeln('The review is advisory only and may consume AI-provider tokens.');
+        $output->writeln(sprintf('Provider: %s / %s', $aiContext['providerId'], $aiContext['modelId']));
+        if ($output->isVerbose()) {
+            $output->writeln('');
+            $output->writeln('<comment>Review details</comment>');
+            $output->writeln('<comment>Two AI requests are used: characterization and candidate comparison.</comment>');
+            $output->writeln('<comment>The candidate list comes from Drupal.org project search, not from the AI.</comment>');
+            $output->writeln('<comment>A PDF report is generated locally from the structured results.</comment>');
+        }
     }
 
     /**
@@ -365,22 +348,19 @@ final class ModuleReviewWorkflow
             $choice = (string) $choiceNumber;
             $kilobytes = intdiv($budget, 1024);
             $label = $choiceNumber === 1
-                ? sprintf('%d KiB — Recommended', $kilobytes)
-                : sprintf('%d KiB', $kilobytes);
-            $description = $choiceNumber === 1
-                ? 'Analyze a relevance-selected subset of the module. Lowest token usage.'
-                : 'Analyze a larger relevance-selected subset. Higher coverage and token usage.';
+                ? sprintf('%d KiB  Recommended · lowest token usage', $kilobytes)
+                : sprintf('%d KiB  More coverage', $kilobytes);
             $optionLines[] = sprintf('  %s. %s', $choice, $label);
-            $optionLines[] = '     ' . $description;
             $choiceValues[$choice] = $budget;
             ++$choiceNumber;
         }
 
         $fullChoice = (string) $choiceNumber;
-        $optionLines[] = sprintf('  %s. Full module — %s', $fullChoice, $this->formatKilobytes($eligibleBytes));
-        $optionLines[] = '     Send all eligible module source.';
-        $optionLines[] = '     Significantly higher token usage and may exceed the configured model\'s context limit.';
-        $optionLines[] = '     Sending the complete module may consume substantially more tokens and may exceed the configured model\'s context window.';
+        $optionLines[] = sprintf(
+            '  %s. Full module (%s)  Highest coverage · may exceed model context',
+            $fullChoice,
+            $this->formatKilobytes($eligibleBytes),
+        );
         $choiceValues[$fullChoice] = null;
         ++$choiceNumber;
 
@@ -389,7 +369,7 @@ final class ModuleReviewWorkflow
         $choiceValues[$cancelChoice] = false;
 
         $question = new Question(
-            "Choose how much source to send to the configured AI provider:\n\n"
+            "Choose source coverage:\n\n"
             . implode("\n", $optionLines)
             . "\n\nSelection [1]: ",
             '1',
