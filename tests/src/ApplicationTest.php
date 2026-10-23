@@ -11,12 +11,13 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(Application::class)]
 class ApplicationTest extends TestCase
 {
-    public function testRegistersAuthCommands(): void
+    public function testRegistersProductCommandsWithoutAuthCommands(): void
     {
         $application = new Application();
 
-        self::assertTrue($application->has('auth:login'));
-        self::assertTrue($application->has('auth:status'));
-        self::assertTrue($application->has('auth:logout'));
+        self::assertTrue($application->has('project:publish'));
+        self::assertFalse($application->has('auth:login'));
+        self::assertFalse($application->has('auth:status'));
+        self::assertFalse($application->has('auth:logout'));
     }
 }
