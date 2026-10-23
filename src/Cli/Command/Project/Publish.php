@@ -75,21 +75,12 @@ class Publish extends Command
         }
 
         if ((bool) $input->getOption('dry-run')) {
-            $this->writeDryRun($module, $moduleInfo, $project);
+            $this->writeDryRun($output, $module, $moduleInfo, $project);
 
             return self::SUCCESS;
         }
 
-        $this->stdOut->writeln('');
-        $this->stdOut->writeln('Module');
-        $this->stdOut->writeln('');
-        $this->writeModuleContext($module, $moduleInfo);
-        $this->stdOut->writeln('');
-        $this->stdOut->writeln(sprintf(
-            'Drupal.org project %s: %s',
-            $project === null ? 'does not exist' : 'exists',
-            $module['moduleName'],
-        ));
+        $this->writeProjectHeader($output, $module, $moduleInfo, $project);
 
         if ($project !== null) {
             return self::SUCCESS;
@@ -134,19 +125,22 @@ class Publish extends Command
      * @param array{resolvedPath: string, moduleName: string, infoFile: string, projectRoot: ?string, webRoot: ?string} $module
      * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
      */
-    private function writeDryRun(array $module, array $moduleInfo, ?\mglaman\DrupalOrg\Entity\Project $project): void
-    {
-        $this->stdOut->writeln('Dry run: no changes will be made.');
-        $this->stdOut->writeln('');
-        $this->writeModuleContext($module, $moduleInfo);
-        $this->stdOut->writeln(sprintf(
-            'Drupal.org project exists: %s',
-            $project === null ? 'no' : 'yes',
-        ));
-        $this->stdOut->writeln('');
-        $this->stdOut->writeln('Planned actions:');
+    private function writeDryRun(
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+        ?\mglaman\DrupalOrg\Entity\Project $project,
+    ): void {
+        $output->writeln('<fg=cyan;options=bold>DRY RUN</>');
+        $output->writeln('');
+        $this->writeProjectIdentity($output, $module, $moduleInfo, $project);
+        if ($output->isVerbose()) {
+            $this->writeVerboseModuleContext($output, $module, $moduleInfo);
+        }
+        $output->writeln('');
+        $output->writeln('<comment>Plan</comment>');
 
-        $plannedActions = $project === null
+        $detailedActions = $project === null
             ? [
                 'Offer an optional AI-assisted contribution review and local PDF report.',
                 'Optionally generate Drupal.org project metadata from the AI module characterization.',
@@ -170,13 +164,31 @@ class Publish extends Command
                 'Push the initial branch.',
             ];
 
+        $plannedActions = $output->isVerbose()
+            ? $detailedActions
+            : ($project === null
+                ? [
+                    'Optional contribution review',
+                    'Optional Drupal.org metadata generation',
+                    'Manual Drupal.org project creation',
+                    'Verify project',
+                    'Wait for repository',
+                    'Prepare and publish Git repository',
+                ]
+                : [
+                    'Prepare publication workspace',
+                    'Publish Git repository',
+                ]);
+
         foreach ($plannedActions as $index => $plannedAction) {
-            $this->stdOut->writeln(sprintf('  %d. %s', $index + 1, $plannedAction));
+            $output->writeln(sprintf('  %d. %s', $index + 1, $plannedAction));
         }
 
-        $this->stdOut->writeln('');
-        $this->stdOut->writeln('Publication execution is not implemented yet.');
-        $this->stdOut->writeln('Dry run complete. No changes were made.');
+        $output->writeln('');
+        if ($output->isVerbose()) {
+            $output->writeln('Publication execution is not implemented yet.');
+        }
+        $output->writeln('No changes were made.');
     }
 
     /**
@@ -228,8 +240,8 @@ class Publish extends Command
 
             return $metadata;
         } catch (\Throwable) {
-            $output->writeln('Could not generate Drupal.org project metadata automatically.');
-            $output->writeln('You can enter the project metadata manually on Drupal.org.');
+            $output->writeln('<comment>Could not generate Drupal.org project metadata automatically.</comment>');
+            $output->writeln('<comment>You can enter the project metadata manually on Drupal.org.</comment>');
 
             return null;
         }
@@ -239,21 +251,64 @@ class Publish extends Command
      * @param array{resolvedPath: string, moduleName: string, infoFile: string, projectRoot: ?string, webRoot: ?string} $module
      * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
      */
-    private function writeModuleContext(array $module, array $moduleInfo): void
-    {
-        $this->stdOut->writeln(sprintf('Module path: %s', $module['resolvedPath']));
-        $this->stdOut->writeln(sprintf('Machine name: %s', $module['moduleName']));
-        $this->stdOut->writeln(sprintf('Module info file: %s', $module['infoFile']));
-        $this->stdOut->writeln(sprintf('Module name: %s', $moduleInfo['name']));
-        $this->stdOut->writeln(sprintf('Module type: %s', $moduleInfo['type']));
-        $this->stdOut->writeln(sprintf('Core version requirement: %s', $moduleInfo['coreVersionRequirement']));
+    private function writeProjectHeader(
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+        ?\mglaman\DrupalOrg\Entity\Project $project,
+    ): void {
+        $output->writeln('');
+        $output->writeln('<fg=cyan;options=bold>PROJECT PUBLISH</>');
+        $output->writeln('----------------------------------------');
+        $output->writeln('');
+        $this->writeProjectIdentity($output, $module, $moduleInfo, $project);
+        if ($output->isVerbose()) {
+            $this->writeVerboseModuleContext($output, $module, $moduleInfo);
+        }
+        $output->writeln('');
+    }
+
+    /**
+     * @param array{resolvedPath: string, moduleName: string, infoFile: string, projectRoot: ?string, webRoot: ?string} $module
+     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
+     */
+    private function writeProjectIdentity(
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+        ?\mglaman\DrupalOrg\Entity\Project $project,
+    ): void {
+        $state = $project === null
+            ? '<fg=yellow;options=bold>NOT PUBLISHED</>'
+            : '<fg=green;options=bold>PROJECT EXISTS</>';
+        $output->writeln(sprintf('%s (%s)', $moduleInfo['name'], $module['moduleName']));
+        $output->writeln('Core ' . $moduleInfo['coreVersionRequirement'] . ' · Drupal.org: ' . $state);
+    }
+
+    /**
+     * @param array{resolvedPath: string, moduleName: string, infoFile: string, projectRoot: ?string, webRoot: ?string} $module
+     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
+     */
+    private function writeVerboseModuleContext(
+        OutputInterface $output,
+        array $module,
+        array $moduleInfo,
+    ): void {
+        $output->writeln('');
+        $output->writeln('<comment>Module details</comment>');
+        $output->writeln('Module path: ' . $module['resolvedPath']);
+        $output->writeln('Info file: ' . $module['infoFile']);
+        if ($module['projectRoot'] !== null) {
+            $output->writeln('Project root: ' . $module['projectRoot']);
+        }
+        $output->writeln('Module type: ' . $moduleInfo['type']);
     }
 
     private function writeNonInteractiveProjectCreationInstructions(string $machineName): void
     {
-        $this->stdOut->writeln('The Drupal.org project does not exist and must be created manually before non-interactive publishing can continue.');
+        $this->stdOut->writeln('Drupal.org project does not exist: ' . $machineName);
         $this->stdOut->writeln('');
-        $this->stdOut->writeln('Create:');
+        $this->stdOut->writeln('Create it manually:');
         $this->stdOut->writeln(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL);
         $this->stdOut->writeln('');
         $this->stdOut->writeln('Machine name: ' . $machineName);

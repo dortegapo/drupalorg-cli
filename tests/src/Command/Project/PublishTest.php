@@ -47,7 +47,7 @@ class PublishTest extends TestCase
         self::removeDirectory($this->workDir);
     }
 
-    public function testExistingDirectoryPrintsResolvedModulePath(): void
+    public function testExistingDirectoryPrintsProjectHeader(): void
     {
         $modulePath = $this->createValidModule();
         chdir($this->workDir);
@@ -65,18 +65,37 @@ class PublishTest extends TestCase
         $exitCode = $tester->execute(['module' => 'my_module']);
 
         self::assertSame(0, $exitCode);
-        $resolvedPath = realpath($modulePath);
         self::assertSame(
-            "\nModule\n\n"
-            . "Module path: $resolvedPath\n"
-            . "Machine name: my_module\n"
-            . "Module info file: $resolvedPath/my_module.info.yml\n"
-            . "Module name: My Module\n"
-            . "Module type: module\n"
-            . "Core version requirement: ^11\n\n"
-            . "Drupal.org project exists: my_module\n",
+            "\nPROJECT PUBLISH\n"
+            . "----------------------------------------\n\n"
+            . "My Module (my_module)\n"
+            . "Core ^11 · Drupal.org: PROJECT EXISTS\n\n",
             $tester->getDisplay()
         );
+    }
+
+    public function testVerboseProjectHeaderIncludesModuleDetails(): void
+    {
+        $modulePath = $this->createValidModule();
+        chdir($this->workDir);
+
+        $tester = $this->commandTester(self::jsonResponse([
+            'list' => [[
+                'nid' => '123',
+                'title' => 'My Module',
+                'field_project_machine_name' => 'my_module',
+            ]],
+        ]));
+
+        self::assertSame(0, $tester->execute(
+            ['module' => 'my_module'],
+            ['verbosity' => OutputInterface::VERBOSITY_VERBOSE],
+        ));
+        $display = $tester->getDisplay();
+        $resolvedPath = realpath($modulePath);
+        self::assertStringContainsString('Module path: ' . $resolvedPath, $display);
+        self::assertStringContainsString('Info file: ' . $resolvedPath . '/my_module.info.yml', $display);
+        self::assertStringContainsString('Module type: module', $display);
     }
 
     public function testMissingDrupalOrgProjectIsReported(): void
@@ -188,7 +207,8 @@ class PublishTest extends TestCase
         self::assertSame(1, $command->metadataCalls);
         self::assertStringContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
-        self::assertStringContainsString('Metadata AI: metadata-provider / metadata-model', $tester->getDisplay());
+        self::assertStringContainsString('Summary', $tester->getDisplay());
+        self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
 
     public function testMetadataGenerationCanBeSkipped(): void
@@ -318,30 +338,18 @@ class PublishTest extends TestCase
         ]);
 
         self::assertSame(0, $exitCode);
-        $resolvedPath = realpath($modulePath);
         self::assertSame(
-            "Dry run: no changes will be made.\n\n"
-            . "Module path: $resolvedPath\n"
-            . "Machine name: my_module\n"
-            . "Module info file: $resolvedPath/my_module.info.yml\n"
-            . "Module name: My Module\n"
-            . "Module type: module\n"
-            . "Core version requirement: ^11\n"
-            . "Drupal.org project exists: no\n\n"
-            . "Planned actions:\n"
-            . "  1. Offer an optional AI-assisted contribution review and local PDF report.\n"
-            . "  2. Optionally generate Drupal.org project metadata from the AI module characterization.\n"
-            . "  3. Open the Drupal.org project creation page for manual project creation.\n"
-            . "  4. Verify that the Drupal.org project exists.\n"
-            . "  5. Wait for the Drupal.org Git repository to become available.\n"
-            . "  6. Prepare an isolated temporary workspace.\n"
-            . "  7. Copy the module into the temporary workspace.\n"
-            . "  8. Initialize the publication Git repository.\n"
-            . "  9. Create the initial commit.\n"
-            . "  10. Configure the Drupal.org Git remote.\n"
-            . "  11. Push the initial branch.\n\n"
-            . "Publication execution is not implemented yet.\n"
-            . "Dry run complete. No changes were made.\n",
+            "DRY RUN\n\n"
+            . "My Module (my_module)\n"
+            . "Core ^11 · Drupal.org: NOT PUBLISHED\n\n"
+            . "Plan\n"
+            . "  1. Optional contribution review\n"
+            . "  2. Optional Drupal.org metadata generation\n"
+            . "  3. Manual Drupal.org project creation\n"
+            . "  4. Verify project\n"
+            . "  5. Wait for repository\n"
+            . "  6. Prepare and publish Git repository\n\n"
+            . "No changes were made.\n",
             $tester->getDisplay()
         );
 
@@ -374,9 +382,9 @@ class PublishTest extends TestCase
         ]);
 
         self::assertSame(0, $exitCode);
-        self::assertStringContainsString('Drupal.org project exists: yes', $tester->getDisplay());
+        self::assertStringContainsString('Drupal.org: PROJECT EXISTS', $tester->getDisplay());
         self::assertStringContainsString(
-            'Use the existing Drupal.org project "my_module".',
+            'Prepare publication workspace',
             $tester->getDisplay()
         );
         self::assertStringNotContainsString(
@@ -384,7 +392,7 @@ class PublishTest extends TestCase
             $tester->getDisplay()
         );
         self::assertStringContainsString(
-            'Publication execution is not implemented yet.',
+            'No changes were made.',
             $tester->getDisplay()
         );
     }

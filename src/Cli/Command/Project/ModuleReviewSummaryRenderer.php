@@ -19,7 +19,7 @@ final class ModuleReviewSummaryRenderer
     public function render(array $result, ?string $pdfPath = null): void
     {
         $this->output->writeln('');
-        $this->output->writeln('AI-assisted contribution review');
+        $this->output->writeln($this->sectionHeading('REVIEW RESULT'));
 
         if (($result['complete'] ?? false) !== true) {
             $limitation = $result['limitations'][0] ?? [];
@@ -29,10 +29,11 @@ final class ModuleReviewSummaryRenderer
             $message = is_array($limitation) && is_string($limitation['message'] ?? null)
                 ? $limitation['message']
                 : 'The AI module review could not be completed.';
-            $this->output->writeln('AI module review could not be completed.');
+            $this->output->writeln($this->styleStatus('REVIEW INCOMPLETE', 'yellow'));
+            $this->output->writeln('The AI module review could not be completed.');
             $this->output->writeln(sprintf('Stage: %s', $stage));
             $this->output->writeln($message);
-            $this->output->writeln('The publication flow can continue without the AI review.');
+            $this->output->writeln('Publication can continue without it.');
             $this->writePdfPath($pdfPath);
             return;
         }
@@ -40,51 +41,59 @@ final class ModuleReviewSummaryRenderer
         $assessment = is_array($result['assessment'] ?? null) ? $result['assessment'] : [];
         $assessmentStatus = is_string($assessment['status'] ?? null) ? $assessment['status'] : 'unknown';
         $assessmentLabels = [
-            'candidate' => 'Candidate for contribution',
-            'candidate_with_changes' => 'Candidate with changes',
-            'not_candidate_yet' => 'Not a candidate yet',
+            'candidate' => 'CANDIDATE',
+            'candidate_with_changes' => 'CANDIDATE WITH CHANGES',
+            'not_candidate_yet' => 'NOT A CANDIDATE YET',
         ];
-        $this->output->writeln(sprintf(
-            'Assessment: %s',
-            $assessmentLabels[$assessmentStatus] ?? $assessmentStatus,
-        ));
+        $this->writeStatusLine(
+            'Assessment',
+            $assessmentLabels[$assessmentStatus] ?? strtoupper($assessmentStatus),
+            match ($assessmentStatus) {
+                'candidate' => 'green',
+                'candidate_with_changes' => 'yellow',
+                'not_candidate_yet' => 'red',
+                default => 'yellow',
+            },
+        );
 
         $review = is_array($result['review'] ?? null) ? $result['review'] : [];
         $reusability = is_array($review['reusability'] ?? null) ? $review['reusability'] : [];
         $readiness = is_array($review['contrib_readiness'] ?? null) ? $review['contrib_readiness'] : [];
-        $this->output->writeln(sprintf(
-            'Reusability: %s',
-            $this->humanizeReusabilityLabel(is_string($reusability['status'] ?? null) ? $reusability['status'] : 'unknown'),
-        ));
-        $this->output->writeln(sprintf(
-            'Contrib readiness: %s',
-            $this->humanizeReadinessLabel(is_string($readiness['status'] ?? null) ? $readiness['status'] : 'unknown'),
-        ));
+        $reusabilityStatus = is_string($reusability['status'] ?? null) ? $reusability['status'] : 'unknown';
+        $readinessStatus = is_string($readiness['status'] ?? null) ? $readiness['status'] : 'unknown';
+        $this->writeStatusLine(
+            'Reusability',
+            $this->humanizeReusabilityLabel($reusabilityStatus),
+            match ($reusabilityStatus) {
+                'reusable' => 'green',
+                'client_specific' => 'red',
+                default => 'yellow',
+            },
+        );
+        $this->writeStatusLine(
+            'Contrib readiness',
+            $this->humanizeReadinessLabel($readinessStatus),
+            match ($readinessStatus) {
+                'ready' => 'green',
+                'significant_changes' => 'red',
+                default => 'yellow',
+            },
+        );
 
         $comparison = is_array($result['comparison'] ?? null) ? $result['comparison'] : [];
-        $this->output->writeln(sprintf(
-            'Drupal.org overlap: %s',
-            $this->humanizeOverlapLabel(is_string($comparison['verdict'] ?? null) ? $comparison['verdict'] : 'unknown'),
-        ));
-        $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
-        $this->output->writeln(sprintf('Candidate projects evaluated: %d', count($candidates)));
-        $source = is_array($result['source'] ?? null) ? $result['source'] : [];
-        $redactions = is_array($source['redactions'] ?? null) ? $source['redactions'] : [];
-        $this->output->writeln(sprintf('Sensitive values redacted locally: %d', count($redactions)));
+        $overlapStatus = is_string($comparison['verdict'] ?? null) ? $comparison['verdict'] : 'unknown';
+        $this->writeStatusLine(
+            'Drupal.org overlap',
+            $this->humanizeOverlapLabel($overlapStatus),
+            match ($overlapStatus) {
+                'no_clear_duplicate' => 'green',
+                'likely_duplicate' => 'red',
+                default => 'yellow',
+            },
+        );
 
-        $this->writeAiMetadata('AI #1', $result['ai']['review'] ?? null);
-        $this->writeAiMetadata('AI #2', $result['ai']['comparison'] ?? null);
-
-        $tokenUsage = $this->sumTokenUsage($result['ai'] ?? null);
-        if ($tokenUsage === null) {
-            $this->output->writeln('Tokens used: unavailable');
-        } else {
-            $this->output->writeln(sprintf(
-                'Tokens used: input %s, output %s, total %s',
-                $this->formatTokenValue($tokenUsage['input']),
-                $this->formatTokenValue($tokenUsage['output']),
-                $this->formatTokenValue($tokenUsage['total']),
-            ));
+        if ($this->output->isVerbose()) {
+            $this->writeVerboseDiagnostics($result);
         }
 
         $this->writePotentialOverlaps(
@@ -94,6 +103,56 @@ final class ModuleReviewSummaryRenderer
             is_array($result['core'] ?? null) ? $result['core'] : [],
         );
         $this->writePdfPath($pdfPath);
+    }
+
+    private function sectionHeading(string $title): string
+    {
+        return '<fg=cyan;options=bold>' . $title . '</>';
+    }
+
+    private function styleStatus(string $value, string $color): string
+    {
+        return sprintf('<fg=%s;options=bold>%s</>', $color, $value);
+    }
+
+    private function writeStatusLine(string $label, string $value, string $color): void
+    {
+        $this->output->writeln(sprintf(
+            "%-20s %s",
+            $label,
+            $this->styleStatus($value, $color),
+        ));
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function writeVerboseDiagnostics(array $result): void
+    {
+        $this->output->writeln('');
+        $this->output->writeln('<comment>Review details</comment>');
+        $source = is_array($result['source'] ?? null) ? $result['source'] : [];
+        $coverage = is_array($source['coverage'] ?? null) ? $source['coverage'] : [];
+        $coverageMode = ($coverage['mode'] ?? null) === 'selected' ? 'partial' : 'full';
+        $candidates = is_array($result['candidates'] ?? null) ? $result['candidates'] : [];
+        $redactions = is_array($source['redactions'] ?? null) ? $source['redactions'] : [];
+        $this->output->writeln('Source coverage: ' . $coverageMode);
+        $this->output->writeln('Candidates evaluated: ' . count($candidates));
+        $this->output->writeln('Local redactions: ' . count($redactions));
+        $this->writeAiMetadata('AI #1', $result['ai']['review'] ?? null);
+        $this->writeAiMetadata('AI #2', $result['ai']['comparison'] ?? null);
+
+        $tokenUsage = $this->sumTokenUsage($result['ai'] ?? null);
+        if ($tokenUsage === null) {
+            $this->output->writeln('Tokens: unavailable');
+        } else {
+            $this->output->writeln(sprintf(
+                'Tokens: input %s · output %s · total %s',
+                $this->formatTokenValue($tokenUsage['input']),
+                $this->formatTokenValue($tokenUsage['output']),
+                $this->formatTokenValue($tokenUsage['total']),
+            ));
+        }
     }
 
     private function writePdfPath(?string $pdfPath): void
@@ -172,7 +231,8 @@ final class ModuleReviewSummaryRenderer
             return;
         }
 
-        $this->output->writeln('Potential overlaps:');
+        $this->output->writeln('');
+        $this->output->writeln('<fg=cyan;options=bold>Potential overlaps</>');
         $candidateTitles = [];
         foreach ($candidates as $candidate) {
             if (is_string($candidate['machineName'] ?? null)) {
@@ -196,8 +256,6 @@ final class ModuleReviewSummaryRenderer
 
             $machineName = $match['machine_name'];
             $title = $candidateTitles[$machineName] ?? $machineName;
-            $this->output->writeln($title . ' (' . $machineName . ')');
-            $this->output->writeln('  Functional assessment: ' . $this->humanizeReviewLabel($assessment));
             $compatibility = is_array($compatibilities[$machineName] ?? null)
                 ? $compatibilities[$machineName]
                 : [];
@@ -205,9 +263,22 @@ final class ModuleReviewSummaryRenderer
             $targetMajor = is_int($compatibility['targetCoreMajor'] ?? null)
                 ? $compatibility['targetCoreMajor']
                 : (is_int($core['targetMajor'] ?? null) ? $core['targetMajor'] : null);
-            $this->output->writeln('  Core compatibility: ' . $this->compatibilityLabel($status, $targetMajor));
+            $assessmentLabel = $this->humanizeReviewLabel($assessment);
+            $assessmentColor = $assessment === 'likely_duplicate' ? 'red' : 'yellow';
+            $compatibilityLabel = $this->compatibilityLabel($status, $targetMajor);
+            $compatibilityColor = match ($status) {
+                'compatible' => 'green',
+                'outdated', 'requires_newer_core' => 'red',
+                default => 'yellow',
+            };
+            $this->output->writeln(sprintf(
+                '  %-18s %s · %s',
+                $title . ' (' . $machineName . ')',
+                $this->styleStatus($assessmentLabel, $assessmentColor),
+                $this->styleStatus($compatibilityLabel, $compatibilityColor),
+            ));
             ++$shown;
-            if ($shown === 5) {
+            if ($shown === ($this->output->isVerbose() ? 5 : 3)) {
                 break;
             }
         }
@@ -216,41 +287,41 @@ final class ModuleReviewSummaryRenderer
     private function humanizeReviewLabel(string $value): string
     {
         return match ($value) {
-            'likely_duplicate' => 'Likely Duplicate',
-            'possible_overlap' => 'Possible Overlap',
-            default => 'Unknown',
+            'likely_duplicate' => 'LIKELY DUPLICATE',
+            'possible_overlap' => 'POSSIBLE OVERLAP',
+            default => 'UNKNOWN',
         };
     }
 
     private function humanizeOverlapLabel(string $value): string
     {
         return match ($value) {
-            'likely_duplicate' => 'Likely Duplicate',
-            'possible_overlap' => 'Possible Overlap',
-            'no_clear_duplicate' => 'No Clear Duplicate',
-            default => 'Unknown',
+            'likely_duplicate' => 'LIKELY DUPLICATE',
+            'possible_overlap' => 'POSSIBLE OVERLAP',
+            'no_clear_duplicate' => 'NO CLEAR DUPLICATE',
+            default => 'UNKNOWN',
         };
     }
 
     private function humanizeReusabilityLabel(string $value): string
     {
         return match ($value) {
-            'reusable' => 'Reusable',
-            'needs_generalization' => 'Needs Generalization',
-            'client_specific' => 'Client Specific',
-            'unclear' => 'Unclear',
-            default => 'Unknown',
+            'reusable' => 'REUSABLE',
+            'needs_generalization' => 'NEEDS GENERALIZATION',
+            'client_specific' => 'CLIENT SPECIFIC',
+            'unclear' => 'UNCLEAR',
+            default => 'UNKNOWN',
         };
     }
 
     private function humanizeReadinessLabel(string $value): string
     {
         return match ($value) {
-            'ready' => 'Ready',
-            'needs_changes' => 'Needs Changes',
-            'significant_changes' => 'Significant Changes',
-            'unclear' => 'Unclear',
-            default => 'Unknown',
+            'ready' => 'READY',
+            'needs_changes' => 'NEEDS CHANGES',
+            'significant_changes' => 'SIGNIFICANT CHANGES',
+            'unclear' => 'UNCLEAR',
+            default => 'UNKNOWN',
         };
     }
 
