@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrgCli;
 
+use mglaman\DrupalOrg\Browser\BrowserPlatform;
+use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\Process;
 
@@ -12,11 +14,12 @@ trait BrowserTrait
 
     protected function getDefaultBrowser(): ?string
     {
-        $potential = $this->isWindowsSubsystemForLinux()
-            ? ['wslview', 'cmd.exe', 'xdg-open', 'open']
-            : (PHP_OS_FAMILY === 'Windows'
-                ? ['explorer.exe']
-                : (PHP_OS_FAMILY === 'Darwin' ? ['open', 'xdg-open'] : ['xdg-open', 'open']));
+        $potential = match ($this->browserPlatform()) {
+            BrowserPlatform::WSL => ['wslview', 'cmd.exe', 'xdg-open', 'open'],
+            BrowserPlatform::WINDOWS => ['explorer.exe'],
+            BrowserPlatform::MACOS => ['open', 'xdg-open'],
+            BrowserPlatform::LINUX => ['xdg-open', 'open'],
+        };
         foreach ($potential as $browser) {
             if ($this->browserCommandExists($browser)) {
                 return $browser;
@@ -46,19 +49,14 @@ trait BrowserTrait
         return false;
     }
 
-    protected function isWindowsSubsystemForLinux(): bool
+    protected function browserPlatform(): BrowserPlatform
     {
-        if (getenv('WSL_INTEROP') !== false || getenv('WSL_DISTRO_NAME') !== false) {
-            return true;
-        }
-
-        $version = @file_get_contents('/proc/version');
-        return is_string($version) && str_contains(strtolower($version), 'microsoft');
+        return (new BrowserPlatformDetector())->detect();
     }
 
     protected function browserCommandExists(string $browser): bool
     {
-        $lookup = PHP_OS_FAMILY === 'Windows' && !$this->isWindowsSubsystemForLinux()
+        $lookup = $this->browserPlatform() === BrowserPlatform::WINDOWS
             ? ['where.exe', $browser]
             : ['which', $browser];
         try {

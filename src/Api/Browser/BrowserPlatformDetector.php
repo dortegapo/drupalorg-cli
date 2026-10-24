@@ -6,11 +6,6 @@ namespace mglaman\DrupalOrg\Browser;
 
 final class BrowserPlatformDetector
 {
-    public const WINDOWS = 'windows';
-    public const WSL = 'wsl';
-    public const LINUX = 'linux';
-    public const MACOS = 'macos';
-
     /**
      * @param array<string, string|false> $environment
      */
@@ -21,7 +16,7 @@ final class BrowserPlatformDetector
     ) {
     }
 
-    public function detect(): string
+    public function detect(): BrowserPlatform
     {
         $osFamily = $this->osFamily ?? PHP_OS_FAMILY;
         $environment = $this->environment ?? $_ENV + $_SERVER;
@@ -31,41 +26,40 @@ final class BrowserPlatformDetector
             $procVersion = @file_get_contents('/proc/version');
         }
 
-        if (isset($environment['WSL_INTEROP']) || isset($environment['WSL_DISTRO_NAME'])
-            || (is_string($procVersion) && str_contains(strtolower($procVersion), 'microsoft'))) {
-            return self::WSL;
+        if (array_key_exists('WSL_INTEROP', $environment)
+            || array_key_exists('WSL_DISTRO_NAME', $environment)
+            || (is_string($procVersion) && str_contains(strtolower($procVersion), 'microsoft'))
+        ) {
+            return BrowserPlatform::WSL;
         }
 
         return match (strtolower($osFamily)) {
-            'windows' => self::WINDOWS,
-            'darwin' => self::MACOS,
-            default => self::LINUX,
+            'windows' => BrowserPlatform::WINDOWS,
+            'darwin' => BrowserPlatform::MACOS,
+            default => BrowserPlatform::LINUX,
         };
     }
 
     /**
-     * @return list<string>
+     * @return list<BrowserFamily>
      */
     public function browserFamilies(): array
     {
         return match ($this->detect()) {
-            self::WINDOWS, self::WSL => [
-                BrowserCompanionDistribution::CHROMIUM,
-                BrowserCompanionDistribution::EDGE,
-                BrowserCompanionDistribution::FIREFOX,
-                BrowserCompanionDistribution::MANUAL,
+            BrowserPlatform::WINDOWS, BrowserPlatform::WSL => [
+                BrowserFamily::CHROMIUM,
+                BrowserFamily::EDGE,
+                BrowserFamily::FIREFOX,
             ],
-            self::MACOS => [
-                BrowserCompanionDistribution::CHROMIUM,
-                BrowserCompanionDistribution::EDGE,
-                BrowserCompanionDistribution::FIREFOX,
-                BrowserCompanionDistribution::SAFARI,
-                BrowserCompanionDistribution::MANUAL,
+            BrowserPlatform::MACOS => [
+                BrowserFamily::CHROMIUM,
+                BrowserFamily::EDGE,
+                BrowserFamily::FIREFOX,
+                BrowserFamily::SAFARI,
             ],
-            default => [
-                BrowserCompanionDistribution::CHROMIUM,
-                BrowserCompanionDistribution::FIREFOX,
-                BrowserCompanionDistribution::MANUAL,
+            BrowserPlatform::LINUX => [
+                BrowserFamily::CHROMIUM,
+                BrowserFamily::FIREFOX,
             ],
         };
     }

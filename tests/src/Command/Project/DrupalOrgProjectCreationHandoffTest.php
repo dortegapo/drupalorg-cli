@@ -9,12 +9,14 @@ use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Browser\BrowserCompanionConfigStore;
 use mglaman\DrupalOrg\Browser\BrowserCompanionDistribution;
+use mglaman\DrupalOrg\Browser\BrowserCompanionInstallation;
 use mglaman\DrupalOrg\Browser\BrowserCompanionManager;
-use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
+use mglaman\DrupalOrg\Browser\BrowserFamily;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use mglaman\DrupalOrgCli\Command\Project\ProjectCreationHandoffResult;
 use mglaman\DrupalOrgCli\Command\Project\ProjectPublishProgressRenderer;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -316,9 +318,8 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         $manager = new BrowserCompanionManager(
             new BrowserCompanionConfigStore($path),
             new BrowserCompanionDistribution([
-                BrowserCompanionDistribution::CHROMIUM => 'https://store.example.test/companion',
+                BrowserFamily::CHROMIUM->value => 'https://store.example.test/companion',
             ]),
-            new BrowserPlatformDetector('Linux', [], ''),
         );
         $handoff = new DrupalOrgProjectCreationHandoff(
             $this->client(new Response(
@@ -361,7 +362,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertCount(2, $opened);
         self::assertSame('https://store.example.test/companion', $opened[0]);
         self::assertStringStartsWith(DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL . '#', $opened[1]);
-        self::assertSame(BrowserCompanionDistribution::CHROMIUM, $manager->getBrowserFamily());
+        self::assertSame(BrowserFamily::CHROMIUM, $manager->getBrowserFamily());
     }
 
     public function testDecliningPrefillKeepsTheManualHandoff(): void
@@ -477,6 +478,52 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertStringNotContainsString('Prefill the Drupal.org project form automatically?', $display);
     }
 
+    public function testNoPublishedDistributionFallsBackWithoutAskingForABrowser(): void
+    {
+        $manager = new BrowserCompanionManager(
+            new BrowserCompanionConfigStore($this->temporaryConfigPath()),
+            new BrowserCompanionDistribution(),
+        );
+        $launcher = new BrowserLauncher(
+            new \mglaman\DrupalOrg\Browser\BrowserPlatformDetector('Linux', [], ''),
+            static fn(array $command): bool => true,
+            static fn(array $command): bool => true,
+        );
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            null,
+            null,
+            null,
+            null,
+            $manager,
+            $launcher,
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\ncancel\n"));
+        $output = new BufferedOutput();
+
+        $handoff->run(
+            $input,
+            $output,
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        $display = $output->fetch();
+        self::assertStringContainsString('Browser companion distribution is not available yet.', $display);
+        self::assertStringNotContainsString('Choose setup:', $display);
+        self::assertSame(1, substr_count($display, 'Continuing with manual Drupal.org project creation.'));
+    }
+
     public function testOversizedPrefillFallsBackToTheNormalUrl(): void
     {
         $opened = [];
@@ -513,6 +560,116 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
         self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
         self::assertStringContainsString('Browser prefill is unavailable because the generated metadata is too large.', $output->fetch());
+    }
+
+    public function testSuccessfulPrefillNeverPrintsThePayload(): void
+    {
+        $launched = [];
+        $launcher = new BrowserLauncher(
+            new \mglaman\DrupalOrg\Browser\BrowserPlatformDetector('Linux', [], ''),
+            static fn(array $command): bool => true,
+            static function (array $command) use (&$launched): bool {
+                $launched[] = $command;
+
+                return true;
+            },
+        );
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            null,
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
+            $launcher,
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\ncancel\n"));
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_DEBUG);
+        $errorOutput = new BufferedOutput();
+
+        $handoff->run(
+            $input,
+            $output,
+            $errorOutput,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        $display = $output->fetch();
+        $errors = $errorOutput->fetch();
+        self::assertNotEmpty($launched);
+        $launchUrl = $launched[0][1];
+        self::assertIsString($launchUrl);
+        $encodedPayload = substr($launchUrl, strpos($launchUrl, '=') + 1);
+        self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $display);
+        self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $errors);
+        self::assertStringNotContainsString($encodedPayload, $display);
+        self::assertStringNotContainsString($encodedPayload, $errors);
+        self::assertStringContainsString(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $errors);
+    }
+
+    public function testFailedPrefillNeverPrintsThePayload(): void
+    {
+        $launched = [];
+        $launcher = new BrowserLauncher(
+            new \mglaman\DrupalOrg\Browser\BrowserPlatformDetector('Linux', [], ''),
+            static fn(array $command): bool => true,
+            static function (array $command) use (&$launched): bool {
+                $launched[] = $command;
+
+                return false;
+            },
+        );
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            null,
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
+            $launcher,
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\ncancel\n"));
+        $output = new BufferedOutput();
+        $errorOutput = new BufferedOutput();
+
+        $handoff->run(
+            $input,
+            $output,
+            $errorOutput,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        $display = $output->fetch();
+        $errors = $errorOutput->fetch();
+        self::assertNotEmpty($launched);
+        $launchUrl = $launched[0][1];
+        self::assertIsString($launchUrl);
+        $encodedPayload = substr($launchUrl, strpos($launchUrl, '=') + 1);
+        self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $display);
+        self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $errors);
+        self::assertStringNotContainsString($encodedPayload, $display);
+        self::assertStringNotContainsString($encodedPayload, $errors);
+        self::assertStringContainsString('Continuing with manual Drupal.org project creation.', $display);
     }
 
     public function testTechnicalFailureWritesToErrorOutput(): void
@@ -604,15 +761,24 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         $path = $directory . '/config.json';
         $this->temporaryConfigPaths[] = $path;
         $store = new BrowserCompanionConfigStore($path);
-        $store->saveBrowserFamily(BrowserCompanionDistribution::FIREFOX);
+        $store->save(BrowserFamily::FIREFOX, BrowserCompanionInstallation::LOCAL);
 
         return new BrowserCompanionManager(
             $store,
             new BrowserCompanionDistribution([
-                BrowserCompanionDistribution::FIREFOX => 'https://addons.example.test/drupalorg-cli',
+                BrowserFamily::FIREFOX->value => 'https://addons.example.test/drupalorg-cli',
             ]),
-            new BrowserPlatformDetector('Linux', [], ''),
         );
+    }
+
+    private function temporaryConfigPath(): string
+    {
+        $directory = sys_get_temp_dir() . '/drupalorg-cli-browser-' . uniqid('', true);
+        mkdir($directory, 0700, true);
+        $path = $directory . '/config.json';
+        $this->temporaryConfigPaths[] = $path;
+
+        return $path;
     }
 
     protected function tearDown(): void

@@ -114,16 +114,21 @@ packages.
 
 The optional browser companion can prefill the Drupal.org project form from the
 generated metadata. `project:publish` offers first-run setup only when browser
-use is enabled. You can also run:
+use is enabled and a published companion distribution is available. You can
+also run:
 
 ```bash
 drupalorg browser:setup
 drupalorg browser:setup --reset
 ```
 
-Chrome/Chromium-compatible browsers, Microsoft Edge, Firefox, and Safari are
-offered where the operating system supports them. The CLI falls back to manual
-form completion when a store distribution is unavailable, the browser cannot
+For development, `browser:setup` can configure a companion that you installed
+manually with the browser's developer tools (for example, **Load unpacked**).
+Published browser-store distributions are not available yet, so
+`project:publish` falls back directly to manual form completion until one is
+published. When a distribution is available, Chrome/Chromium-compatible
+browsers, Microsoft Edge, Firefox, and Safari are offered where the operating
+system supports them. The CLI also falls back when the selected browser cannot
 be opened, the companion is not installed, or the process is headless. The
 companion never reads cookies, passwords, history, or sessions, and never
 submits or saves the Drupal.org form. Its development installation notes are in

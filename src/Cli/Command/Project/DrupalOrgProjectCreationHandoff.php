@@ -6,12 +6,16 @@ namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Browser\BrowserCompanionManager;
+use mglaman\DrupalOrg\Browser\BrowserCompanionSetupStatus;
+use mglaman\DrupalOrg\Browser\BrowserFamily;
+use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
 use mglaman\DrupalOrg\Entity\Project;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectDescriptionBuilder;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectFormData;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
-use mglaman\DrupalOrgCli\BrowserTrait;
+use mglaman\DrupalOrgCli\Browser\BrowserCompanionSetupInteractor;
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputInterface;
@@ -21,8 +25,6 @@ use Symfony\Component\Console\Question\Question;
 
 final class DrupalOrgProjectCreationHandoff
 {
-    use BrowserTrait;
-
     public const PROJECT_CREATION_URL = DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL;
 
     /**
@@ -35,6 +37,7 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?DrupalOrgProjectPrefillUrlBuilder $prefillUrlBuilder = null,
         private readonly ?ProjectPublishProgressRenderer $progress = null,
         private readonly ?BrowserCompanionManager $browserCompanionManager = null,
+        private readonly ?BrowserLauncher $browserLauncher = null,
     ) {
     }
 
@@ -82,7 +85,11 @@ final class DrupalOrgProjectCreationHandoff
             $output->writeln('Review the generated metadata if any field is not prefilled.');
         }
 
-        $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
+        $opened = $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
+        if ($prefillUrl !== null && !$opened) {
+            $prefillUrl = null;
+            $this->writeManualPrefillFallback($output);
+        }
         $output->writeln('');
         if ($prefillUrl !== null) {
             $output->writeln('Review the prefilled form in your browser and press Save.');
@@ -99,7 +106,11 @@ final class DrupalOrgProjectCreationHandoff
 
         while ($action !== 'cancel') {
             if ($action === 'open') {
-                $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
+                $opened = $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
+                if ($prefillUrl !== null && !$opened) {
+                    $prefillUrl = null;
+                    $this->writeManualPrefillFallback($output);
+                }
             } else {
                 try {
                     $this->progress?->register([
@@ -148,11 +159,11 @@ final class DrupalOrgProjectCreationHandoff
         OutputInterface $output,
         OutputInterface $errorOutput,
         ?string $url = null,
-    ): void {
+    ): bool {
         if ((bool) $input->getOption('no-browser')) {
             $output->writeln('Open this page to create the project:');
             $output->writeln(self::PROJECT_CREATION_URL);
-            return;
+            return true;
         }
 
         $projectCreationUrl = $url ?? self::PROJECT_CREATION_URL;
@@ -161,10 +172,24 @@ final class DrupalOrgProjectCreationHandoff
             : 'Opening Drupal.org project creation page with generated metadata...');
         if ($this->openUrl !== null) {
             ($this->openUrl)($projectCreationUrl, $errorOutput, $output);
-            return;
+            return true;
         }
 
-        $this->openUrl($projectCreationUrl, $errorOutput, $output, self::PROJECT_CREATION_URL);
+        $manager = $this->browserCompanionManager ?? new BrowserCompanionManager();
+        $browserFamily = $url !== null ? $manager->getBrowserFamily() : null;
+        $opened = $browserFamily !== null
+            ? ($this->browserLauncher ?? new BrowserLauncher())->open($browserFamily, $projectCreationUrl)
+            : ($this->browserLauncher ?? new BrowserLauncher())->openDefault($projectCreationUrl);
+        if ($opened) {
+            $errorOutput->writeln('<info>Opened</info>: ' . self::PROJECT_CREATION_URL);
+
+            return true;
+        }
+
+        $errorOutput->writeln('<error>Could not open a browser automatically.</error>');
+        $output->writeln(self::PROJECT_CREATION_URL);
+
+        return false;
     }
 
     private function preparePrefillUrl(
@@ -187,26 +212,48 @@ final class DrupalOrgProjectCreationHandoff
         $browserCompanionManager = $this->browserCompanionManager ?? new BrowserCompanionManager();
         if (!$browserCompanionManager->isConfigured()) {
             $this->progress?->suspend();
-            if (!$browserCompanionManager->setup(
+            $distribution = $browserCompanionManager->distribution();
+            $platformDetector = new BrowserPlatformDetector();
+            if ($browserCompanionManager->publishedFamilies($platformDetector->browserFamilies()) === []) {
+                $this->writeManualPrefillFallback(
+                    $output,
+                    'Browser companion distribution is not available yet.',
+                );
+
+                return null;
+            }
+            $status = (new BrowserCompanionSetupInteractor(
+                $browserCompanionManager,
+                $distribution,
+                $platformDetector,
+            ))->run(
                 $input,
                 $output,
                 $helper,
-                function (string $url) use ($errorOutput, $output): bool {
+                $this->browserLauncher ?? new BrowserLauncher(),
+                function (BrowserFamily $family, string $url) use ($errorOutput, $output): bool {
                     if ($this->openUrl !== null) {
                         ($this->openUrl)($url, $errorOutput, $output);
                         return true;
                     }
 
-                    return $this->openUrl($url, $errorOutput, $output);
+                    return ($this->browserLauncher ?? new BrowserLauncher())->open($family, $url);
                 },
-            )) {
+            );
+            if (!in_array($status, [
+                BrowserCompanionSetupStatus::CONFIGURED,
+                BrowserCompanionSetupStatus::ALREADY_CONFIGURED,
+            ], true)) {
+                $this->writeManualPrefillFallback($output);
+
                 return null;
             }
         }
 
-        if (!$browserCompanionManager->supportsAutomaticPrefill()) {
-            $output->writeln('<comment>Automatic form filling is unavailable.</comment>');
-            $output->writeln('<comment>Continuing with manual Drupal.org project creation.</comment>');
+        $browserFamily = $browserCompanionManager->getBrowserFamily();
+        if ($browserFamily === null || !$browserCompanionManager->supportsCompanion($browserFamily)) {
+            $this->writeManualPrefillFallback($output);
+
             return null;
         }
 
@@ -257,7 +304,7 @@ final class DrupalOrgProjectCreationHandoff
             $this->writeManualPrefillFallback($output);
 
             return null;
-        } catch (\Exception $exception) {
+        } catch (\InvalidArgumentException | \JsonException | \RuntimeException $exception) {
             $this->progress?->fail(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
             $this->progress?->detail('Browser prefill preparation failed: ' . $exception->getMessage());
             $this->writeManualPrefillFallback($output);
@@ -266,9 +313,11 @@ final class DrupalOrgProjectCreationHandoff
         }
     }
 
-    private function writeManualPrefillFallback(OutputInterface $output): void
-    {
-        $output->writeln('<comment>Automatic form filling is unavailable.</comment>');
+    private function writeManualPrefillFallback(
+        OutputInterface $output,
+        string $reason = 'Automatic form filling is unavailable.',
+    ): void {
+        $output->writeln('<comment>' . $reason . '</comment>');
         $output->writeln('<comment>Continuing with manual Drupal.org project creation.</comment>');
     }
 

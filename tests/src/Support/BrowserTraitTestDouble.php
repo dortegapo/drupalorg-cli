@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Tests\Support;
 
+use mglaman\DrupalOrg\Browser\BrowserPlatform;
 use mglaman\DrupalOrgCli\BrowserTrait;
 use Symfony\Component\Console\Output\OutputInterface;
 
@@ -40,9 +41,9 @@ final class BrowserTraitTestDouble
         return $this->openUrl($url, $stdErr, $stdOut, $displayUrl);
     }
 
-    protected function isWindowsSubsystemForLinux(): bool
+    protected function browserPlatform(): BrowserPlatform
     {
-        return $this->windowsSubsystemForLinux;
+        return $this->windowsSubsystemForLinux ? BrowserPlatform::WSL : BrowserPlatform::LINUX;
     }
 
     protected function browserCommandExists(string $browser): bool

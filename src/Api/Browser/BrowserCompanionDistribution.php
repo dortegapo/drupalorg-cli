@@ -6,12 +6,6 @@ namespace mglaman\DrupalOrg\Browser;
 
 final class BrowserCompanionDistribution
 {
-    public const CHROMIUM = 'chromium';
-    public const EDGE = 'edge';
-    public const FIREFOX = 'firefox';
-    public const SAFARI = 'safari';
-    public const MANUAL = 'manual';
-
     /**
      * @var array<string, string|null>
      */
@@ -23,49 +17,62 @@ final class BrowserCompanionDistribution
     public function __construct(array $storeUrls = [])
     {
         $this->storeUrls = array_replace([
-            self::CHROMIUM => null,
-            self::EDGE => null,
-            self::FIREFOX => null,
-            self::SAFARI => null,
-            self::MANUAL => null,
+            BrowserFamily::CHROMIUM->value => null,
+            BrowserFamily::EDGE->value => null,
+            BrowserFamily::FIREFOX->value => null,
+            BrowserFamily::SAFARI->value => null,
         ], $storeUrls);
     }
 
-    public function label(string $browserFamily): string
+    public function label(BrowserFamily $browserFamily): string
     {
         return match ($browserFamily) {
-            self::CHROMIUM => 'Chrome / Chromium / compatible browser',
-            self::EDGE => 'Microsoft Edge',
-            self::FIREFOX => 'Firefox',
-            self::SAFARI => 'Safari',
-            self::MANUAL => 'Other browser / manual filling',
-            default => $browserFamily,
+            BrowserFamily::CHROMIUM => 'Chrome / Chromium / compatible browser',
+            BrowserFamily::EDGE => 'Microsoft Edge',
+            BrowserFamily::FIREFOX => 'Firefox',
+            BrowserFamily::SAFARI => 'Safari',
         };
     }
 
-    public function storeName(string $browserFamily): ?string
+    public function storeName(BrowserFamily $browserFamily): string
     {
         return match ($browserFamily) {
-            self::CHROMIUM => 'Chrome Web Store',
-            self::EDGE => 'Edge Add-ons',
-            self::FIREFOX => 'Mozilla Add-ons',
-            self::SAFARI => 'Safari / App Store',
-            default => null,
+            BrowserFamily::CHROMIUM => 'Chrome Web Store',
+            BrowserFamily::EDGE => 'Edge Add-ons',
+            BrowserFamily::FIREFOX => 'Mozilla Add-ons',
+            BrowserFamily::SAFARI => 'Safari / App Store',
         };
     }
 
-    public function storeUrl(string $browserFamily): ?string
+    public function storeUrl(BrowserFamily $browserFamily): ?string
     {
-        return $this->storeUrls[$browserFamily] ?? null;
+        return $this->storeUrls[$browserFamily->value] ?? null;
     }
 
-    public function supportsAutomaticPrefill(string $browserFamily): bool
+    public function supportsCompanion(BrowserFamily $browserFamily): bool
     {
-        return $browserFamily !== self::MANUAL && $this->storeUrl($browserFamily) !== null;
+        return array_key_exists($browserFamily->value, $this->storeUrls);
     }
 
-    public function isKnown(string $browserFamily): bool
+    public function hasPublishedDistribution(BrowserFamily $browserFamily): bool
     {
-        return array_key_exists($browserFamily, $this->storeUrls);
+        return $this->storeUrl($browserFamily) !== null;
+    }
+
+    /**
+     * @param iterable<BrowserFamily> $families
+     *
+     * @return list<BrowserFamily>
+     */
+    public function publishedFamilies(iterable $families): array
+    {
+        $published = [];
+        foreach ($families as $family) {
+            if ($this->hasPublishedDistribution($family)) {
+                $published[] = $family;
+            }
+        }
+
+        return $published;
     }
 }

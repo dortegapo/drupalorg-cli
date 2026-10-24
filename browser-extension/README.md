@@ -19,11 +19,11 @@ before pressing Save.
 
 ## End-user installation
 
-End users should select their browser in `drupalorg-cli project:publish` or
-run `drupalorg browser:setup`. The CLI will open the corresponding official
-store listing when one is available. Store listing URLs are intentionally not
-embedded here until the companion is published. If no listing is available,
-the CLI keeps the manual Drupal.org workflow.
+The companion is currently a manual development installation. Run
+`drupalorg browser:setup` after loading it through the browser's developer
+tools. Published browser-store distributions are not available yet, so
+`drupalorg project:publish` keeps the manual Drupal.org workflow until a
+listing is published.
 
 The browser companion stores no Drupal.org credentials or form data. The CLI
 stores only the selected browser family in its local configuration so it does
