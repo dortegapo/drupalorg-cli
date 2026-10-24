@@ -41,8 +41,6 @@ final class ProjectPublishProgressRenderer
 
     private bool $suspended = false;
 
-    private int $tick = 0;
-
     private readonly ?ConsoleSectionOutput $section;
 
     public function __construct(
@@ -109,12 +107,8 @@ final class ProjectPublishProgressRenderer
 
     public function tick(): void
     {
-        if ($this->activePhase === null || $this->suspended || $this->section === null) {
-            return;
-        }
-
-        ++$this->tick;
-        $this->render();
+        // Heartbeats keep the callback contract alive without repeatedly
+        // clearing and redrawing the whole console section.
     }
 
     public function complete(string $id): void
@@ -131,7 +125,6 @@ final class ProjectPublishProgressRenderer
         if ($this->activePhase === $id) {
             $this->activePhase = null;
         }
-        $this->tick = 0;
         $this->suspended = false;
         $this->render($id);
     }
@@ -150,7 +143,6 @@ final class ProjectPublishProgressRenderer
         if ($this->activePhase === $id) {
             $this->activePhase = null;
         }
-        $this->tick = 0;
         $this->suspended = false;
         $this->render($id);
     }
@@ -247,9 +239,7 @@ final class ProjectPublishProgressRenderer
                 'active' => '■',
                 default => '□',
             };
-            $suffix = $phase['state'] === 'active' && !$this->suspended
-                ? ' ' . ['⠋', '⠙', '⠹', '⠸'][$this->tick % 4]
-                : '';
+            $suffix = $phase['state'] === 'active' && !$this->suspended ? '...' : '';
             $lines[] = sprintf('%s %s%s', $marker, $phase['label'], $suffix);
         }
 
