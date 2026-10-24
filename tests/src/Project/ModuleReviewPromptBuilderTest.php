@@ -270,6 +270,7 @@ class ModuleReviewPromptBuilderTest extends TestCase
         self::assertStringContainsString('Do not search Drupal.org.', $prompt);
         self::assertStringContainsString('Do not claim that a duplicate project exists.', $prompt);
         self::assertStringContainsString('Do not perform duplicate assessment.', $prompt);
+        self::assertStringContainsString('Use needs_generalization only when the supplied source shows a concrete change', $prompt);
         self::assertStringContainsString('functional search queries', $prompt);
         self::assertStringContainsString('2-4 natural English words', $prompt);
         self::assertStringContainsString('canonical ecosystem vocabulary', $prompt);

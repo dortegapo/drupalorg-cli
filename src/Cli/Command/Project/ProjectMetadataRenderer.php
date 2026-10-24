@@ -35,6 +35,46 @@ final class ProjectMetadataRenderer
                 $output->writeln('- ' . $integration);
             }
         }
+        $output->writeln('');
+        $this->writeSection($output, 'Module categories');
+        $this->writeListOrEmpty($output, $metadata->categories);
+        $this->writeSection($output, 'Ecosystem');
+        $this->writeListOrEmpty($output, $metadata->ecosystems);
+        $this->writeSection($output, 'Supporting organizations');
+        if ($metadata->supportingOrganizations === []) {
+            $output->writeln('None declared/generated.');
+        } else {
+            foreach ($metadata->supportingOrganizations as $organization) {
+                $output->writeln(sprintf(
+                    '- %s: %s',
+                    $organization['name'],
+                    $organization['howTheyHelped'],
+                ));
+            }
+        }
+        $this->writeSection($output, 'Issues');
+        $issues = $metadata->issues;
+        $this->writeListOrEmpty($output, $issues['components']);
+        $output->writeln('Issue tracker: ' . ($issues['enableTracker'] ? 'enabled' : 'disabled'));
+        $this->writeSection($output, 'Resources');
+        $resources = $metadata->resources;
+        $resourceUrls = array_filter([
+            'Homepage' => $resources['homepage'],
+            'Changelog' => $resources['changelog'],
+            'Demo' => $resources['demo'],
+        ]);
+        foreach ($resourceUrls as $label => $url) {
+            $output->writeln(sprintf('- %s: %s', $label, $url));
+        }
+        foreach ($resources['documentation'] as $documentation) {
+            $output->writeln(sprintf('- %s: %s', $documentation['title'], $documentation['url']));
+        }
+        foreach ($resources['screenshots'] as $screenshot) {
+            $output->writeln('- Screenshot: ' . $screenshot);
+        }
+        if ($resourceUrls === [] && $resources['documentation'] === [] && $resources['screenshots'] === []) {
+            $output->writeln('None declared/generated.');
+        }
 
         if ($output->isVerbose()) {
             $this->writeVerboseDetails($output, $metadata);
@@ -44,6 +84,21 @@ final class ProjectMetadataRenderer
     private function writeSection(OutputInterface $output, string $title): void
     {
         $output->writeln('<comment>' . $title . '</comment>');
+    }
+
+    /**
+     * @param list<string> $items
+     */
+    private function writeListOrEmpty(OutputInterface $output, array $items): void
+    {
+        if ($items === []) {
+            $output->writeln('None declared/generated.');
+            return;
+        }
+
+        foreach ($items as $item) {
+            $output->writeln('- ' . $item);
+        }
     }
 
     private function writeVerboseDetails(OutputInterface $output, ProjectMetadataResult $metadata): void

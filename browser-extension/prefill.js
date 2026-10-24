@@ -40,7 +40,7 @@
         if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
             throw new Error('The prefill payload is not an object.');
         }
-        if (payload.version !== 1) {
+        if (payload.version !== 2) {
             throw new Error('The prefill payload version is not supported.');
         }
 
@@ -71,6 +71,37 @@
             || payload.categories.some((category) => typeof category !== 'string')) {
             throw new Error('The prefill categories are invalid.');
         }
+        for (const field of ['ecosystems', 'issueComponents', 'screenshots']) {
+            if (!Array.isArray(payload[field]) || payload[field].some((value) => typeof value !== 'string')) {
+                throw new Error(`The prefill field ${field} is invalid.`);
+            }
+        }
+        if (!Array.isArray(payload.supportingOrganizations)
+            || payload.supportingOrganizations.some((organization) =>
+                organization === null
+                || typeof organization !== 'object'
+                || typeof organization.name !== 'string'
+                || typeof organization.howTheyHelped !== 'string')) {
+            throw new Error('The prefill supporting organizations are invalid.');
+        }
+        if (typeof payload.enableIssueTracker !== 'boolean'
+            || typeof payload.issueGuidelines !== 'string'
+            || typeof payload.issueSummaryTemplate !== 'string') {
+            throw new Error('The prefill issue settings are invalid.');
+        }
+        for (const field of ['homepage', 'changelog', 'demo']) {
+            if (typeof payload[field] !== 'string') {
+                throw new Error(`The prefill resource ${field} is invalid.`);
+            }
+        }
+        if (!Array.isArray(payload.documentation)
+            || payload.documentation.some((link) =>
+                link === null
+                || typeof link !== 'object'
+                || typeof link.title !== 'string'
+                || typeof link.url !== 'string')) {
+            throw new Error('The prefill documentation is invalid.');
+        }
 
         return payload;
     }
@@ -93,9 +124,10 @@
         }
 
         const encoded = fragment.slice(FRAGMENT_PREFIX.length);
-        removeFragment();
         try {
-            return validatePayload(decodePayload(encoded));
+            const payload = validatePayload(decodePayload(encoded));
+            removeFragment();
+            return payload;
         } catch (error) {
             console.warn('drupalorg-cli prefill payload was rejected.', error);
             return null;
@@ -193,7 +225,164 @@
         return selected > 0;
     }
 
-    function fillForm(payload) {
+    function setCheckbox(selector, value, warnings) {
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLInputElement) || element.type !== 'checkbox') {
+            warnings.push(`Checkbox not found: ${selector}`);
+            return false;
+        }
+
+        element.checked = value;
+        dispatchChange(element);
+        return true;
+    }
+
+    function waitForAutocompleteSuggestion(element, value) {
+        return new Promise((resolve) => {
+            const started = Date.now();
+            const findSuggestion = () => {
+                const target = normalizeText(value);
+                const suggestions = Array.from(document.querySelectorAll(
+                    '#autocomplete li, .ui-autocomplete li',
+                ));
+                const suggestion = suggestions.find((item) => {
+                    const text = normalizeText(item.textContent || '');
+                    return text === target || text.startsWith(`${target} `);
+                });
+                if (suggestion instanceof HTMLElement) {
+                    suggestion.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                    suggestion.click();
+                    dispatchChange(element);
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() - started >= 2000) {
+                    resolve(false);
+                    return;
+                }
+                window.setTimeout(findSuggestion, 100);
+            };
+            findSuggestion();
+        });
+    }
+
+    function waitForAutocompleteReady(selector) {
+        return new Promise((resolve) => {
+            const started = Date.now();
+            const check = () => {
+                const element = document.querySelector(selector);
+                if (!(element instanceof HTMLInputElement)) {
+                    resolve(false);
+                    return;
+                }
+
+                const autocomplete = document.querySelector(`${selector}-autocomplete`);
+                if (autocomplete === null
+                    || autocomplete.classList.contains('autocomplete-processed')) {
+                    resolve(true);
+                    return;
+                }
+
+                if (Date.now() - started >= MAX_WAIT_MS) {
+                    resolve(false);
+                    return;
+                }
+                window.setTimeout(check, POLL_INTERVAL_MS);
+            };
+            check();
+        });
+    }
+
+    async function setAutocompleteValue(selector, value, warnings) {
+        if (!await waitForAutocompleteReady(selector)) {
+            warnings.push(`Autocomplete field not ready: ${selector}`);
+            return false;
+        }
+        if (!setInputValue(selector, value, warnings)) {
+            return false;
+        }
+
+        const element = document.querySelector(selector);
+        if (!(element instanceof HTMLInputElement)) {
+            return false;
+        }
+        element.focus();
+        element.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'End'}));
+        if (!await waitForAutocompleteSuggestion(element, value)) {
+            warnings.push(`Autocomplete suggestion not found: ${value}`);
+            return false;
+        }
+
+        return true;
+    }
+
+    async function setAutocompleteValues(selectors, values, warnings) {
+        let filled = 0;
+        for (const [index, value] of values.entries()) {
+            const selector = selectors[index];
+            if (selector === undefined) {
+                warnings.push(`Autocomplete field not available for: ${value}`);
+                continue;
+            }
+            if (await setAutocompleteValue(selector, value, warnings)) filled++;
+        }
+
+        return filled;
+    }
+
+    function fillIssueComponents(components, warnings) {
+        if (components.length === 0) {
+            return 0;
+        }
+
+        const inputs = Array.from(document.querySelectorAll(
+            'input[id^="edit-field-project-components-und-"][id$="-value"]',
+        ));
+        if (inputs.length === 0) {
+            warnings.push('Issue components fields not found.');
+            return 0;
+        }
+
+        let filled = 0;
+        components.forEach((component, index) => {
+            const input = inputs[index];
+            if (!(input instanceof HTMLInputElement)) {
+                warnings.push(`Issue component field not available for: ${component}`);
+                return;
+            }
+            input.value = component;
+            dispatchChange(input);
+            filled++;
+        });
+
+        return filled;
+    }
+
+    async function fillSupportingOrganizations(organizations, warnings) {
+        let filled = 0;
+        for (const [index, organization] of organizations.entries()) {
+            const organizationSelector = `#edit-field-supporting-organizations-und-${index}-field-supporting-organization-und-0-target-id`;
+            const helpedSelector = `#edit-field-supporting-organizations-und-${index}-field-how-they-helped-und-0-value`;
+            if (await setAutocompleteValue(organizationSelector, organization.name, warnings)) filled++;
+            if (setInputValue(helpedSelector, organization.howTheyHelped, warnings)) filled++;
+        }
+
+        return filled;
+    }
+
+    function fillDocumentation(documentation, warnings) {
+        let filled = 0;
+        documentation.forEach((link, index) => {
+            const titleSelector = `#edit-field-project-documentation-und-${index}-title`;
+            const urlSelector = `#edit-field-project-documentation-und-${index}-url`;
+            if (setInputValue(titleSelector, link.title, warnings)) filled++;
+            if (setInputValue(urlSelector, link.url, warnings)) filled++;
+        });
+
+        return filled;
+    }
+
+    async function fillForm(payload) {
         const warnings = [];
         let filled = 0;
         if (setInputValue('#edit-title', payload.title, warnings)) filled++;
@@ -204,6 +393,23 @@
         if (selectRadioByLabel('taxonomy_vocabulary_44[und]', payload.maintenanceStatus, warnings)) filled++;
         if (selectRadioByLabel('taxonomy_vocabulary_46[und]', payload.developmentStatus, warnings)) filled++;
         if (selectCategories(payload.categories, warnings)) filled++;
+        filled += await setAutocompleteValues(
+            payload.ecosystems.map((_, index) => `#edit-field-project-ecosystem-und-${index}-target-id`),
+            payload.ecosystems,
+            warnings,
+        );
+        filled += await fillSupportingOrganizations(payload.supportingOrganizations, warnings);
+        filled += fillIssueComponents(payload.issueComponents, warnings);
+        if (setInputValue('#edit-field-project-issue-guidelines-und-0-value', payload.issueGuidelines, warnings)) filled++;
+        if (setInputValue('#edit-field-issue-summary-template-und-0-value', payload.issueSummaryTemplate, warnings)) filled++;
+        if (setCheckbox('#edit-field-project-has-issue-queue-und', payload.enableIssueTracker, warnings)) filled++;
+        if (payload.homepage !== '' && setInputValue('#edit-field-project-homepage-und-0-url', payload.homepage, warnings)) filled++;
+        if (payload.changelog !== '' && setInputValue('#edit-field-project-changelog-und-0-url', payload.changelog, warnings)) filled++;
+        if (payload.demo !== '' && setInputValue('#edit-field-project-demo-und-0-url', payload.demo, warnings)) filled++;
+        filled += fillDocumentation(payload.documentation, warnings);
+        payload.screenshots.forEach((screenshot, index) => {
+            if (setInputValue(`#edit-field-project-screenshots-und-${index}-url`, screenshot, warnings)) filled++;
+        });
 
         return {filled, warnings};
     }
@@ -237,8 +443,10 @@
     function fillWhenReady(payload) {
         const started = Date.now();
         const attempt = () => {
-            if (formIsReady()) {
-                showBanner(fillForm(payload));
+            if (formIsReady() && document.readyState !== 'loading') {
+                fillForm(payload).then(showBanner).catch((error) => {
+                    console.warn('drupalorg-cli prefill failed while filling the form.', error);
+                });
                 return;
             }
             if (Date.now() - started < MAX_WAIT_MS) {

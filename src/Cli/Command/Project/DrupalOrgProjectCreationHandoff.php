@@ -12,6 +12,7 @@ use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\BrowserTrait;
 use Symfony\Component\Console\Helper\QuestionHelper;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
@@ -31,6 +32,7 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?\Closure $openUrl = null,
         private readonly ?DrupalOrgProjectDescriptionBuilder $descriptionBuilder = null,
         private readonly ?DrupalOrgProjectPrefillUrlBuilder $prefillUrlBuilder = null,
+        private readonly ?ProjectPublishProgressRenderer $progress = null,
     ) {
     }
 
@@ -45,24 +47,33 @@ final class DrupalOrgProjectCreationHandoff
         string $coreVersionRequirement,
         ?ProjectMetadataResult $metadata = null,
     ): ProjectCreationHandoffResult {
+        $this->progress?->suspend();
         $output->writeln('');
         $output->writeln('<fg=cyan;options=bold>CREATE PROJECT ON DRUPAL.ORG</>');
         $output->writeln('');
         $output->writeln('Drupal.org currently requires contributed projects to be created');
         $output->writeln('through its web form.');
         $output->writeln('');
-        $output->writeln('Title         ' . $title);
-        $output->writeln('Machine name  ' . $machineName);
+        $output->writeln(sprintf(
+            '<fg=cyan;options=bold>Title</>         <fg=green;options=bold>%s</>',
+            OutputFormatter::escape($title),
+        ));
+        $output->writeln(sprintf(
+            '<fg=cyan;options=bold>Machine name</>  <fg=green;options=bold>%s</>',
+            OutputFormatter::escape($machineName),
+        ));
         if ($output->isVerbose()) {
             $output->writeln('Type          ' . ucfirst($type));
             $output->writeln('Core          ' . $coreVersionRequirement);
         }
         if ($metadata !== null) {
+            (new ProjectMetadataRenderer())->render($output, $metadata);
             $output->writeln('');
             $output->writeln('Use the generated metadata above when completing the form.');
         }
 
         $prefillUrl = $this->preparePrefillUrl($input, $output, $helper, $metadata);
+        $this->progress?->suspend();
         if ($prefillUrl !== null) {
             $output->writeln('');
             $output->writeln('Browser prefill requires the drupalorg-cli browser companion.');
@@ -89,8 +100,13 @@ final class DrupalOrgProjectCreationHandoff
                 $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
             } else {
                 try {
+                    $this->progress?->register([
+                        ProjectPublishProgressRenderer::VERIFYING_PROJECT => 'Verifying Drupal.org project',
+                    ]);
+                    $this->progress?->start(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
                     $project = $this->client->getProject($machineName);
                 } catch (\Exception $exception) {
+                    $this->progress?->fail(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
                     $errorOutput->writeln(sprintf(
                         '<error>Could not check Drupal.org project: %s</error>',
                         $exception->getMessage(),
@@ -100,11 +116,15 @@ final class DrupalOrgProjectCreationHandoff
                 }
 
                 if ($project !== null) {
+                    $this->progress?->complete(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
+                    $this->progress?->suspend();
                     $this->writeFoundProject($output, $project);
 
                     return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FOUND, $project);
                 }
 
+                $this->progress?->complete(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
+                $this->progress?->suspend();
                 $output->writeln('Project not found yet.');
             }
 
@@ -154,7 +174,7 @@ final class DrupalOrgProjectCreationHandoff
             || !$input->hasOption('no-browser')
             || (bool) $input->getOption('no-browser')
             || !(bool) $helper->ask($input, $output, new ConfirmationQuestion(
-                'Prefill the Drupal.org project form automatically? [Y/n] ',
+                '<fg=yellow;options=bold>Prefill the Drupal.org project form automatically?</> [Y/n] ',
                 true,
             ))) {
             return null;
@@ -164,75 +184,53 @@ final class DrupalOrgProjectCreationHandoff
             $output->writeln('<comment>Generated summary exceeds 200 characters; it will not be truncated.</comment>');
         }
 
-        $maintenanceStatus = $this->askStatus(
-            $input,
-            $output,
-            $helper,
-            'Maintenance status',
-            DrupalOrgProjectFormData::MAINTENANCE_STATUSES,
-        );
-        $developmentStatus = $this->askStatus(
-            $input,
-            $output,
-            $helper,
-            'Development status',
-            DrupalOrgProjectFormData::DEVELOPMENT_STATUSES,
-        );
-        $descriptionHtml = ($this->descriptionBuilder ?? new DrupalOrgProjectDescriptionBuilder())->build($metadata);
-        $formData = new DrupalOrgProjectFormData(
-            title: $metadata->title,
-            machineName: $metadata->machineName,
-            projectType: DrupalOrgProjectFormData::PROJECT_TYPE_FULL,
-            summary: $metadata->summary,
-            descriptionHtml: $descriptionHtml,
-            maintenanceStatus: $maintenanceStatus,
-            developmentStatus: $developmentStatus,
-            categories: [],
-        );
+        $this->progress?->register([
+            ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM => 'Preparing Drupal.org project form',
+        ]);
+        $this->progress?->start(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
 
         try {
-            return ($this->prefillUrlBuilder ?? new DrupalOrgProjectPrefillUrlBuilder())->build($formData);
+            $descriptionHtml = ($this->descriptionBuilder ?? new DrupalOrgProjectDescriptionBuilder())->build($metadata);
+            $issues = $metadata->issues;
+            $resources = $metadata->resources;
+            $issueComponents = $issues['components'] !== []
+                ? $issues['components']
+                : DrupalOrgProjectFormData::DEFAULT_ISSUE_COMPONENTS;
+            $formData = new DrupalOrgProjectFormData(
+                title: $metadata->title,
+                machineName: $metadata->machineName,
+                projectType: DrupalOrgProjectFormData::PROJECT_TYPE_FULL,
+                summary: $metadata->summary,
+                descriptionHtml: $descriptionHtml,
+                maintenanceStatus: DrupalOrgProjectFormData::MAINTENANCE_STATUSES[0],
+                developmentStatus: DrupalOrgProjectFormData::DEVELOPMENT_STATUSES[0],
+                categories: $metadata->categories,
+                ecosystems: $metadata->ecosystems,
+                supportingOrganizations: $metadata->supportingOrganizations,
+                issueComponents: $issueComponents,
+                enableIssueTracker: $issues['enableTracker'],
+                issueGuidelines: $issues['submissionGuidelines'],
+                issueSummaryTemplate: $issues['summaryTemplate'],
+                homepage: $resources['homepage'],
+                changelog: $resources['changelog'],
+                demo: $resources['demo'],
+                documentation: $resources['documentation'],
+                screenshots: $resources['screenshots'],
+            );
+            $url = ($this->prefillUrlBuilder ?? new DrupalOrgProjectPrefillUrlBuilder())->build($formData);
+            $this->progress?->complete(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
+
+            return $url;
         } catch (\LengthException) {
+            $this->progress?->fail(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
             $output->writeln('<comment>Browser prefill is unavailable because the generated metadata is too large.</comment>');
 
             return null;
+        } catch (\Throwable $exception) {
+            $this->progress?->fail(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
+
+            throw $exception;
         }
-    }
-
-    /**
-     * @param list<string> $choices
-     */
-    private function askStatus(
-        InputInterface $input,
-        OutputInterface $output,
-        QuestionHelper $helper,
-        string $label,
-        array $choices,
-    ): string {
-        $options = [];
-        $choiceValues = [];
-        foreach ($choices as $index => $choice) {
-            $number = (string) ($index + 1);
-            $options[] = sprintf('  %s. %s', $number, $choice);
-            $choiceValues[$number] = $choice;
-        }
-
-        $question = new Question(
-            $label . "\n\n"
-            . implode("\n", $options)
-            . "\n\nSelection [1]: ",
-            '1',
-        );
-        $question->setValidator(static function (mixed $selected) use ($choiceValues): string {
-            $selected = (string) $selected;
-            if (!array_key_exists($selected, $choiceValues)) {
-                throw new \InvalidArgumentException('Invalid selection. Choose one of the displayed options.');
-            }
-
-            return $choiceValues[$selected];
-        });
-
-        return (string) $helper->ask($input, $output, $question);
     }
 
     private function askProjectCreationAction(
@@ -241,7 +239,10 @@ final class DrupalOrgProjectCreationHandoff
         QuestionHelper $helper,
         string $questionText,
     ): string {
-        $question = new Question($questionText, '');
+        $question = new Question(
+            '<fg=yellow;options=bold>' . $questionText . '</>',
+            '',
+        );
         $question->setValidator(static function (mixed $value): string {
             $value = strtolower(trim((string) $value));
             if ($value !== '' && !in_array($value, ['open', 'cancel'], true)) {

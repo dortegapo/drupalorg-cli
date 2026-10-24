@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrg\Tests\Command\Project;
 
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewProgressRenderer;
+use mglaman\DrupalOrgCli\Command\Project\ProjectPublishProgressRenderer;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -19,7 +20,11 @@ final class ModuleReviewProgressRendererTest extends TestCase
         self::assertIsResource($stream);
         $output = new StreamOutput($stream);
         $output->setDecorated(false);
-        $renderer = new ModuleReviewProgressRenderer($output);
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register([
+            ProjectPublishProgressRenderer::ANALYZING_MODULE => 'Analyzing module',
+        ]);
+        $renderer = new ModuleReviewProgressRenderer($progress);
 
         $renderer->handle('review_ai_started');
         for ($index = 0; $index < 10; ++$index) {
@@ -30,8 +35,8 @@ final class ModuleReviewProgressRendererTest extends TestCase
         rewind($stream);
         $display = stream_get_contents($stream);
         self::assertIsString($display);
-        self::assertSame(1, substr_count($display, 'Analyzing module... done'));
-        self::assertStringNotContainsString('Analyzing module with AI...', $display);
+        self::assertStringContainsString('■ Analyzing module...', $display);
+        self::assertStringContainsString('✓ Analyzing module', $display);
         self::assertStringNotContainsString('AI tick', $display);
     }
 
@@ -41,10 +46,23 @@ final class ModuleReviewProgressRendererTest extends TestCase
         self::assertIsResource($stream);
         $output = new StreamOutput($stream);
         $output->setDecorated(false);
-        $renderer = new ModuleReviewProgressRenderer($output);
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register([
+            ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG => 'Searching Drupal.org',
+            ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY => 'Checking compatibility',
+        ]);
+        $renderer = new ModuleReviewProgressRenderer($progress);
 
         $renderer->handle('core_version_started');
         $renderer->handle('core_version_completed');
+        $renderer->handle('project_search_started', ['total' => 1]);
+        $renderer->handle('project_search_progress', [
+            'current' => 1,
+            'total' => 1,
+            'type' => 'primary',
+            'term' => 'token',
+        ]);
+        $renderer->handle('project_search_completed');
         $renderer->handle('compatibility_started', ['current' => 0, 'total' => 2]);
         $renderer->handle('compatibility_progress', [
             'current' => 1,
@@ -61,9 +79,10 @@ final class ModuleReviewProgressRendererTest extends TestCase
         rewind($stream);
         $display = stream_get_contents($stream);
         self::assertIsString($display);
-        self::assertStringContainsString('Checking compatibility... done', $display);
+        self::assertStringContainsString('✓ Checking compatibility', $display);
         self::assertStringNotContainsString('coffee', $display);
         self::assertStringNotContainsString('eazylaunch', $display);
+        self::assertStringNotContainsString('token', $display);
     }
 
     public function testVerboseOutputIncludesSearchAndCompatibilityDetails(): void
@@ -73,7 +92,12 @@ final class ModuleReviewProgressRendererTest extends TestCase
         $output = new StreamOutput($stream);
         $output->setDecorated(false);
         $output->setVerbosity(OutputInterface::VERBOSITY_VERBOSE);
-        $renderer = new ModuleReviewProgressRenderer($output);
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register([
+            ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG => 'Searching Drupal.org',
+            ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY => 'Checking compatibility',
+        ]);
+        $renderer = new ModuleReviewProgressRenderer($progress);
 
         $renderer->handle('project_search_started', ['total' => 2]);
         $renderer->handle('project_search_progress', [
@@ -82,13 +106,13 @@ final class ModuleReviewProgressRendererTest extends TestCase
             'type' => 'core',
             'term' => 'token',
         ]);
+        $renderer->handle('project_search_completed');
         $renderer->handle('compatibility_started', ['total' => 1]);
         $renderer->handle('compatibility_progress', [
             'current' => 1,
             'total' => 1,
             'machineName' => 'token',
         ]);
-        $renderer->handle('project_search_completed');
         $renderer->handle('compatibility_completed');
 
         rewind($stream);
@@ -97,5 +121,30 @@ final class ModuleReviewProgressRendererTest extends TestCase
         self::assertStringContainsString('Search 1/2 · core: token', $display);
         self::assertStringContainsString('Compatibility 1/1 · token', $display);
         self::assertStringNotContainsString("\r", $display);
+    }
+
+    public function testIncompleteAnalysisMarksTheFailedParentPhase(): void
+    {
+        $stream = fopen('php://memory', 'w+');
+        self::assertIsResource($stream);
+        $output = new StreamOutput($stream);
+        $output->setDecorated(false);
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register([
+            ProjectPublishProgressRenderer::ANALYZING_MODULE => 'Analyzing module',
+        ]);
+        $renderer = new ModuleReviewProgressRenderer($progress);
+
+        $renderer->finishOnFailure([
+            'complete' => false,
+            'limitations' => [
+                ['stage' => 'review_validation'],
+            ],
+        ]);
+
+        rewind($stream);
+        $display = stream_get_contents($stream);
+        self::assertIsString($display);
+        self::assertStringContainsString('✗ Analyzing module', $display);
     }
 }
