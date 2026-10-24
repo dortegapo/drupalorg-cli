@@ -20,18 +20,20 @@ trait BrowserTrait
         return null;
     }
 
-    protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): void
+    protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): bool
     {
         $browser = $this->getDefaultBrowser();
         if ($browser !== null) {
             if ($this->launchBrowser($browser, $url)) {
                 $stdErr->writeln("<info>Opened</info>: $url");
-                return;
+                return true;
             }
         } else {
             $stdErr->writeln('<error>Could not open a browser automatically.</error>');
         }
         $stdOut->writeln($url);
+
+        return false;
     }
 
     protected function isWindowsSubsystemForLinux(): bool

@@ -63,6 +63,7 @@ class Application extends ParentApplication
         $commands[] = new Command\Issue\Show();
         $commands[] = new Command\Project\Link();
         $commands[] = new Command\Project\Publish();
+        $commands[] = new Command\Browser\Setup();
         $commands[] = new Command\Project\Kanban();
         $commands[] = new Command\Project\ProjectIssues();
         $commands[] = new Command\Issue\Search();

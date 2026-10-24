@@ -7,6 +7,10 @@ namespace mglaman\DrupalOrg\Tests\Command\Project;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\Psr7\Response;
+use mglaman\DrupalOrg\Browser\BrowserCompanionConfigStore;
+use mglaman\DrupalOrg\Browser\BrowserCompanionDistribution;
+use mglaman\DrupalOrg\Browser\BrowserCompanionManager;
+use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
@@ -26,6 +30,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 #[CoversClass(DrupalOrgProjectCreationHandoff::class)]
 final class DrupalOrgProjectCreationHandoffTest extends TestCase
 {
+    /** @var list<string> */
+    private array $temporaryConfigPaths = [];
+
     public function testReportsCreationUrlAndFoundProject(): void
     {
         $opened = [];
@@ -227,6 +234,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             null,
             null,
             $progress,
+            $this->configuredBrowserCompanion(),
         );
         $input = new ArrayInput(
             [],
@@ -294,6 +302,64 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         );
     }
 
+    public function testFirstRunInstallsCompanionBeforeOpeningPrefillUrl(): void
+    {
+        $opened = [];
+        $directory = sys_get_temp_dir() . '/drupalorg-cli-browser-' . uniqid('', true);
+        mkdir($directory, 0700, true);
+        $path = $directory . '/config.json';
+        $this->temporaryConfigPaths[] = $path;
+        $manager = new BrowserCompanionManager(
+            new BrowserCompanionConfigStore($path),
+            new BrowserCompanionDistribution([
+                BrowserCompanionDistribution::CHROMIUM => 'https://store.example.test/companion',
+            ]),
+            new BrowserPlatformDetector('Linux', [], ''),
+        );
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                json_encode(['list' => [[
+                    'nid' => '1',
+                    'title' => 'Example',
+                    'field_project_machine_name' => 'example',
+                ]]], JSON_THROW_ON_ERROR),
+            )),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+            null,
+            null,
+            null,
+            $manager,
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\n1\n\n\n"));
+
+        $result = $handoff->run(
+            $input,
+            new BufferedOutput(),
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+        self::assertCount(2, $opened);
+        self::assertSame('https://store.example.test/companion', $opened[0]);
+        self::assertStringStartsWith(DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL . '#', $opened[1]);
+        self::assertSame(BrowserCompanionDistribution::CHROMIUM, $manager->getBrowserFamily());
+    }
+
     public function testDecliningPrefillKeepsTheManualHandoff(): void
     {
         $opened = [];
@@ -302,6 +368,10 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
         );
         $input = new ArrayInput(
             [],
@@ -334,6 +404,10 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
         );
         $input = new ArrayInput(
             [],
@@ -367,6 +441,10 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
         );
         $input = new ArrayInput(
             ['--no-browser' => true],
@@ -403,6 +481,10 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
+            null,
+            null,
+            null,
+            $this->configuredBrowserCompanion(),
         );
         $input = new ArrayInput(
             [],
@@ -509,5 +591,36 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
                 'screenshots' => [],
             ],
         );
+    }
+
+    private function configuredBrowserCompanion(): BrowserCompanionManager
+    {
+        $directory = sys_get_temp_dir() . '/drupalorg-cli-browser-' . uniqid('', true);
+        mkdir($directory, 0700, true);
+        $path = $directory . '/config.json';
+        $this->temporaryConfigPaths[] = $path;
+        $store = new BrowserCompanionConfigStore($path);
+        $store->saveBrowserFamily(BrowserCompanionDistribution::FIREFOX);
+
+        return new BrowserCompanionManager(
+            $store,
+            new BrowserCompanionDistribution([
+                BrowserCompanionDistribution::FIREFOX => 'https://addons.example.test/drupalorg-cli',
+            ]),
+            new BrowserPlatformDetector('Linux', [], ''),
+        );
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->temporaryConfigPaths as $path) {
+            if (is_file($path)) {
+                unlink($path);
+            }
+            $directory = dirname($path);
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
     }
 }
