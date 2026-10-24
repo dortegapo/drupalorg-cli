@@ -91,6 +91,20 @@ final class ProjectPublishProgressRendererTest extends TestCase
         );
     }
 
+    public function testTerminalPhaseTransitionsAreIdempotent(): void
+    {
+        $output = new BufferedOutput();
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register(['first' => 'First phase']);
+        $progress->start('first');
+        $progress->complete('first');
+        $progress->complete('first');
+        $progress->fail('first');
+        $progress->start('first');
+
+        self::assertSame("■ First phase...\n✓ First phase\n", $output->fetch());
+    }
+
     public function testReviewPhasesAreOptionalAndRegisteredTogether(): void
     {
         $output = new BufferedOutput();

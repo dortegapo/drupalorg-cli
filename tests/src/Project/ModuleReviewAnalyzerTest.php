@@ -476,7 +476,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         ], $result['discovery']);
     }
 
-    public function testKeepsMoreThanOneHundredDiscoveredCandidatesOutOfComparison(): void
+    public function testLimitsTheCandidatePoolSentToComparison(): void
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $review = self::reviewResult();
@@ -518,14 +518,40 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertTrue($result['complete']);
         self::assertSame(200, $result['discovery']['rawResultOccurrences']);
         self::assertSame(200, $result['discovery']['uniqueCandidatesDiscovered']);
-        self::assertSame(100, $result['discovery']['candidatesSentToComparison']);
-        self::assertCount(100, $result['candidates']);
+        self::assertSame(20, $result['discovery']['candidatesSentToComparison']);
+        self::assertCount(20, $result['candidates']);
         $comparisonPayload = self::capturedPayload($captureDir . '/call-1.php');
         $userPrompt = $comparisonPayload['user_prompt'];
         self::assertIsString($userPrompt);
         $inputJson = trim((string) substr($userPrompt, strlen("INPUT DATA START\n"), -strlen("\nINPUT DATA END")));
         $input = json_decode($inputJson, true, 512, JSON_THROW_ON_ERROR);
-        self::assertCount(100, $input['candidates']);
+        self::assertCount(20, $input['candidates']);
+    }
+
+    public function testSkipsComparisonAiWhenNoCandidatesAreFound(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $captureDir = $this->workDir . '/captures';
+        mkdir($captureDir);
+        $analyzer = $this->analyzer(
+            [
+                self::searchResponse([]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+            ],
+            [self::aiSuccess(self::reviewResult())],
+            $captureDir,
+        );
+
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+
+        self::assertTrue($result['complete']);
+        self::assertSame([], $result['candidates']);
+        self::assertSame('no_clear_duplicate', $result['comparison']['verdict']);
+        self::assertSame('candidate', $result['assessment']['status']);
+        self::assertFileExists($captureDir . '/call-0.php');
+        self::assertFileDoesNotExist($captureDir . '/call-1.php');
     }
 
     public function testContinuesToReviewAiWhenSourceExceedsTheHistoricalBuilderBudget(): void
@@ -605,7 +631,12 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer(
-            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
+            [
+                self::searchResponse([self::project('profile_project', 'Profile project', 'Profile management.')]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+            ],
             [
                 self::aiSuccess(self::reviewResult()),
                 self::aiFailure('provider_failure'),
@@ -635,7 +666,12 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer(
-            [self::searchResponse([]), self::searchResponse([]), self::searchResponse([]), self::searchResponse([])],
+            [
+                self::searchResponse([self::project('profile_project', 'Profile project', 'Profile management.')]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+                self::searchResponse([]),
+            ],
             [
                 self::aiSuccess(self::reviewResult()),
                 self::aiSuccess(self::comparisonResult([], 'likely_duplicate')),

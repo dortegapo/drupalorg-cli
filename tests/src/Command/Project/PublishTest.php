@@ -72,7 +72,9 @@ class PublishTest extends TestCase
             . "✓ Checking Drupal.org project\n\nPROJECT PUBLISH\n"
             . "----------------------------------------\n\n"
             . "My Module (my_module)\n"
-            . "Core ^11 · Drupal.org: PROJECT EXISTS\n\n",
+            . "Core ^11 · Drupal.org: PROJECT EXISTS\n\n"
+            . "Drupal.org project already exists.\n"
+            . "Repository and release publication are not implemented yet.\n",
             $tester->getDisplay()
         );
     }
@@ -356,8 +358,7 @@ class PublishTest extends TestCase
             . "  2. Optional Drupal.org metadata generation\n"
             . "  3. Manual Drupal.org project creation\n"
             . "  4. Verify project\n"
-            . "  5. Wait for repository\n"
-            . "  6. Prepare and publish Git repository\n\n"
+            . "  5. Stop after project verification\n\n"
             . "No changes were made.\n",
             $tester->getDisplay()
         );
@@ -393,7 +394,7 @@ class PublishTest extends TestCase
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('Drupal.org: PROJECT EXISTS', $tester->getDisplay());
         self::assertStringContainsString(
-            'Prepare publication workspace',
+            'Report unsupported repository and release stages',
             $tester->getDisplay()
         );
         self::assertStringNotContainsString(

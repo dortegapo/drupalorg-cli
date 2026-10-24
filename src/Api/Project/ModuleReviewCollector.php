@@ -208,6 +208,11 @@ final class ModuleReviewCollector
             return;
         }
 
+        if (!mb_check_encoding($content, 'UTF-8')) {
+            $skipped[] = ['path' => $relativePath, 'reason' => 'non_utf8'];
+            return;
+        }
+
         $files[] = [
             'path' => $relativePath,
             'bytes' => strlen($content),

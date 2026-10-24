@@ -41,6 +41,8 @@ final class ProjectPublishProgressRenderer
 
     private bool $suspended = false;
 
+    private int $tick = 0;
+
     private readonly ?ConsoleSectionOutput $section;
 
     public function __construct(
@@ -95,6 +97,10 @@ final class ProjectPublishProgressRenderer
             throw new \LogicException('Only one project publish progress phase can be active.');
         }
 
+        if (in_array($this->phases[$id]['state'], ['completed', 'failed'], true)) {
+            return;
+        }
+
         $this->activePhase = $id;
         $this->suspended = false;
         $this->phases[$id]['state'] = 'active';
@@ -103,8 +109,12 @@ final class ProjectPublishProgressRenderer
 
     public function tick(): void
     {
-        // Keep the active marker static. The callback is still intentionally
-        // available to long-running operations, but does not redraw the block.
+        if ($this->activePhase === null || $this->suspended || $this->section === null) {
+            return;
+        }
+
+        ++$this->tick;
+        $this->render();
     }
 
     public function complete(string $id): void
@@ -113,10 +123,15 @@ final class ProjectPublishProgressRenderer
             return;
         }
 
+        if (in_array($this->phases[$id]['state'], ['completed', 'failed'], true)) {
+            return;
+        }
+
         $this->phases[$id]['state'] = 'completed';
         if ($this->activePhase === $id) {
             $this->activePhase = null;
         }
+        $this->tick = 0;
         $this->suspended = false;
         $this->render($id);
     }
@@ -127,10 +142,15 @@ final class ProjectPublishProgressRenderer
             return;
         }
 
+        if (in_array($this->phases[$id]['state'], ['completed', 'failed'], true)) {
+            return;
+        }
+
         $this->phases[$id]['state'] = 'failed';
         if ($this->activePhase === $id) {
             $this->activePhase = null;
         }
+        $this->tick = 0;
         $this->suspended = false;
         $this->render($id);
     }
@@ -227,7 +247,9 @@ final class ProjectPublishProgressRenderer
                 'active' => '■',
                 default => '□',
             };
-            $suffix = $phase['state'] === 'active' && !$this->suspended ? '...' : '';
+            $suffix = $phase['state'] === 'active' && !$this->suspended
+                ? ' ' . ['⠋', '⠙', '⠹', '⠸'][$this->tick % 4]
+                : '';
             $lines[] = sprintf('%s %s%s', $marker, $phase['label'], $suffix);
         }
 

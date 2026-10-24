@@ -193,6 +193,16 @@ class ModuleReviewCollectorTest extends TestCase
         self::assertSame(['fake.php' => 'binary'], $this->skippedByPath($result));
     }
 
+    public function testSkipsNonUtf8FilesWithSupportedExtensions(): void
+    {
+        $this->writeFile('legacy.php', "<?php\n\xff");
+
+        $result = $this->collect();
+
+        self::assertSame([], $result['files']);
+        self::assertSame(['legacy.php' => 'non_utf8'], $this->skippedByPath($result));
+    }
+
     public function testRecordsUnsupportedFilesWithoutReadingThem(): void
     {
         $this->writeFile('logo.png', 'not read');

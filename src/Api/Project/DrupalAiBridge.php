@@ -44,7 +44,7 @@ final class DrupalAiBridge
 
         try {
             $process->run();
-        } catch (\Throwable) {
+        } catch (\Exception) {
             throw new \RuntimeException('Could not inspect Drupal AI configuration.');
         }
 
@@ -126,7 +126,7 @@ final class DrupalAiBridge
                 usleep(100000);
             }
             $process->wait();
-        } catch (\Throwable) {
+        } catch (\Exception) {
             throw new \RuntimeException(self::INVALID_RESPONSE_MESSAGE);
         }
 
