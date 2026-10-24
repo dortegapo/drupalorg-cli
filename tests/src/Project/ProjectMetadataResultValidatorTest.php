@@ -18,6 +18,7 @@ class ProjectMetadataResultValidatorTest extends TestCase
             'description' => 'Provides profile record management for Drupal sites.',
             'features' => ['Create records', 'List records'],
             'integrations' => [],
+            ...self::additionalMetadata(),
         ]);
 
         self::assertSame('Manages reusable profile records.', $result['summary']);
@@ -46,6 +47,7 @@ class ProjectMetadataResultValidatorTest extends TestCase
             'description' => 'Description',
             'features' => [],
             'integrations' => [],
+            ...self::additionalMetadata(),
         ]);
     }
 
@@ -58,6 +60,30 @@ class ProjectMetadataResultValidatorTest extends TestCase
             'description' => 'Description',
             'features' => array_fill(0, 11, 'Feature'),
             'integrations' => [],
+            ...self::additionalMetadata(),
         ]);
+    }
+
+    /** @return array<string, mixed> */
+    private static function additionalMetadata(): array
+    {
+        return [
+            'categories' => ['Site structure'],
+            'ecosystem' => [],
+            'supporting_organizations' => [],
+            'issues' => [
+                'components' => ['Code'],
+                'submission_guidelines' => '',
+                'summary_template' => '',
+                'enable_tracker' => true,
+            ],
+            'resources' => [
+                'homepage' => '',
+                'changelog' => '',
+                'demo' => '',
+                'documentation' => [],
+                'screenshots' => [],
+            ],
+        ];
     }
 }

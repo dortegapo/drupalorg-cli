@@ -12,6 +12,22 @@ final class ProjectMetadataResult implements ResultInterface
      * @param list<string> $dependencies
      * @param list<string> $features
      * @param list<string> $integrations
+     * @param list<string> $categories
+     * @param list<string> $ecosystems
+     * @param list<array{name: string, howTheyHelped: string}> $supportingOrganizations
+     * @param array{
+     *     components: list<string>,
+     *     submissionGuidelines: string,
+     *     summaryTemplate: string,
+     *     enableTracker: bool
+     * } $issues
+     * @param array{
+     *     homepage: string,
+     *     changelog: string,
+     *     demo: string,
+     *     documentation: list<array{title: string, url: string}>,
+     *     screenshots: list<string>
+     * } $resources
      * @param array{input: ?int, output: ?int, total: ?int} $tokenUsage
      */
     public function __construct(
@@ -27,6 +43,22 @@ final class ProjectMetadataResult implements ResultInterface
         public readonly string $providerId,
         public readonly string $modelId,
         public readonly array $tokenUsage,
+        public readonly array $categories = [],
+        public readonly array $ecosystems = [],
+        public readonly array $supportingOrganizations = [],
+        public readonly array $issues = [
+            'components' => [],
+            'submissionGuidelines' => '',
+            'summaryTemplate' => '',
+            'enableTracker' => true,
+        ],
+        public readonly array $resources = [
+            'homepage' => '',
+            'changelog' => '',
+            'demo' => '',
+            'documentation' => [],
+            'screenshots' => [],
+        ],
     ) {
     }
 
@@ -45,6 +77,11 @@ final class ProjectMetadataResult implements ResultInterface
             'provider_id' => $this->providerId,
             'model_id' => $this->modelId,
             'token_usage' => $this->tokenUsage,
+            'categories' => $this->categories,
+            'ecosystems' => $this->ecosystems,
+            'supporting_organizations' => $this->supportingOrganizations,
+            'issues' => $this->issues,
+            'resources' => $this->resources,
         ];
     }
 }

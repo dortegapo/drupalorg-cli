@@ -27,6 +27,7 @@ final class ModuleReviewWorkflow
      * @param \Closure|null $sourcePreparer
      * @param \Closure|null $moduleAnalyzer
      * @param \Closure|null $pdfWriter
+     * @param ProjectPublishProgressRenderer|null $progress
      */
     public function __construct(
         private readonly Client $client,
@@ -35,6 +36,7 @@ final class ModuleReviewWorkflow
         private readonly ?\Closure $sourcePreparer = null,
         private readonly ?\Closure $moduleAnalyzer = null,
         private readonly ?\Closure $pdfWriter = null,
+        private readonly ?ProjectPublishProgressRenderer $progress = null,
     ) {
     }
 
@@ -78,26 +80,30 @@ final class ModuleReviewWorkflow
 
         $this->writeConsent($output, $aiContext);
         if (!(bool) $helper->ask($input, $output, new ConfirmationQuestion(
-            'Run AI-assisted contribution review? [y/N] ',
+            '<fg=yellow;options=bold>Run AI-assisted contribution review?</> [y/N] ',
             false,
         ))) {
             return new ModuleReviewWorkflowResult(true, $runtime, null);
         }
 
+        $progress = $this->progress ?? new ProjectPublishProgressRenderer($output);
+        $progress->registerReviewPhases();
+        $progress->start(ProjectPublishProgressRenderer::PREPARING_SOURCE);
         try {
             $preparedSource = $this->prepareModuleSource($module['resolvedPath']);
         } catch (\RuntimeException) {
-            $output->writeln('<comment>Preparing module source... failed</comment>');
+            $progress->fail(ProjectPublishProgressRenderer::PREPARING_SOURCE);
+            $progress->warning('Preparing module source... failed');
 
             return new ModuleReviewWorkflowResult(true, $runtime, null);
         }
 
         $selector = new ModuleReviewSourceSelector();
         $eligibleBytes = $preparedSource['totalBytes'];
-        $output->writeln('Preparing module source... done');
+        $progress->complete(ProjectPublishProgressRenderer::PREPARING_SOURCE);
         if ($output->isVerbose()) {
-            $output->writeln(sprintf(
-                '<comment>Eligible source: %s across %d files.</comment>',
+            $progress->detail(sprintf(
+                'Eligible source: %s across %d files.',
                 $this->formatKilobytes($eligibleBytes),
                 count($preparedSource['files']),
             ));
@@ -133,36 +139,52 @@ final class ModuleReviewWorkflow
             $output->writeln('<comment>Source mode: Full module.</comment>');
         }
 
-        $progressRenderer = new ModuleReviewProgressRenderer($output);
-        $progress = static function (string $event, array $context) use ($progressRenderer): void {
+        $progressRenderer = new ModuleReviewProgressRenderer($progress);
+        $eventProgress = static function (string $event, array $context) use ($progressRenderer): void {
             $progressRenderer->handle($event, $context);
         };
+        $result = null;
         try {
             $result = $this->analyzeModule(
                 $module['resolvedPath'],
                 $module['moduleName'],
                 $runtime,
-                $progress,
+                $eventProgress,
                 $moduleInfo['name'],
                 $preparedSource,
             );
         } finally {
-            $progressRenderer->finishOnFailure();
+            $progressRenderer->finishOnFailure($result);
         }
 
         $pdfPath = null;
+        $progress->start(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         try {
             $pdfPath = $this->writeModuleReviewPdf($result, $module, $moduleInfo);
-            $output->writeln('Generating PDF report... done');
+            $progress->complete(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         } catch (\Throwable) {
-            $output->writeln('<comment>PDF report could not be generated.</comment>');
-            $output->writeln('<comment>Review results are still available above.</comment>');
+            $progress->fail(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
+            $progress->warning('PDF report could not be generated.');
+            $progress->warning('Review results are still available above.');
         }
+        // The progress renderer owns a console section. Clear it before writing
+        // the summary so the section is not emitted a second time around it.
+        $progress->suspend();
         (new ModuleReviewSummaryRenderer($output))->render($result, $pdfPath);
 
+        $assessmentStatus = is_array($result['assessment'] ?? null)
+            && is_string($result['assessment']['status'] ?? null)
+            ? $result['assessment']['status']
+            : null;
+        $continueDefault = in_array($assessmentStatus, ['candidate', 'candidate_with_changes'], true);
+        $continuePrompt = $continueDefault
+            ? '<fg=yellow;options=bold>Continue with project publishing?</> [Y/n] '
+            : '<fg=yellow;options=bold>Continue with project publishing?</> [y/N] ';
+
+        $output->writeln('');
         if (!(bool) $helper->ask($input, $output, new ConfirmationQuestion(
-            'Continue with project publishing? [y/N] ',
-            false,
+            $continuePrompt,
+            $continueDefault,
         ))) {
             $output->writeln('Project publishing cancelled.');
 
@@ -195,8 +217,6 @@ final class ModuleReviewWorkflow
         $output->writeln('');
         $output->writeln('The review is advisory only and may consume AI-provider tokens.');
         $output->writeln(sprintf('Provider: %s / %s', $aiContext['providerId'], $aiContext['modelId']));
-        $output->writeln('Selected source is locally filtered/redacted on a best-effort basis');
-        $output->writeln('before being sent to this AI provider. Drupal.org search does not receive it.');
         if ($output->isVerbose()) {
             $output->writeln('');
             $output->writeln('<comment>Review details</comment>');
@@ -371,9 +391,9 @@ final class ModuleReviewWorkflow
         $choiceValues[$cancelChoice] = false;
 
         $question = new Question(
-            "Choose source coverage:\n\n"
+            "<fg=yellow;options=bold>Choose source coverage:</>\n\n"
             . implode("\n", $optionLines)
-            . "\n\nSelection [1]: ",
+            . "\n\n<fg=yellow;options=bold>Selection [1]:</> ",
             '1',
         );
         $question->setValidator(static function (mixed $selected) use ($choiceValues): int|false|null {

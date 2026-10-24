@@ -90,6 +90,20 @@ final class ModuleReviewWorkflowTest extends TestCase
         self::assertStringContainsString('Full report:', $display);
     }
 
+    public function testCandidateAssessmentDefaultsToContinuePublishing(): void
+    {
+        [$result, $state, $display] = $this->runWorkflow(
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult('candidate'),
+            "y\n\n",
+        );
+
+        self::assertTrue($result->continuePublishing);
+        self::assertSame(1, $state->analyzeCalls);
+        self::assertStringContainsString('Continue with project publishing? [Y/n]', $display);
+    }
+
     public function testNotCandidateAssessmentStillAllowsPublishingDecision(): void
     {
         [$result, , $display] = $this->runWorkflow(
@@ -154,7 +168,7 @@ final class ModuleReviewWorkflowTest extends TestCase
 
         self::assertTrue($result->continuePublishing);
         self::assertSame('full', $state->analyzePreparedSource['coverage']['mode']);
-        self::assertStringContainsString('Preparing module source... done', $display);
+        self::assertStringContainsString('✓ Preparing module source', $display);
         self::assertStringNotContainsString('Choose how much source', $display);
     }
 

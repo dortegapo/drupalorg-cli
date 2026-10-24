@@ -4,17 +4,10 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrgCli\Command\Project;
 
-use Symfony\Component\Console\Helper\ProgressIndicator;
-use Symfony\Component\Console\Output\OutputInterface;
-
 final class ModuleReviewProgressRenderer
 {
-    private ?ProgressIndicator $indicator = null;
-
-    private ?string $activePhase = null;
-
     public function __construct(
-        private readonly OutputInterface $output,
+        private readonly ProjectPublishProgressRenderer $progress,
     ) {
     }
 
@@ -24,188 +17,97 @@ final class ModuleReviewProgressRenderer
     public function handle(string $event, array $context = []): void
     {
         match ($event) {
-            'source_prepared' => $this->writeVerbose('Module source prepared.'),
-            'review_ai_started' => $this->startPhase('Analyzing module', 'Analyzing module with AI...'),
-            'review_ai_tick' => $this->advanceIndicator(),
-            'review_ai_completed' => $this->finishPhase('Analyzing module', 'Module analysis completed.'),
-            'review_ai_failed' => $this->failPhase('Analyzing module', 'Module analysis failed.'),
-            'project_search_started' => $this->startPhase(
-                'Searching Drupal.org',
-                sprintf(
-                    'Drupal.org search started (%d queries).',
-                    $this->integerContext($context, 'total'),
-                ),
-                false,
-            ),
-            'project_search_progress' => $this->writeSearchProgress($context),
-            'project_search_completed' => $this->finishPhase(
-                'Searching Drupal.org',
-                'Drupal.org search completed.',
-            ),
-            'project_search_failed' => $this->failPhase(
-                'Searching Drupal.org',
-                'Drupal.org search failed.',
-            ),
-            'candidate_ranking_completed' => $this->writeCandidateCount($context),
-            'comparison_ai_started' => $this->startPhase(
-                'Comparing candidates',
-                sprintf(
-                    'Comparing %d Drupal.org candidates with AI...',
-                    $this->integerContext($context, 'candidateCount'),
-                ),
-            ),
-            'comparison_ai_tick' => $this->advanceIndicator(),
-            'comparison_ai_completed' => $this->finishPhase(
-                'Comparing candidates',
-                'Candidate comparison completed.',
-            ),
-            'comparison_ai_failed' => $this->failPhase(
-                'Comparing candidates',
-                'Candidate comparison failed.',
-            ),
-            'assessment_completed' => $this->writeVerbose('Contribution assessment completed.'),
-            'core_version_started' => $this->writeVerbose('Checking Drupal core version...'),
-            'core_version_completed' => $this->writeVerbose('Drupal core version check completed.'),
-            'compatibility_started' => $this->startPhase(
-                'Checking compatibility',
-                sprintf(
-                    'Compatibility checks started (%d candidates).',
-                    $this->integerContext($context, 'total'),
-                ),
-                false,
-            ),
-            'compatibility_progress' => $this->writeCompatibilityProgress($context),
-            'compatibility_completed' => $this->finishPhase(
-                'Checking compatibility',
-                'Core compatibility checks completed.',
-            ),
-            'analysis_completed' => $this->writeVerbose('Module review analysis completed.'),
+            'source_prepared' => $this->progress->detail('Module source prepared.'),
+            'review_ai_started' => $this->progress->start(ProjectPublishProgressRenderer::ANALYZING_MODULE),
+            'review_ai_tick' => $this->progress->tick(),
+            'review_ai_completed' => $this->progress->complete(ProjectPublishProgressRenderer::ANALYZING_MODULE),
+            'review_ai_failed' => $this->progress->fail(ProjectPublishProgressRenderer::ANALYZING_MODULE),
+            'project_search_started' => $this->startSearch($context),
+            'project_search_progress' => $this->searchProgress($context),
+            'project_search_completed' => $this->progress->complete(ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG),
+            'project_search_failed' => $this->progress->fail(ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG),
+            'candidate_ranking_completed' => $this->progress->detail(sprintf(
+                'Candidates evaluated: %d',
+                $this->integerContext($context, 'candidateCount'),
+            )),
+            'comparison_ai_started' => $this->progress->start(ProjectPublishProgressRenderer::COMPARING_PROJECTS),
+            'comparison_ai_tick' => $this->progress->tick(),
+            'comparison_ai_completed' => $this->progress->complete(ProjectPublishProgressRenderer::COMPARING_PROJECTS),
+            'comparison_ai_failed' => $this->progress->fail(ProjectPublishProgressRenderer::COMPARING_PROJECTS),
+            'assessment_completed' => $this->progress->detail('Contribution assessment completed.'),
+            'core_version_started' => $this->progress->detail('Checking Drupal core version...'),
+            'core_version_completed' => $this->progress->detail('Drupal core version check completed.'),
+            'compatibility_started' => $this->progress->start(ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY),
+            'compatibility_progress' => $this->compatibilityProgress($context),
+            'compatibility_completed' => $this->progress->complete(ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY),
+            'analysis_completed' => $this->progress->detail('Module review analysis completed.'),
             default => null,
         };
     }
 
-    public function finishOnFailure(): void
+    /**
+     * @param array<string, mixed>|null $result
+     */
+    public function finishOnFailure(?array $result = null): void
     {
-        if ($this->indicator !== null) {
-            $this->finishIndicator('Module analysis failed.');
-            $this->activePhase = null;
-        } elseif ($this->activePhase !== null) {
-            $this->output->writeln($this->activePhase . '... failed');
-            $this->activePhase = null;
-        }
-    }
-
-    private function startPhase(string $normalLabel, string $verboseMessage, bool $useIndicator = true): void
-    {
-        $this->activePhase = $normalLabel;
-        if ($this->output->isVerbose() && $useIndicator) {
-            $this->startIndicator($verboseMessage);
-        } elseif ($this->output->isVerbose()) {
-            $this->output->writeln('<comment>' . $verboseMessage . '</comment>');
-        }
-    }
-
-    private function finishPhase(string $normalLabel, string $verboseMessage): void
-    {
-        if ($this->indicator !== null) {
-            $this->finishIndicator($verboseMessage);
-        } elseif (!$this->output->isVerbose()) {
-            $this->output->writeln($normalLabel . '... done');
-        } else {
-            $this->output->writeln('<comment>' . $verboseMessage . '</comment>');
-        }
-        $this->activePhase = null;
-    }
-
-    private function failPhase(string $normalLabel, string $verboseMessage): void
-    {
-        if ($this->indicator !== null) {
-            $this->finishIndicator($verboseMessage);
-        } else {
-            $this->output->writeln($normalLabel . '... failed');
-        }
-        $this->activePhase = null;
-    }
-
-    private function startIndicator(string $message): void
-    {
-        if ($this->indicator !== null) {
-            $this->finishIndicator('Previous analysis phase completed.');
-        }
-
-        $this->indicator = new ProgressIndicator($this->output);
-        $this->indicator->start($message);
-    }
-
-    private function advanceIndicator(): void
-    {
-        $this->indicator?->advance();
-    }
-
-    private function finishIndicator(string $message): void
-    {
-        if ($this->indicator === null) {
+        $stage = is_array($result['limitations'][0] ?? null)
+            && is_string($result['limitations'][0]['stage'] ?? null)
+            ? $result['limitations'][0]['stage']
+            : null;
+        $phase = match ($stage) {
+            'collection', 'sanitization', 'source_empty' => ProjectPublishProgressRenderer::PREPARING_SOURCE,
+            'review_prompt', 'review_ai', 'review_validation' => ProjectPublishProgressRenderer::ANALYZING_MODULE,
+            'project_search' => ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG,
+            'candidate_ranking', 'comparison_prompt', 'comparison_ai', 'comparison_validation', 'assessment' => ProjectPublishProgressRenderer::COMPARING_PROJECTS,
+            'core_version', 'compatibility' => ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY,
+            default => null,
+        };
+        if ($phase !== null && ($result['complete'] ?? true) !== true) {
+            $this->progress->fail($phase);
             return;
         }
 
-        $this->indicator->finish($message);
-        $this->indicator = null;
+        $this->progress->failActive();
     }
 
     /**
      * @param array<string, mixed> $context
      */
-    private function writeSearchProgress(array $context): void
+    private function startSearch(array $context): void
     {
-        if (!$this->output->isVerbose()) {
-            return;
-        }
-
-        $current = $this->integerContext($context, 'current');
-        $total = $this->integerContext($context, 'total');
-        $term = is_string($context['term'] ?? null) ? $context['term'] : 'unknown';
-        $type = is_string($context['type'] ?? null) ? $context['type'] : 'unknown';
-        $this->output->writeln(sprintf(
-            '<comment>Search %d/%d · %s: %s</comment>',
-            $current,
-            $total,
-            $type,
-            $term,
+        $this->progress->start(ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG);
+        $this->progress->detail(sprintf(
+            'Drupal.org search started (%d queries).',
+            $this->integerContext($context, 'total'),
         ));
     }
 
     /**
      * @param array<string, mixed> $context
      */
-    private function writeCandidateCount(array $context): void
+    private function searchProgress(array $context): void
     {
-        if (!$this->output->isVerbose()) {
-            return;
-        }
-
-        $this->output->writeln(sprintf(
-            '<comment>Candidates evaluated: %d</comment>',
-            $this->integerContext($context, 'candidateCount'),
+        $this->progress->tick();
+        $this->progress->detail(sprintf(
+            'Search %d/%d · %s: %s',
+            $this->integerContext($context, 'current'),
+            $this->integerContext($context, 'total'),
+            $this->stringContext($context, 'type'),
+            $this->stringContext($context, 'term'),
         ));
     }
 
     /**
      * @param array<string, mixed> $context
      */
-    private function writeCompatibilityProgress(array $context): void
+    private function compatibilityProgress(array $context): void
     {
-        if (!$this->output->isVerbose()) {
-            return;
-        }
-
-        $current = $this->integerContext($context, 'current');
-        $total = $this->integerContext($context, 'total');
-        $machineName = is_string($context['machineName'] ?? null) ? $context['machineName'] : 'unknown';
-        $this->output->writeln(sprintf(
-            '<comment>Compatibility %d/%d · %s</comment>',
-            $current,
-            $total,
-            $machineName,
+        $this->progress->tick();
+        $this->progress->detail(sprintf(
+            'Compatibility %d/%d · %s',
+            $this->integerContext($context, 'current'),
+            $this->integerContext($context, 'total'),
+            $this->stringContext($context, 'machineName'),
         ));
     }
 
@@ -217,10 +119,11 @@ final class ModuleReviewProgressRenderer
         return is_int($context[$key] ?? null) ? $context[$key] : 0;
     }
 
-    private function writeVerbose(string $message): void
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function stringContext(array $context, string $key): string
     {
-        if ($this->output->isVerbose()) {
-            $this->output->writeln('<comment>' . $message . '</comment>');
-        }
+        return is_string($context[$key] ?? null) ? $context[$key] : 'unknown';
     }
 }

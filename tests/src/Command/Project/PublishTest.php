@@ -66,7 +66,10 @@ class PublishTest extends TestCase
 
         self::assertSame(0, $exitCode);
         self::assertSame(
-            "\nPROJECT PUBLISH\n"
+            "■ Preparing module...\n"
+            . "✓ Preparing module\n"
+            . "■ Checking Drupal.org project...\n"
+            . "✓ Checking Drupal.org project\n\nPROJECT PUBLISH\n"
             . "----------------------------------------\n\n"
             . "My Module (my_module)\n"
             . "Core ^11 · Drupal.org: PROJECT EXISTS\n\n",
@@ -209,7 +212,7 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
         self::assertStringContainsString('Summary', $tester->getDisplay());
         self::assertStringContainsString('This uses one additional AI request. Module source is not sent again.', $tester->getDisplay());
-        self::assertStringContainsString('Selected source is locally filtered/redacted on a best-effort basis', $tester->getDisplay());
+        self::assertStringNotContainsString('Selected source is locally filtered/redacted on a best-effort basis', $tester->getDisplay());
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
 
@@ -341,7 +344,11 @@ class PublishTest extends TestCase
 
         self::assertSame(0, $exitCode);
         self::assertSame(
-            "DRY RUN\n\n"
+            "■ Preparing module...\n"
+            . "✓ Preparing module\n"
+            . "■ Checking Drupal.org project...\n"
+            . "✓ Checking Drupal.org project\n"
+            . "DRY RUN\n\n"
             . "My Module (my_module)\n"
             . "Core ^11 · Drupal.org: NOT PUBLISHED\n\n"
             . "Plan\n"
@@ -587,6 +594,22 @@ class PublishTest extends TestCase
                         'description' => 'Generated description.',
                         'features' => ['Generated feature'],
                         'integrations' => [],
+                        'categories' => ['Site structure'],
+                        'ecosystem' => [],
+                        'supporting_organizations' => [],
+                        'issues' => [
+                            'components' => ['Code', 'Documentation'],
+                            'submission_guidelines' => '',
+                            'summary_template' => '',
+                            'enable_tracker' => true,
+                        ],
+                        'resources' => [
+                            'homepage' => '',
+                            'changelog' => '',
+                            'demo' => '',
+                            'documentation' => [],
+                            'screenshots' => [],
+                        ],
                     ],
                     'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
                 ];

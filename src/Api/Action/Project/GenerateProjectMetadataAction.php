@@ -35,6 +35,7 @@ final class GenerateProjectMetadataAction implements ActionInterface
      *     reusability: array{status: string}
      * } $review
      * @param 'full'|'partial' $sourceCoverage
+     * @param callable|null $onWait
      */
     public function __invoke(
         array $runtime,
@@ -45,6 +46,7 @@ final class GenerateProjectMetadataAction implements ActionInterface
         array $dependencies,
         array $review,
         string $sourceCoverage,
+        ?callable $onWait = null,
     ): ProjectMetadataResult {
         $prompts = (new ProjectMetadataPromptBuilder())->build([
             'moduleName' => $machineName,
@@ -55,7 +57,7 @@ final class GenerateProjectMetadataAction implements ActionInterface
             'review' => $review,
             'sourceCoverage' => $sourceCoverage,
         ]);
-        $response = $this->callStructuredChat($runtime, $prompts);
+        $response = $this->callStructuredChat($runtime, $prompts, $onWait);
         $metadata = (new ProjectMetadataResultValidator())->validate($response['result']);
 
         return new ProjectMetadataResult(
@@ -71,6 +73,28 @@ final class GenerateProjectMetadataAction implements ActionInterface
             providerId: $response['providerId'],
             modelId: $response['modelId'],
             tokenUsage: $response['tokenUsage'],
+            categories: $metadata['categories'],
+            ecosystems: $metadata['ecosystem'],
+            supportingOrganizations: array_map(
+                static fn(array $organization): array => [
+                    'name' => $organization['name'],
+                    'howTheyHelped' => $organization['how_they_helped'],
+                ],
+                $metadata['supporting_organizations'],
+            ),
+            issues: [
+                'components' => $metadata['issues']['components'],
+                'submissionGuidelines' => $metadata['issues']['submission_guidelines'],
+                'summaryTemplate' => $metadata['issues']['summary_template'],
+                'enableTracker' => $metadata['issues']['enable_tracker'],
+            ],
+            resources: [
+                'homepage' => $metadata['resources']['homepage'],
+                'changelog' => $metadata['resources']['changelog'],
+                'demo' => $metadata['resources']['demo'],
+                'documentation' => $metadata['resources']['documentation'],
+                'screenshots' => $metadata['resources']['screenshots'],
+            ],
         );
     }
 
@@ -89,21 +113,32 @@ final class GenerateProjectMetadataAction implements ActionInterface
      *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
      * }
      */
-    private function callStructuredChat(array $runtime, array $prompts): array
+    private function callStructuredChat(array $runtime, array $prompts, ?callable $onWait = null): array
     {
-        $response = $this->structuredChat !== null
-            ? ($this->structuredChat)(
+        if ($this->structuredChat !== null) {
+            $response = $onWait === null
+                ? ($this->structuredChat)(
+                    $runtime,
+                    $prompts['systemPrompt'],
+                    $prompts['userPrompt'],
+                    $prompts['schema'],
+                )
+                : ($this->structuredChat)(
+                    $runtime,
+                    $prompts['systemPrompt'],
+                    $prompts['userPrompt'],
+                    $prompts['schema'],
+                    $onWait,
+                );
+        } else {
+            $response = (new DrupalAiBridge())->structuredChat(
                 $runtime,
                 $prompts['systemPrompt'],
                 $prompts['userPrompt'],
                 $prompts['schema'],
-            )
-            : (new DrupalAiBridge())->structuredChat(
-                $runtime,
-                $prompts['systemPrompt'],
-                $prompts['userPrompt'],
-                $prompts['schema'],
+                $onWait,
             );
+        }
 
         if (!is_array($response)
             || !is_string($response['providerId'] ?? null)

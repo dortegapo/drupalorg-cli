@@ -13,10 +13,10 @@ final class DrupalOrgProjectFormDataTest extends TestCase
 {
     public function testSerializesTheVersionedFormShape(): void
     {
-        $data = $this->formData(['Security', 'Content']);
+        $data = $this->formData(['Security', 'Content display']);
 
         self::assertSame([
-            'version' => 1,
+            'version' => 2,
             'title' => 'Example module',
             'machineName' => 'example_module',
             'projectType' => 'full',
@@ -24,7 +24,18 @@ final class DrupalOrgProjectFormDataTest extends TestCase
             'descriptionHtml' => '<p>Description.</p>',
             'maintenanceStatus' => 'Actively maintained',
             'developmentStatus' => 'Under active development',
-            'categories' => ['Security', 'Content'],
+            'categories' => ['Security', 'Content display'],
+            'ecosystems' => [],
+            'supportingOrganizations' => [],
+            'issueComponents' => ['Code', 'Documentation', 'Miscellaneous', 'User interface'],
+            'enableIssueTracker' => true,
+            'issueGuidelines' => '',
+            'issueSummaryTemplate' => '',
+            'homepage' => '',
+            'changelog' => '',
+            'demo' => '',
+            'documentation' => [],
+            'screenshots' => [],
         ], $data->toArray());
     }
 

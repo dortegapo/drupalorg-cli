@@ -53,19 +53,29 @@ class Publish extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $modulePath = (string) $input->getArgument('module');
+        $progress = new ProjectPublishProgressRenderer($output);
+        $progress->register([
+            ProjectPublishProgressRenderer::PREPARING_MODULE => 'Preparing module',
+            ProjectPublishProgressRenderer::CHECKING_PROJECT => 'Checking Drupal.org project',
+        ]);
+        $progress->start(ProjectPublishProgressRenderer::PREPARING_MODULE);
 
         try {
             $module = (new ModuleLocator(new ComposerContextLocator()))->locate($modulePath);
             $moduleInfo = (new ModuleInfoReader())->read($module['infoFile'], $module['moduleName']);
         } catch (\RuntimeException $exception) {
+            $progress->fail(ProjectPublishProgressRenderer::PREPARING_MODULE);
             $this->stdErr->writeln(sprintf('<error>%s</error>', $exception->getMessage()));
 
             return self::FAILURE;
         }
+        $progress->complete(ProjectPublishProgressRenderer::PREPARING_MODULE);
 
+        $progress->start(ProjectPublishProgressRenderer::CHECKING_PROJECT);
         try {
             $project = $this->client->getProject($module['moduleName']);
         } catch (\Exception $exception) {
+            $progress->fail(ProjectPublishProgressRenderer::CHECKING_PROJECT);
             $this->stdErr->writeln(sprintf(
                 '<error>Could not check Drupal.org project: %s</error>',
                 $exception->getMessage(),
@@ -73,6 +83,7 @@ class Publish extends Command
 
             return self::FAILURE;
         }
+        $progress->complete(ProjectPublishProgressRenderer::CHECKING_PROJECT);
 
         if ((bool) $input->getOption('dry-run')) {
             $this->writeDryRun($output, $module, $moduleInfo, $project);
@@ -92,7 +103,7 @@ class Publish extends Command
             return self::SUCCESS;
         }
 
-        $review = ($this->reviewWorkflow ?? new ModuleReviewWorkflow($this->client))->run(
+        $review = ($this->reviewWorkflow ?? new ModuleReviewWorkflow($this->client, progress: $progress))->run(
             $input,
             $output,
             $this->questionHelper(),
@@ -103,8 +114,14 @@ class Publish extends Command
             return self::SUCCESS;
         }
 
-        $metadata = $this->generateMetadataIfRequested($input, $output, $module, $moduleInfo, $review);
-        $handoff = ($this->projectCreationHandoff ?? new DrupalOrgProjectCreationHandoff($this->client))->run(
+        $metadata = $this->generateMetadataIfRequested($input, $output, $module, $moduleInfo, $review, $progress);
+        $handoff = ($this->projectCreationHandoff ?? new DrupalOrgProjectCreationHandoff(
+            $this->client,
+            null,
+            null,
+            null,
+            $progress,
+        ))->run(
             $input,
             $output,
             $this->stdErr,
@@ -201,22 +218,29 @@ class Publish extends Command
         array $module,
         array $moduleInfo,
         ModuleReviewWorkflowResult $review,
+        ProjectPublishProgressRenderer $progress,
     ): ?ProjectMetadataResult {
         $analysis = $review->analysisResult;
         if ($review->runtime === null || !is_array($analysis) || !is_array($analysis['review'] ?? null)) {
             return null;
         }
 
+        $output->writeln('');
         $output->writeln('This uses one additional AI request. Module source is not sent again.');
+        $output->writeln('');
         if (!$this->askConfirmation(
             $input,
             $output,
-            'Generate Drupal.org project metadata automatically? [Y/n] ',
+            '<fg=yellow;options=bold>Generate Drupal.org project metadata automatically?</> [Y/n] ',
             true,
         )) {
             return null;
         }
 
+        $progress->register([
+            ProjectPublishProgressRenderer::GENERATING_METADATA => 'Generating project metadata',
+        ]);
+        $progress->start(ProjectPublishProgressRenderer::GENERATING_METADATA);
         try {
             /** @var array{
              *     review: array{
@@ -236,13 +260,15 @@ class Publish extends Command
                 $moduleInfo['dependencies'],
                 $analysis['review'],
                 $review->sourceCoverage,
+                $progress->tickCallback(),
             );
-            (new ProjectMetadataRenderer())->render($output, $metadata);
+            $progress->complete(ProjectPublishProgressRenderer::GENERATING_METADATA);
 
             return $metadata;
         } catch (\Throwable) {
-            $output->writeln('<comment>Could not generate Drupal.org project metadata automatically.</comment>');
-            $output->writeln('<comment>You can enter the project metadata manually on Drupal.org.</comment>');
+            $progress->fail(ProjectPublishProgressRenderer::GENERATING_METADATA);
+            $progress->warning('Could not generate Drupal.org project metadata automatically.');
+            $progress->warning('You can enter the project metadata manually on Drupal.org.');
 
             return null;
         }

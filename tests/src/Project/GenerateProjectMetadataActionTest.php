@@ -26,6 +26,7 @@ final class GenerateProjectMetadataActionTest extends TestCase
                         'description' => 'Provides profile record management for Drupal sites.',
                         'features' => ['Create records', 'List records'],
                         'integrations' => [],
+                        ...self::additionalMetadata(),
                     ],
                     'tokenUsage' => ['input' => 10, 'output' => 5, 'total' => 15],
                 ];
@@ -58,6 +59,7 @@ final class GenerateProjectMetadataActionTest extends TestCase
                     'description' => 'Description.',
                     'features' => [],
                     'integrations' => [],
+                    ...self::additionalMetadata(),
                 ],
                 'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
             ],
@@ -67,6 +69,40 @@ final class GenerateProjectMetadataActionTest extends TestCase
             ['input' => null, 'output' => null, 'total' => null],
             $action(...self::input())->tokenUsage,
         );
+    }
+
+    public function testPassesOptionalWaitCallbackToStructuredChat(): void
+    {
+        $waitCalls = 0;
+        $action = new GenerateProjectMetadataAction(
+            static function (...$arguments) use (&$waitCalls): array {
+                $onWait = $arguments[4] ?? null;
+                if (is_callable($onWait)) {
+                    $onWait();
+                }
+
+                return [
+                    'providerId' => 'provider',
+                    'modelId' => 'model',
+                    'result' => [
+                        'summary' => 'Summary.',
+                        'description' => 'Description.',
+                        'features' => [],
+                        'integrations' => [],
+                        ...self::additionalMetadata(),
+                    ],
+                    'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
+                ];
+            },
+        );
+
+        $input = array_values(self::input());
+        $input[] = static function () use (&$waitCalls): void {
+            ++$waitCalls;
+        };
+        $action(...$input);
+
+        self::assertSame(1, $waitCalls);
     }
 
     public function testPropagatesProviderFailure(): void
@@ -121,6 +157,29 @@ final class GenerateProjectMetadataActionTest extends TestCase
                 'reusability' => ['status' => 'reusable'],
             ],
             'sourceCoverage' => 'full',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private static function additionalMetadata(): array
+    {
+        return [
+            'categories' => [],
+            'ecosystem' => [],
+            'supporting_organizations' => [],
+            'issues' => [
+                'components' => ['Code'],
+                'submission_guidelines' => '',
+                'summary_template' => '',
+                'enable_tracker' => true,
+            ],
+            'resources' => [
+                'homepage' => '',
+                'changelog' => '',
+                'demo' => '',
+                'documentation' => [],
+                'screenshots' => [],
+            ],
         ];
     }
 }

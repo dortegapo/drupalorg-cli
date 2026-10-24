@@ -12,6 +12,7 @@ use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ProjectCreationHandoffResult;
+use mglaman\DrupalOrgCli\Command\Project\ProjectPublishProgressRenderer;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Helper\HelperSet;
@@ -165,9 +166,51 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
     }
 
-    public function testPrefillsFormWithMetadataAndMaintainerSelections(): void
+    public function testProjectNotFoundCompletesVerificationPhaseWithoutFailing(): void
+    {
+        $output = new BufferedOutput();
+        $progress = new ProjectPublishProgressRenderer($output);
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                json_encode(['list' => []], JSON_THROW_ON_ERROR),
+            )),
+            null,
+            null,
+            null,
+            $progress,
+        );
+        $input = new ArrayInput(
+            ['--no-browser' => true],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("\ncancel\n"));
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            $output,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        $display = $output->fetch();
+        self::assertStringContainsString('Project not found yet.', $display);
+        self::assertStringContainsString('✓ Verifying Drupal.org project', $display);
+        self::assertStringNotContainsString('✗ Verifying Drupal.org project', $display);
+    }
+
+    public function testPrefillsFormWithMetadataAndDefaultStatuses(): void
     {
         $opened = [];
+        $output = new BufferedOutput();
+        $progress = new ProjectPublishProgressRenderer($output);
         $handoff = new DrupalOrgProjectCreationHandoff(
             $this->client(new Response(
                 200,
@@ -181,15 +224,16 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
+            null,
+            null,
+            $progress,
         );
         $input = new ArrayInput(
             [],
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n4\n3\n\n"));
-        $output = new BufferedOutput();
-
+        $input->setStream($this->inputStream("y\n\n"));
         $result = $handoff->run(
             $input,
             $output,
@@ -216,16 +260,38 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         );
         self::assertIsString($json);
         $payload = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        self::assertSame(1, $payload['version']);
+        self::assertSame(2, $payload['version']);
         self::assertSame('Example', $payload['title']);
         self::assertSame('example', $payload['machineName']);
         self::assertSame('full', $payload['projectType']);
         self::assertSame('A short summary.', $payload['summary']);
         self::assertStringContainsString('<p>Generated description.</p>', $payload['descriptionHtml']);
-        self::assertSame('Seeking new maintainer', $payload['maintenanceStatus']);
-        self::assertSame('No further development', $payload['developmentStatus']);
-        self::assertSame([], $payload['categories']);
-        self::assertStringContainsString('Review the prefilled form in your browser and press Save.', $output->fetch());
+        self::assertSame('Actively maintained', $payload['maintenanceStatus']);
+        self::assertSame('Under active development', $payload['developmentStatus']);
+        self::assertSame(['Site structure'], $payload['categories']);
+        self::assertSame(['Views'], $payload['ecosystems']);
+        self::assertSame([
+            ['name' => 'Example organization', 'howTheyHelped' => 'Provides testing.'],
+        ], $payload['supportingOrganizations']);
+        self::assertSame(['Code', 'Documentation'], $payload['issueComponents']);
+        self::assertTrue($payload['enableIssueTracker']);
+        self::assertSame('https://example.org', $payload['homepage']);
+        self::assertSame([
+            ['title' => 'Documentation', 'url' => 'https://example.org/docs'],
+        ], $payload['documentation']);
+        $display = $output->fetch();
+        self::assertStringContainsString('Review the prefilled form in your browser and press Save.', $display);
+        self::assertStringContainsString('✓ Preparing Drupal.org project form', $display);
+        self::assertStringNotContainsString('Maintenance status', $display);
+        self::assertStringNotContainsString('Development status', $display);
+        self::assertLessThan(
+            strpos($display, 'DRUPAL.ORG METADATA'),
+            strpos($display, 'CREATE PROJECT ON DRUPAL.ORG'),
+        );
+        self::assertGreaterThan(
+            strpos($display, 'DRUPAL.ORG METADATA'),
+            strpos($display, '■ Preparing Drupal.org project form...'),
+        );
     }
 
     public function testDecliningPrefillKeepsTheManualHandoff(): void
@@ -274,7 +340,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n\n\nopen\ncancel\n"));
+        $input->setStream($this->inputStream("y\nopen\ncancel\n"));
 
         $result = $handoff->run(
             $input,
@@ -343,7 +409,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n\n\ncancel\n"));
+        $input->setStream($this->inputStream("y\ncancel\n"));
         $output = new BufferedOutput();
 
         $result = $handoff->run(
@@ -422,6 +488,26 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             'provider',
             'model',
             ['input' => null, 'output' => null, 'total' => null],
+            categories: ['Site structure'],
+            ecosystems: ['Views'],
+            supportingOrganizations: [
+                ['name' => 'Example organization', 'howTheyHelped' => 'Provides testing.'],
+            ],
+            issues: [
+                'components' => ['Code', 'Documentation'],
+                'submissionGuidelines' => '',
+                'summaryTemplate' => '',
+                'enableTracker' => true,
+            ],
+            resources: [
+                'homepage' => 'https://example.org',
+                'changelog' => '',
+                'demo' => '',
+                'documentation' => [
+                    ['title' => 'Documentation', 'url' => 'https://example.org/docs'],
+                ],
+                'screenshots' => [],
+            ],
         );
     }
 }
