@@ -29,7 +29,7 @@ trait BrowserTrait
                 return;
             }
         } else {
-            $stdErr->writeln("<error>Browser not found: $browser</error>");
+            $stdErr->writeln('<error>Could not open a browser automatically.</error>');
         }
         $stdOut->writeln($url);
     }

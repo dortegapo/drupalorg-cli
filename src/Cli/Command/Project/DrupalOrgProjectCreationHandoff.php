@@ -6,18 +6,22 @@ namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Entity\Project;
+use mglaman\DrupalOrg\Project\DrupalOrgProjectDescriptionBuilder;
+use mglaman\DrupalOrg\Project\DrupalOrgProjectFormData;
+use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\BrowserTrait;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Console\Question\Question;
 
 final class DrupalOrgProjectCreationHandoff
 {
     use BrowserTrait;
 
-    public const PROJECT_CREATION_URL = 'https://www.drupal.org/node/add/project-module';
+    public const PROJECT_CREATION_URL = DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL;
 
     /**
      * @param \Closure|null $openUrl
@@ -25,6 +29,8 @@ final class DrupalOrgProjectCreationHandoff
     public function __construct(
         private readonly Client $client,
         private readonly ?\Closure $openUrl = null,
+        private readonly ?DrupalOrgProjectDescriptionBuilder $descriptionBuilder = null,
+        private readonly ?DrupalOrgProjectPrefillUrlBuilder $prefillUrlBuilder = null,
     ) {
     }
 
@@ -56,9 +62,21 @@ final class DrupalOrgProjectCreationHandoff
             $output->writeln('Use the generated metadata above when completing the form.');
         }
 
-        $this->openProjectCreationPage($input, $output, $errorOutput);
+        $prefillUrl = $this->preparePrefillUrl($input, $output, $helper, $metadata);
+        if ($prefillUrl !== null) {
+            $output->writeln('');
+            $output->writeln('Browser prefill requires the drupalorg-cli browser companion.');
+            $output->writeln('If the form is not prefilled, use the generated metadata above.');
+        }
+
+        $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
         $output->writeln('');
-        $output->writeln('After creating the project:');
+        if ($prefillUrl !== null) {
+            $output->writeln('Review the prefilled form in your browser and press Save.');
+            $output->writeln('After saving:');
+        } else {
+            $output->writeln('After creating the project:');
+        }
         $action = $this->askProjectCreationAction(
             $input,
             $output,
@@ -68,7 +86,7 @@ final class DrupalOrgProjectCreationHandoff
 
         while ($action !== 'cancel') {
             if ($action === 'open') {
-                $this->openProjectCreationPage($input, $output, $errorOutput);
+                $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
             } else {
                 try {
                     $project = $this->client->getProject($machineName);
@@ -107,6 +125,7 @@ final class DrupalOrgProjectCreationHandoff
         InputInterface $input,
         OutputInterface $output,
         OutputInterface $errorOutput,
+        ?string $url = null,
     ): void {
         if ((bool) $input->getOption('no-browser')) {
             $output->writeln('Open this page to create the project:');
@@ -114,13 +133,106 @@ final class DrupalOrgProjectCreationHandoff
             return;
         }
 
-        $output->writeln('Opening Drupal.org project creation page...');
+        $output->writeln($url === null
+            ? 'Opening Drupal.org project creation page...'
+            : 'Opening Drupal.org project creation page with generated metadata...');
         if ($this->openUrl !== null) {
-            ($this->openUrl)(self::PROJECT_CREATION_URL, $errorOutput, $output);
+            ($this->openUrl)($url ?? self::PROJECT_CREATION_URL, $errorOutput, $output);
             return;
         }
 
-        $this->openUrl(self::PROJECT_CREATION_URL, $errorOutput, $output);
+        $this->openUrl($url ?? self::PROJECT_CREATION_URL, $errorOutput, $output);
+    }
+
+    private function preparePrefillUrl(
+        InputInterface $input,
+        OutputInterface $output,
+        QuestionHelper $helper,
+        ?ProjectMetadataResult $metadata,
+    ): ?string {
+        if ($metadata === null
+            || !$input->hasOption('no-browser')
+            || (bool) $input->getOption('no-browser')
+            || !(bool) $helper->ask($input, $output, new ConfirmationQuestion(
+                'Prefill the Drupal.org project form automatically? [Y/n] ',
+                true,
+            ))) {
+            return null;
+        }
+
+        if (mb_strlen($metadata->summary, 'UTF-8') > 200) {
+            $output->writeln('<comment>Generated summary exceeds 200 characters; it will not be truncated.</comment>');
+        }
+
+        $maintenanceStatus = $this->askStatus(
+            $input,
+            $output,
+            $helper,
+            'Maintenance status',
+            DrupalOrgProjectFormData::MAINTENANCE_STATUSES,
+        );
+        $developmentStatus = $this->askStatus(
+            $input,
+            $output,
+            $helper,
+            'Development status',
+            DrupalOrgProjectFormData::DEVELOPMENT_STATUSES,
+        );
+        $descriptionHtml = ($this->descriptionBuilder ?? new DrupalOrgProjectDescriptionBuilder())->build($metadata);
+        $formData = new DrupalOrgProjectFormData(
+            title: $metadata->title,
+            machineName: $metadata->machineName,
+            projectType: DrupalOrgProjectFormData::PROJECT_TYPE_FULL,
+            summary: $metadata->summary,
+            descriptionHtml: $descriptionHtml,
+            maintenanceStatus: $maintenanceStatus,
+            developmentStatus: $developmentStatus,
+            categories: [],
+        );
+
+        try {
+            return ($this->prefillUrlBuilder ?? new DrupalOrgProjectPrefillUrlBuilder())->build($formData);
+        } catch (\LengthException) {
+            $output->writeln('<comment>Browser prefill is unavailable because the generated metadata is too large.</comment>');
+
+            return null;
+        }
+    }
+
+    /**
+     * @param list<string> $choices
+     */
+    private function askStatus(
+        InputInterface $input,
+        OutputInterface $output,
+        QuestionHelper $helper,
+        string $label,
+        array $choices,
+    ): string {
+        $options = [];
+        $choiceValues = [];
+        foreach ($choices as $index => $choice) {
+            $number = (string) ($index + 1);
+            $options[] = sprintf('  %s. %s', $number, $choice);
+            $choiceValues[$number] = $choice;
+        }
+
+        $question = new Question(
+            $label . "\n\n"
+            . implode("\n", $options)
+            . "\n\nSelection [1]: ",
+            '1',
+        );
+        $question->setValidator(static function (mixed $selected) use ($choiceValues): string {
+            $selected = (string) $selected;
+            if (!array_key_exists($selected, $choiceValues)) {
+                throw new \InvalidArgumentException('Invalid selection. Choose one of the displayed options.');
+            }
+
+            return $choiceValues[$selected];
+        });
+
+        return (string) $helper->ask($input, $output, $question);
     }
 
     private function askProjectCreationAction(

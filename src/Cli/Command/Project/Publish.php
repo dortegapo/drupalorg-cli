@@ -207,6 +207,7 @@ class Publish extends Command
             return null;
         }
 
+        $output->writeln('This uses one additional AI request. Module source is not sent again.');
         if (!$this->askConfirmation(
             $input,
             $output,

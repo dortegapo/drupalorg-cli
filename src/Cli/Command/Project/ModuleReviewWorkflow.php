@@ -195,6 +195,8 @@ final class ModuleReviewWorkflow
         $output->writeln('');
         $output->writeln('The review is advisory only and may consume AI-provider tokens.');
         $output->writeln(sprintf('Provider: %s / %s', $aiContext['providerId'], $aiContext['modelId']));
+        $output->writeln('Selected source is locally filtered/redacted on a best-effort basis');
+        $output->writeln('before being sent to this AI provider. Drupal.org search does not receive it.');
         if ($output->isVerbose()) {
             $output->writeln('');
             $output->writeln('<comment>Review details</comment>');

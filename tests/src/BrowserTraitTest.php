@@ -88,6 +88,18 @@ class BrowserTraitTest extends TestCase
         self::assertSame("https://example.test/device\n", $stdOut->fetch());
     }
 
+    public function testOpenUrlReportsWhenNoBrowserIsAvailable(): void
+    {
+        $browser = new BrowserTraitTestDouble([], false);
+        $stdErr = new BufferedOutput();
+        $stdOut = new BufferedOutput();
+
+        $browser->open('https://example.test/project', $stdErr, $stdOut);
+
+        self::assertSame("Could not open a browser automatically.\n", $stdErr->fetch());
+        self::assertSame("https://example.test/project\n", $stdOut->fetch());
+    }
+
     private function createScript(string $contents): string
     {
         $script = sys_get_temp_dir() . '/drupalorg-browser-' . uniqid() . '.php';

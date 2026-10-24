@@ -201,13 +201,15 @@ class PublishTest extends TestCase
             self::availableAiContext(),
             self::characterizedReviewResult(),
         );
-        $tester->setInputs(['y', 'y', 'y', 'cancel']);
+        $tester->setInputs(['y', 'y', 'y', 'n', 'cancel']);
 
         self::assertSame(0, $tester->execute(['module' => 'my_module']));
         self::assertSame(1, $command->metadataCalls);
         self::assertStringContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
         self::assertStringContainsString('Summary', $tester->getDisplay());
+        self::assertStringContainsString('This uses one additional AI request. Module source is not sent again.', $tester->getDisplay());
+        self::assertStringContainsString('Selected source is locally filtered/redacted on a best-effort basis', $tester->getDisplay());
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
 

@@ -88,11 +88,14 @@ final class ModuleReviewProgressRendererTest extends TestCase
             'total' => 1,
             'machineName' => 'token',
         ]);
+        $renderer->handle('project_search_completed');
+        $renderer->handle('compatibility_completed');
 
         rewind($stream);
         $display = stream_get_contents($stream);
         self::assertIsString($display);
         self::assertStringContainsString('Search 1/2 · core: token', $display);
         self::assertStringContainsString('Compatibility 1/1 · token', $display);
+        self::assertStringNotContainsString("\r", $display);
     }
 }
