@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
@@ -94,6 +96,8 @@ class Publish extends Command
         $this->writeProjectHeader($output, $module, $moduleInfo, $project);
 
         if ($project !== null) {
+            $output->writeln('Drupal.org project already exists.');
+            $output->writeln('<comment>Repository and release publication are not implemented yet.</comment>');
             return self::SUCCESS;
         }
 
@@ -163,22 +167,11 @@ class Publish extends Command
                 'Optionally generate Drupal.org project metadata from the AI module characterization.',
                 'Open the Drupal.org project creation page for manual project creation.',
                 'Verify that the Drupal.org project exists.',
-                'Wait for the Drupal.org Git repository to become available.',
-                'Prepare an isolated temporary workspace.',
-                'Copy the module into the temporary workspace.',
-                'Initialize the publication Git repository.',
-                'Create the initial commit.',
-                'Configure the Drupal.org Git remote.',
-                'Push the initial branch.',
+                'Stop after the project creation handoff and verification.',
             ]
             : [
                 sprintf('Use the existing Drupal.org project "%s".', $module['moduleName']),
-                'Prepare an isolated temporary workspace.',
-                'Copy the module into the temporary workspace.',
-                'Initialize the publication Git repository.',
-                'Create the initial commit.',
-                'Configure the Drupal.org Git remote.',
-                'Push the initial branch.',
+                'Report that repository and release publication are not implemented.',
             ];
 
         $plannedActions = $output->isVerbose()
@@ -189,12 +182,10 @@ class Publish extends Command
                     'Optional Drupal.org metadata generation',
                     'Manual Drupal.org project creation',
                     'Verify project',
-                    'Wait for repository',
-                    'Prepare and publish Git repository',
+                    'Stop after project verification',
                 ]
                 : [
-                    'Prepare publication workspace',
-                    'Publish Git repository',
+                    'Report unsupported repository and release stages',
                 ]);
 
         foreach ($plannedActions as $index => $plannedAction) {
@@ -265,7 +256,7 @@ class Publish extends Command
             $progress->complete(ProjectPublishProgressRenderer::GENERATING_METADATA);
 
             return $metadata;
-        } catch (\Throwable) {
+        } catch (\Exception) {
             $progress->fail(ProjectPublishProgressRenderer::GENERATING_METADATA);
             $progress->warning('Could not generate Drupal.org project metadata automatically.');
             $progress->warning('You can enter the project metadata manually on Drupal.org.');

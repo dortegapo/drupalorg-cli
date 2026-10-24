@@ -8,7 +8,7 @@ final class ModuleReviewAnalyzer
 {
     private const SEARCH_LIMIT = 20;
 
-    private const MAXIMUM_RANKED_CANDIDATES = 100;
+    private const MAXIMUM_COMPARISON_CANDIDATES = 20;
 
     /**
      * @var array<string, string>
@@ -287,7 +287,7 @@ final class ModuleReviewAnalyzer
             $candidates = $this->candidateRanker->rank(
                 $primaryRankings,
                 $secondaryRankings,
-                self::MAXIMUM_RANKED_CANDIDATES,
+                self::MAXIMUM_COMPARISON_CANDIDATES,
             );
         } catch (\RuntimeException) {
             return $this->incomplete(
@@ -304,6 +304,27 @@ final class ModuleReviewAnalyzer
         $this->emitProgress($progress, 'candidate_ranking_completed', [
             'candidateCount' => count($candidates),
         ]);
+
+        if ($candidates === []) {
+            $comparison = [
+                'verdict' => 'no_clear_duplicate',
+                'confidence' => 1.0,
+                'summary' => 'No Drupal.org projects matched the generated search terms.',
+                'candidates' => [],
+            ];
+            $assessment = $this->assessmentResolver->resolve($review, $comparison);
+
+            return $this->completeWithoutCandidates(
+                $module,
+                $source,
+                $review,
+                $searches,
+                $comparison,
+                $assessment,
+                $ai,
+                $progress,
+            );
+        }
 
         try {
             $comparisonPrompt = $this->comparisonPromptBuilder->build($review, $candidates);
@@ -405,7 +426,7 @@ final class ModuleReviewAnalyzer
                         'message' => self::LIMITATION_MESSAGES['core_version'],
                     ];
                 }
-            } catch (\Throwable) {
+            } catch (\Exception) {
                 $compatibilityLimitations[] = [
                     'stage' => 'core_version',
                     'message' => self::LIMITATION_MESSAGES['core_version'],
@@ -429,7 +450,7 @@ final class ModuleReviewAnalyzer
                         $candidateMachineName,
                         $core,
                     );
-                } catch (\Throwable) {
+                } catch (\Exception) {
                     $compatibility[$candidateMachineName] = $this->compatibilityResolver->unknown($core);
                     $compatibilityLimitations[] = [
                         'stage' => 'compatibility',
@@ -464,6 +485,55 @@ final class ModuleReviewAnalyzer
             'ai' => $ai,
             'limitations' => $compatibilityLimitations,
         ];
+        $this->emitProgress($progress, 'analysis_completed', [
+            'complete' => true,
+        ]);
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $module
+     * @param array<string, mixed> $source
+     * @param array<string, mixed> $review
+     * @param list<array<string, mixed>> $searches
+     * @param array<string, mixed> $comparison
+     * @param array<string, mixed> $assessment
+     * @param array<string, mixed> $ai
+     *
+     * @return array<string, mixed>
+     */
+    private function completeWithoutCandidates(
+        array $module,
+        array $source,
+        array $review,
+        array $searches,
+        array $comparison,
+        array $assessment,
+        array $ai,
+        ?callable $progress,
+    ): array {
+        $result = [
+            'complete' => true,
+            'module' => $module,
+            'source' => $source,
+            'review' => $review,
+            'searches' => $searches,
+            'candidates' => [],
+            'discovery' => $this->discoveryMetadata($searches, []),
+            'comparison' => $comparison,
+            'assessment' => $assessment,
+            'core' => [
+                'runtimeVersion' => null,
+                'targetMajor' => null,
+            ],
+            'candidateCompatibility' => [],
+            'ai' => $ai,
+            'limitations' => [],
+        ];
+        $this->emitProgress($progress, 'assessment_completed', [
+            'status' => $assessment['status'],
+        ]);
         $this->emitProgress($progress, 'analysis_completed', [
             'complete' => true,
         ]);

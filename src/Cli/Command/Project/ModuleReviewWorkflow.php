@@ -162,7 +162,7 @@ final class ModuleReviewWorkflow
         try {
             $pdfPath = $this->writeModuleReviewPdf($result, $module, $moduleInfo);
             $progress->complete(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
-        } catch (\Throwable) {
+        } catch (\Exception) {
             $progress->fail(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
             $progress->warning('PDF report could not be generated.');
             $progress->warning('Review results are still available above.');
@@ -217,6 +217,8 @@ final class ModuleReviewWorkflow
         $output->writeln('');
         $output->writeln('The review is advisory only and may consume AI-provider tokens.');
         $output->writeln(sprintf('Provider: %s / %s', $aiContext['providerId'], $aiContext['modelId']));
+        $output->writeln('Selected module source is sent to the configured AI provider.');
+        $output->writeln('Local secret redaction is best effort and cannot guarantee complete removal.');
         if ($output->isVerbose()) {
             $output->writeln('');
             $output->writeln('<comment>Review details</comment>');
