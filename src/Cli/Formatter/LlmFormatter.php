@@ -135,6 +135,15 @@ XML;
         foreach ($result->integrations as $integration) {
             $integrations .= '    <integration>' . $this->xmlEscape($integration) . "</integration>\n";
         }
+        $formMetadata = $this->cdataWrap(json_encode([
+            'maintenance_status' => 'Actively maintained',
+            'development_status' => 'Under active development',
+            'categories' => $result->categories,
+            'ecosystems' => $result->ecosystems,
+            'supporting_organizations' => $result->supportingOrganizations,
+            'issues' => $result->issues,
+            'resources' => $result->resources,
+        ], JSON_THROW_ON_ERROR));
 
         return <<<XML
 <project_metadata>
@@ -150,6 +159,7 @@ XML;
 {$features}  </features>
   <integrations>
 {$integrations}  </integrations>
+  <drupal_org_form_metadata>{$formMetadata}</drupal_org_form_metadata>
 </project_metadata>
 XML;
     }

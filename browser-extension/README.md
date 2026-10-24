@@ -51,8 +51,12 @@ is not used as an end-user installation shortcut.
 Safari packaging and store publication are not available yet. The shared
 source and form contract can be reused when a Safari companion is published.
 
-The payload is carried in the URL fragment, which is removed from the address
-bar and browser history as soon as the companion reads it. The fragment is not
-sent in the HTTP request to Drupal.org.
+The payload is carried in the URL fragment. After validating it and finding
+the creation form, the companion removes the fragment before it begins filling
+fields. The fragment is not sent in the HTTP request to Drupal.org.
+
+The companion fills only rows that the Drupal.org form already exposes. It
+does not click AJAX "Add another item" controls, so extra multi-value rows
+must be added manually when the form does not provide enough fields.
 
 The extension uses no Node.js, npm, bundler, or external runtime.

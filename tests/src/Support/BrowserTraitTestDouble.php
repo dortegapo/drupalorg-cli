@@ -31,9 +31,13 @@ final class BrowserTraitTestDouble
         return $this->getDefaultBrowser();
     }
 
-    public function open(string $url, OutputInterface $stdErr, OutputInterface $stdOut): void
-    {
-        $this->openUrl($url, $stdErr, $stdOut);
+    public function open(
+        string $url,
+        OutputInterface $stdErr,
+        OutputInterface $stdOut,
+        ?string $displayUrl = null,
+    ): bool {
+        return $this->openUrl($url, $stdErr, $stdOut, $displayUrl);
     }
 
     protected function isWindowsSubsystemForLinux(): bool

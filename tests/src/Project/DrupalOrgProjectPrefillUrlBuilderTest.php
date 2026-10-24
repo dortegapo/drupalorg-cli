@@ -53,6 +53,41 @@ final class DrupalOrgProjectPrefillUrlBuilderTest extends TestCase
         (new DrupalOrgProjectPrefillUrlBuilder())->build($data);
     }
 
+    public function testFormDataMatchesTheBrowserCompanionPayloadFixture(): void
+    {
+        $contents = file_get_contents(
+            dirname(__DIR__, 3) . '/browser-extension/test/fixtures/payload-v2.json',
+        );
+        self::assertIsString($contents);
+        $fixture = json_decode($contents, true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($fixture);
+
+        $data = new DrupalOrgProjectFormData(
+            $fixture['title'],
+            $fixture['machineName'],
+            $fixture['projectType'],
+            $fixture['summary'],
+            $fixture['descriptionHtml'],
+            $fixture['maintenanceStatus'],
+            $fixture['developmentStatus'],
+            $fixture['categories'],
+            $fixture['version'],
+            $fixture['ecosystems'],
+            $fixture['supportingOrganizations'],
+            $fixture['issueComponents'],
+            $fixture['enableIssueTracker'],
+            $fixture['issueGuidelines'],
+            $fixture['issueSummaryTemplate'],
+            $fixture['homepage'],
+            $fixture['changelog'],
+            $fixture['demo'],
+            $fixture['documentation'],
+            $fixture['screenshots'],
+        );
+
+        self::assertSame($fixture, $data->toArray());
+    }
+
     private function formData(): DrupalOrgProjectFormData
     {
         return new DrupalOrgProjectFormData(

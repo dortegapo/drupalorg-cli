@@ -100,6 +100,23 @@ class BrowserTraitTest extends TestCase
         self::assertSame("https://example.test/project\n", $stdOut->fetch());
     }
 
+    public function testOpenUrlCanDisplayASanitizedUrl(): void
+    {
+        $browser = new BrowserTraitTestDouble(['xdg-open'], false, false);
+        $stdErr = new BufferedOutput();
+        $stdOut = new BufferedOutput();
+
+        $browser->open(
+            'https://example.test/project#sensitive-payload',
+            $stdErr,
+            $stdOut,
+            'https://example.test/project',
+        );
+
+        self::assertStringNotContainsString('sensitive-payload', $stdErr->fetch());
+        self::assertSame("https://example.test/project\n", $stdOut->fetch());
+    }
+
     private function createScript(string $contents): string
     {
         $script = sys_get_temp_dir() . '/drupalorg-browser-' . uniqid() . '.php';

@@ -290,8 +290,12 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         $display = $output->fetch();
         self::assertStringContainsString('Review the prefilled form in your browser and press Save.', $display);
         self::assertStringContainsString('✓ Preparing Drupal.org project form', $display);
-        self::assertStringNotContainsString('Maintenance status', $display);
-        self::assertStringNotContainsString('Development status', $display);
+        self::assertStringContainsString('Maintenance status', $display);
+        self::assertStringContainsString('Development status', $display);
+        self::assertStringContainsString('Issue tracker: enabled', $display);
+        self::assertStringContainsString('Submission guidelines:', $display);
+        self::assertStringContainsString('Summary template:', $display);
+        self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $display);
         self::assertLessThan(
             strpos($display, 'DRUPAL.ORG METADATA'),
             strpos($display, 'CREATE PROJECT ON DRUPAL.ORG'),

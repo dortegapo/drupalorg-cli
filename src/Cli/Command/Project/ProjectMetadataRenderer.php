@@ -38,6 +38,10 @@ final class ProjectMetadataRenderer
         $output->writeln('');
         $this->writeSection($output, 'Module categories');
         $this->writeListOrEmpty($output, $metadata->categories);
+        $this->writeSection($output, 'Maintenance status');
+        $output->writeln('Actively maintained');
+        $this->writeSection($output, 'Development status');
+        $output->writeln('Under active development');
         $this->writeSection($output, 'Ecosystem');
         $this->writeListOrEmpty($output, $metadata->ecosystems);
         $this->writeSection($output, 'Supporting organizations');
@@ -54,8 +58,15 @@ final class ProjectMetadataRenderer
         }
         $this->writeSection($output, 'Issues');
         $issues = $metadata->issues;
+        $output->writeln('Components:');
         $this->writeListOrEmpty($output, $issues['components']);
         $output->writeln('Issue tracker: ' . ($issues['enableTracker'] ? 'enabled' : 'disabled'));
+        $output->writeln('Submission guidelines: ' . ($issues['submissionGuidelines'] !== ''
+            ? $issues['submissionGuidelines']
+            : 'None declared/generated.'));
+        $output->writeln('Summary template: ' . ($issues['summaryTemplate'] !== ''
+            ? $issues['summaryTemplate']
+            : 'None declared/generated.'));
         $this->writeSection($output, 'Resources');
         $resources = $metadata->resources;
         $resourceUrls = array_filter([

@@ -82,6 +82,53 @@ Use the 'list' command to see available commands.
 drupalorg list
 ```
 
+## Project publication preparation
+
+`project:publish <module>` prepares a Drupal module for a manual Drupal.org
+project creation workflow. It accepts either an explicit module directory or a
+machine name resolvable from the current Drupal/Composer project.
+
+```bash
+drupalorg project:publish ./web/modules/custom/example_module
+drupalorg project:publish example_module
+```
+
+The command currently performs module discovery, `.info.yml` validation,
+read-only Drupal.org lookup, optional AI-assisted contribution review, optional
+metadata generation, and a manual Drupal.org project-creation handoff. It does
+not create a Git repository, push code, create releases, or verify Composer
+packages.
+
+- `--dry-run` shows only the capabilities available today; it does not claim
+  that Git or release stages are implemented.
+- `--no-browser` prints the normal Drupal.org creation URL instead of opening a
+  browser and never asks to configure the companion.
+- When Drupal AI is available, the optional review asks before sending selected
+  module source to the configured provider. Source selection has a budget, and
+  local redaction is best effort rather than a guarantee that every secret is
+  detected. A PDF report is generated locally when the review runs.
+- The generated Drupal.org metadata is advisory. Review it and save the form
+  yourself; the CLI never submits the form.
+
+### Browser companion
+
+The optional browser companion can prefill the Drupal.org project form from the
+generated metadata. `project:publish` offers first-run setup only when browser
+use is enabled. You can also run:
+
+```bash
+drupalorg browser:setup
+drupalorg browser:setup --reset
+```
+
+Chrome/Chromium-compatible browsers, Microsoft Edge, Firefox, and Safari are
+offered where the operating system supports them. The CLI falls back to manual
+form completion when a store distribution is unavailable, the browser cannot
+be opened, the companion is not installed, or the process is headless. The
+companion never reads cookies, passwords, history, or sessions, and never
+submits or saves the Drupal.org form. Its development installation notes are in
+[`browser-extension/README.md`](browser-extension/README.md).
+
 ## Commands
 
 ````
@@ -114,6 +161,7 @@ Available commands:
   mr:status                 Show the pipeline status for a merge request.
  project
   project:contains          Lists the branches and tags that contain a commit.
+  project:publish             Prepare a module for manual Drupal.org project creation.
   project:issues      [pi]  Lists issues for a project.
   project:kanban            Opens project kanban
   project:link              Opens project page

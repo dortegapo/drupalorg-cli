@@ -155,15 +155,16 @@ final class DrupalOrgProjectCreationHandoff
             return;
         }
 
+        $projectCreationUrl = $url ?? self::PROJECT_CREATION_URL;
         $output->writeln($url === null
             ? 'Opening Drupal.org project creation page...'
             : 'Opening Drupal.org project creation page with generated metadata...');
         if ($this->openUrl !== null) {
-            ($this->openUrl)($url ?? self::PROJECT_CREATION_URL, $errorOutput, $output);
+            ($this->openUrl)($projectCreationUrl, $errorOutput, $output);
             return;
         }
 
-        $this->openUrl($url ?? self::PROJECT_CREATION_URL, $errorOutput, $output);
+        $this->openUrl($projectCreationUrl, $errorOutput, $output, self::PROJECT_CREATION_URL);
     }
 
     private function preparePrefillUrl(
@@ -253,13 +254,22 @@ final class DrupalOrgProjectCreationHandoff
         } catch (\LengthException) {
             $this->progress?->fail(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
             $output->writeln('<comment>Browser prefill is unavailable because the generated metadata is too large.</comment>');
+            $this->writeManualPrefillFallback($output);
 
             return null;
-        } catch (\Throwable $exception) {
+        } catch (\Exception $exception) {
             $this->progress?->fail(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
+            $this->progress?->detail('Browser prefill preparation failed: ' . $exception->getMessage());
+            $this->writeManualPrefillFallback($output);
 
-            throw $exception;
+            return null;
         }
+    }
+
+    private function writeManualPrefillFallback(OutputInterface $output): void
+    {
+        $output->writeln('<comment>Automatic form filling is unavailable.</comment>');
+        $output->writeln('<comment>Continuing with manual Drupal.org project creation.</comment>');
     }
 
     private function askProjectCreationAction(
