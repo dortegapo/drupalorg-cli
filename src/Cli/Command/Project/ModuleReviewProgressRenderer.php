@@ -35,6 +35,7 @@ final class ModuleReviewProgressRenderer
                     'Drupal.org search started (%d queries).',
                     $this->integerContext($context, 'total'),
                 ),
+                false,
             ),
             'project_search_progress' => $this->writeSearchProgress($context),
             'project_search_completed' => $this->finishPhase(
@@ -71,6 +72,7 @@ final class ModuleReviewProgressRenderer
                     'Compatibility checks started (%d candidates).',
                     $this->integerContext($context, 'total'),
                 ),
+                false,
             ),
             'compatibility_progress' => $this->writeCompatibilityProgress($context),
             'compatibility_completed' => $this->finishPhase(
@@ -93,11 +95,13 @@ final class ModuleReviewProgressRenderer
         }
     }
 
-    private function startPhase(string $normalLabel, string $verboseMessage): void
+    private function startPhase(string $normalLabel, string $verboseMessage, bool $useIndicator = true): void
     {
         $this->activePhase = $normalLabel;
-        if ($this->output->isVerbose()) {
+        if ($this->output->isVerbose() && $useIndicator) {
             $this->startIndicator($verboseMessage);
+        } elseif ($this->output->isVerbose()) {
+            $this->output->writeln('<comment>' . $verboseMessage . '</comment>');
         }
     }
 

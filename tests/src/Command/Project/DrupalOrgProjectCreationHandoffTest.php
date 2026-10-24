@@ -8,6 +8,8 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Client;
+use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ProjectCreationHandoffResult;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -163,6 +165,204 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
     }
 
+    public function testPrefillsFormWithMetadataAndMaintainerSelections(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                json_encode(['list' => [[
+                    'nid' => '1',
+                    'title' => 'Example',
+                    'field_project_machine_name' => 'example',
+                ]]], JSON_THROW_ON_ERROR),
+            )),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\n4\n3\n\n"));
+        $output = new BufferedOutput();
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            $output,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+        self::assertCount(1, $opened);
+        self::assertStringStartsWith(
+            DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL . '#'
+            . DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX,
+            $opened[0],
+        );
+        $encoded = substr($opened[0], strpos($opened[0], '=') + 1);
+        $json = base64_decode(
+            strtr($encoded, '-_', '+/') . str_repeat('=', (4 - strlen($encoded) % 4) % 4),
+            true,
+        );
+        self::assertIsString($json);
+        $payload = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        self::assertSame(1, $payload['version']);
+        self::assertSame('Example', $payload['title']);
+        self::assertSame('example', $payload['machineName']);
+        self::assertSame('full', $payload['projectType']);
+        self::assertSame('A short summary.', $payload['summary']);
+        self::assertStringContainsString('<p>Generated description.</p>', $payload['descriptionHtml']);
+        self::assertSame('Seeking new maintainer', $payload['maintenanceStatus']);
+        self::assertSame('No further development', $payload['developmentStatus']);
+        self::assertSame([], $payload['categories']);
+        self::assertStringContainsString('Review the prefilled form in your browser and press Save.', $output->fetch());
+    }
+
+    public function testDecliningPrefillKeepsTheManualHandoff(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("n\ncancel\n"));
+
+        $result = $handoff->run(
+            $input,
+            new BufferedOutput(),
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
+    }
+
+    public function testReopensTheSamePrefillUrl(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\n\n\nopen\ncancel\n"));
+
+        $result = $handoff->run(
+            $input,
+            new BufferedOutput(),
+            new BufferedOutput(),
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertCount(2, $opened);
+        self::assertSame($opened[0], $opened[1]);
+    }
+
+    public function testNoBrowserSkipsPrefillQuestions(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            ['--no-browser' => true],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("cancel\n"));
+        $output = new BufferedOutput();
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            $output,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame([], $opened);
+        $display = $output->fetch();
+        self::assertStringContainsString(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $display);
+        self::assertStringNotContainsString('Prefill the Drupal.org project form automatically?', $display);
+    }
+
+    public function testOversizedPrefillFallsBackToTheNormalUrl(): void
+    {
+        $opened = [];
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(),
+            static function (string $url) use (&$opened): void {
+                $opened[] = $url;
+            },
+        );
+        $input = new ArrayInput(
+            [],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $input->setStream($this->inputStream("y\n\n\ncancel\n"));
+        $output = new BufferedOutput();
+
+        $result = $handoff->run(
+            $input,
+            $output,
+            $output,
+            new QuestionHelper(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+            $this->metadata(str_repeat('description ', 500)),
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
+        self::assertStringContainsString('Browser prefill is unavailable because the generated metadata is too large.', $output->fetch());
+    }
+
     public function testTechnicalFailureWritesToErrorOutput(): void
     {
         $handoff = new DrupalOrgProjectCreationHandoff($this->client(new Response(500)));
@@ -205,5 +405,23 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         rewind($stream);
 
         return $stream;
+    }
+
+    private function metadata(string $description = 'Generated description.'): ProjectMetadataResult
+    {
+        return new ProjectMetadataResult(
+            'Example',
+            'example',
+            'module',
+            '^11',
+            ['drupal:views'],
+            'A short summary.',
+            $description,
+            ['Create records'],
+            ['Drupal Field API'],
+            'provider',
+            'model',
+            ['input' => null, 'output' => null, 'total' => null],
+        );
     }
 }
