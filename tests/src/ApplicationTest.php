@@ -16,6 +16,7 @@ class ApplicationTest extends TestCase
         $application = new Application();
 
         self::assertTrue($application->has('project:publish'));
+        self::assertTrue($application->has('browser:setup'));
         self::assertFalse($application->has('auth:login'));
         self::assertFalse($application->has('auth:status'));
         self::assertFalse($application->has('auth:logout'));

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Client;
+use mglaman\DrupalOrg\Browser\BrowserCompanionManager;
 use mglaman\DrupalOrg\Entity\Project;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectDescriptionBuilder;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectFormData;
@@ -33,6 +34,7 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?DrupalOrgProjectDescriptionBuilder $descriptionBuilder = null,
         private readonly ?DrupalOrgProjectPrefillUrlBuilder $prefillUrlBuilder = null,
         private readonly ?ProjectPublishProgressRenderer $progress = null,
+        private readonly ?BrowserCompanionManager $browserCompanionManager = null,
     ) {
     }
 
@@ -72,12 +74,12 @@ final class DrupalOrgProjectCreationHandoff
             $output->writeln('Use the generated metadata above when completing the form.');
         }
 
-        $prefillUrl = $this->preparePrefillUrl($input, $output, $helper, $metadata);
+        $prefillUrl = $this->preparePrefillUrl($input, $output, $errorOutput, $helper, $metadata);
         $this->progress?->suspend();
         if ($prefillUrl !== null) {
             $output->writeln('');
-            $output->writeln('Browser prefill requires the drupalorg-cli browser companion.');
-            $output->writeln('If the form is not prefilled, use the generated metadata above.');
+            $output->writeln('Automatic form filling is enabled through the browser companion.');
+            $output->writeln('Review the generated metadata if any field is not prefilled.');
         }
 
         $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
@@ -167,6 +169,7 @@ final class DrupalOrgProjectCreationHandoff
     private function preparePrefillUrl(
         InputInterface $input,
         OutputInterface $output,
+        OutputInterface $errorOutput,
         QuestionHelper $helper,
         ?ProjectMetadataResult $metadata,
     ): ?string {
@@ -177,6 +180,32 @@ final class DrupalOrgProjectCreationHandoff
                 '<fg=yellow;options=bold>Prefill the Drupal.org project form automatically?</> [Y/n] ',
                 true,
             ))) {
+            return null;
+        }
+
+        $browserCompanionManager = $this->browserCompanionManager ?? new BrowserCompanionManager();
+        if (!$browserCompanionManager->isConfigured()) {
+            $this->progress?->suspend();
+            if (!$browserCompanionManager->setup(
+                $input,
+                $output,
+                $helper,
+                function (string $url) use ($errorOutput, $output): bool {
+                    if ($this->openUrl !== null) {
+                        ($this->openUrl)($url, $errorOutput, $output);
+                        return true;
+                    }
+
+                    return $this->openUrl($url, $errorOutput, $output);
+                },
+            )) {
+                return null;
+            }
+        }
+
+        if (!$browserCompanionManager->supportsAutomaticPrefill()) {
+            $output->writeln('<comment>Automatic form filling is unavailable.</comment>');
+            $output->writeln('<comment>Continuing with manual Drupal.org project creation.</comment>');
             return null;
         }
 
