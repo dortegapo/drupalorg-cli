@@ -125,9 +125,7 @@
 
         const encoded = fragment.slice(FRAGMENT_PREFIX.length);
         try {
-            const payload = validatePayload(decodePayload(encoded));
-            removeFragment();
-            return payload;
+            return validatePayload(decodePayload(encoded));
         } catch (error) {
             console.warn('drupalorg-cli prefill payload was rejected.', error);
             return null;
@@ -149,6 +147,12 @@
         }
 
         element.value = value;
+        if (element instanceof HTMLTextAreaElement) {
+            const editor = window.CKEDITOR?.instances?.[element.id];
+            if (editor && typeof editor.setData === 'function') {
+                editor.setData(value);
+            }
+        }
         dispatchChange(element);
         return true;
     }
@@ -444,6 +448,9 @@
         const started = Date.now();
         const attempt = () => {
             if (formIsReady() && document.readyState !== 'loading') {
+                // The payload stays in the fragment until the form exists and
+                // this controlled fill attempt has started.
+                removeFragment();
                 fillForm(payload).then(showBanner).catch((error) => {
                     console.warn('drupalorg-cli prefill failed while filling the form.', error);
                 });
@@ -457,6 +464,15 @@
             console.warn('drupalorg-cli prefill: project form not found.');
         };
         attempt();
+    }
+
+    if (globalThis.__drupalorgCliPrefillTest === true) {
+        globalThis.__drupalorgCliPrefill = {
+            decodePayload,
+            validatePayload,
+            readPayload,
+        };
+        return;
     }
 
     const payload = readPayload();

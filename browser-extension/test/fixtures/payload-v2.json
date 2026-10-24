@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "title": "Example Module",
+  "machineName": "example_module",
+  "projectType": "full",
+  "summary": "An example summary.",
+  "descriptionHtml": "<p>An example description.</p>",
+  "maintenanceStatus": "Actively maintained",
+  "developmentStatus": "Under active development",
+  "categories": ["Site structure"],
+  "ecosystems": ["Views"],
+  "supportingOrganizations": [
+    {
+      "name": "Example organization",
+      "howTheyHelped": "Provided testing."
+    }
+  ],
+  "issueComponents": ["Code"],
+  "enableIssueTracker": true,
+  "issueGuidelines": "Describe the problem and steps to reproduce it.",
+  "issueSummaryTemplate": "Summary",
+  "homepage": "https://example.test",
+  "changelog": "",
+  "demo": "",
+  "documentation": [
+    {
+      "title": "Documentation",
+      "url": "https://example.test/docs"
+    }
+  ],
+  "screenshots": ["https://example.test/screenshot.png"]
+}

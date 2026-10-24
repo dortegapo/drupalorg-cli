@@ -1,8 +1,11 @@
 <?php
 
+declare(strict_types=1);
+
 namespace mglaman\DrupalOrgCli;
 
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Process\Process;
 
 trait BrowserTrait
 {
@@ -10,8 +13,10 @@ trait BrowserTrait
     protected function getDefaultBrowser(): ?string
     {
         $potential = $this->isWindowsSubsystemForLinux()
-            ? ['wslview', 'cmd.exe', 'xdg-open', 'open', 'start']
-            : ['xdg-open', 'open', 'start'];
+            ? ['wslview', 'cmd.exe', 'xdg-open', 'open']
+            : (PHP_OS_FAMILY === 'Windows'
+                ? ['explorer.exe']
+                : (PHP_OS_FAMILY === 'Darwin' ? ['open', 'xdg-open'] : ['xdg-open', 'open']));
         foreach ($potential as $browser) {
             if ($this->browserCommandExists($browser)) {
                 return $browser;
@@ -20,18 +25,23 @@ trait BrowserTrait
         return null;
     }
 
-    protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): bool
-    {
+    protected function openUrl(
+        string $url,
+        OutputInterface $stdErr,
+        OutputInterface $stdOut,
+        ?string $displayUrl = null,
+    ): bool {
+        $displayUrl ??= $url;
         $browser = $this->getDefaultBrowser();
         if ($browser !== null) {
             if ($this->launchBrowser($browser, $url)) {
-                $stdErr->writeln("<info>Opened</info>: $url");
+                $stdErr->writeln("<info>Opened</info>: $displayUrl");
                 return true;
             }
         } else {
             $stdErr->writeln('<error>Could not open a browser automatically.</error>');
         }
-        $stdOut->writeln($url);
+        $stdOut->writeln($displayUrl);
 
         return false;
     }
@@ -48,19 +58,31 @@ trait BrowserTrait
 
     protected function browserCommandExists(string $browser): bool
     {
-        $output = shell_exec(sprintf('command -v %s', escapeshellarg($browser)));
-        return is_string($output) && trim($output) !== '';
+        $lookup = PHP_OS_FAMILY === 'Windows' && !$this->isWindowsSubsystemForLinux()
+            ? ['where.exe', $browser]
+            : ['which', $browser];
+        try {
+            $process = new Process($lookup);
+            $process->run();
+        } catch (\Exception) {
+            return false;
+        }
+
+        return $process->isSuccessful();
     }
 
     protected function launchBrowser(string $browser, string $url): bool
     {
         $command = $browser === 'cmd.exe'
-            ? sprintf('%s /c start "" %s', escapeshellcmd($browser), escapeshellarg($url))
-            : sprintf('%s %s', escapeshellcmd($browser), escapeshellarg($url));
-        $output = [];
-        $exitCode = 1;
-        exec($command . ' 2>&1', $output, $exitCode);
+            ? [$browser, '/c', 'start', '', $url]
+            : [$browser, $url];
+        try {
+            $process = new Process($command);
+            $process->run();
+        } catch (\Exception) {
+            return false;
+        }
 
-        return $exitCode === 0;
+        return $process->isSuccessful();
     }
 }

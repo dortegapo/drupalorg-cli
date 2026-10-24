@@ -128,6 +128,63 @@ class MarkdownFormatter extends AbstractFormatter
                 $lines[] = '- ' . $dependency;
             }
         }
+        $lines[] = '';
+        $lines[] = '## Drupal.org form metadata';
+        $lines[] = '';
+        $lines[] = '- **Maintenance status:** Actively maintained';
+        $lines[] = '- **Development status:** Under active development';
+        $lines[] = '- **Issue tracker:** ' . ($result->issues['enableTracker'] ? 'enabled' : 'disabled');
+        foreach ([
+            'Categories' => $result->categories,
+            'Ecosystems' => $result->ecosystems,
+            'Issue components' => $result->issues['components'],
+        ] as $label => $items) {
+            $lines[] = '';
+            $lines[] = '### ' . $label;
+            if ($items === []) {
+                $lines[] = 'None declared.';
+                continue;
+            }
+            foreach ($items as $item) {
+                $lines[] = '- ' . $item;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '### Issue submission guidelines';
+        $lines[] = $result->issues['submissionGuidelines'] !== ''
+            ? $result->issues['submissionGuidelines']
+            : 'None declared.';
+        $lines[] = '';
+        $lines[] = '### Issue summary template';
+        $lines[] = $result->issues['summaryTemplate'] !== ''
+            ? $result->issues['summaryTemplate']
+            : 'None declared.';
+        $lines[] = '';
+        $lines[] = '### Supporting organizations';
+        if ($result->supportingOrganizations === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->supportingOrganizations as $organization) {
+                $lines[] = '- ' . $organization['name'] . ': ' . $organization['howTheyHelped'];
+            }
+        }
+        $lines[] = '';
+        $lines[] = '### Resources';
+        foreach ([
+            'Homepage' => $result->resources['homepage'],
+            'Changelog' => $result->resources['changelog'],
+            'Demo' => $result->resources['demo'],
+        ] as $label => $url) {
+            if ($url !== '') {
+                $lines[] = '- ' . $label . ': ' . $url;
+            }
+        }
+        foreach ($result->resources['documentation'] as $documentation) {
+            $lines[] = '- Documentation — ' . $documentation['title'] . ': ' . $documentation['url'];
+        }
+        foreach ($result->resources['screenshots'] as $screenshot) {
+            $lines[] = '- Screenshot: ' . $screenshot;
+        }
 
         return implode("\n", $lines);
     }
