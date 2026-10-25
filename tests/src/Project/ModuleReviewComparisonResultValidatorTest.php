@@ -35,7 +35,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
     {
         $result = self::comparisonResult([], 'no_clear_duplicate');
 
-        self::assertSame($result, $this->validator()->validate($result, self::pool()));
+        self::assertSame($result, $this->validator()->validate($result, self::pool())->toArray());
     }
 
     public function testValidatesOnlyRelatedCandidates(): void
@@ -312,7 +312,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         $firstValidated = $this->validator()->validate($result, $firstPool);
         $secondValidated = $this->validator()->validate($result, $secondPool);
 
-        self::assertSame($firstValidated, $secondValidated);
+        self::assertSame($firstValidated->toArray(), $secondValidated->toArray());
         self::assertSame($resultCopy, $result);
         self::assertSame($firstPoolCopy, $firstPool);
     }

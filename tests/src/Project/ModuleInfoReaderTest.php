@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrg\Tests\Project;
 
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
+use mglaman\DrupalOrg\Project\ModuleInfo;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Exception\ParseException;
@@ -29,12 +30,13 @@ class ModuleInfoReaderTest extends TestCase
     {
         $infoFile = $this->writeInfo("name: My Module\ntype: module\ncore_version_requirement: ^11\n");
 
-        self::assertSame([
-            'name' => 'My Module',
-            'type' => 'module',
-            'coreVersionRequirement' => '^11',
-            'dependencies' => [],
-        ], (new ModuleInfoReader())->read($infoFile, 'my_module'));
+        $info = (new ModuleInfoReader())->read($infoFile, 'my_module');
+
+        self::assertInstanceOf(ModuleInfo::class, $info);
+        self::assertSame('My Module', $info->name);
+        self::assertSame('module', $info->type);
+        self::assertSame('^11', $info->coreVersionRequirement);
+        self::assertSame([], $info->dependencies);
     }
 
     public function testReadsDeclaredDependenciesWithoutResolvingThem(): void
@@ -43,12 +45,12 @@ class ModuleInfoReaderTest extends TestCase
             "name: My Module\ntype: module\ncore_version_requirement: ^11\ndependencies:\n  - drupal:node\n  - example/example\n"
         );
 
-        self::assertSame([
-            'name' => 'My Module',
-            'type' => 'module',
-            'coreVersionRequirement' => '^11',
-            'dependencies' => ['drupal:node', 'example/example'],
-        ], (new ModuleInfoReader())->read($infoFile, 'my_module'));
+        $info = (new ModuleInfoReader())->read($infoFile, 'my_module');
+
+        self::assertSame('My Module', $info->name);
+        self::assertSame('module', $info->type);
+        self::assertSame('^11', $info->coreVersionRequirement);
+        self::assertSame(['drupal:node', 'example/example'], $info->dependencies);
     }
 
     public function testMissingDependenciesBecomeAnEmptyList(): void

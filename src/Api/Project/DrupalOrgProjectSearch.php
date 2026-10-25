@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
+use GuzzleHttp\Promise\PromiseInterface;
 use mglaman\DrupalOrg\Client;
+use Psr\Http\Message\ResponseInterface;
 
 final class DrupalOrgProjectSearch
 {
@@ -40,7 +42,44 @@ final class DrupalOrgProjectSearch
             throw new \InvalidArgumentException('Drupal.org project search offset cannot be negative.');
         }
 
-        $response = $this->client->getGuzzleClient()->request('GET', self::ENDPOINT, [
+        $response = $this->client->getGuzzleClient()->request('GET', self::ENDPOINT, $this->requestOptions($query, $limit, $offset));
+
+        return $this->parseResponse($response);
+    }
+
+    /**
+     * Start one read-only search without waiting for its response.
+     *
+     * Callers must bound the number of promises they keep in flight.
+     *
+     * @return PromiseInterface
+     */
+    public function searchAsync(string $query, int $limit = 10, int $offset = 0): PromiseInterface
+    {
+        $query = trim($query);
+        if ($query === '') {
+            throw new \InvalidArgumentException('Drupal.org project search query cannot be empty.');
+        }
+
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('Drupal.org project search limit must be greater than zero.');
+        }
+
+        if ($offset < 0) {
+            throw new \InvalidArgumentException('Drupal.org project search offset cannot be negative.');
+        }
+
+        return $this->client->getGuzzleClient()
+            ->requestAsync('GET', self::ENDPOINT, $this->requestOptions($query, $limit, $offset))
+            ->then(fn(ResponseInterface $response): array => $this->parseResponse($response));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function requestOptions(string $query, int $limit, int $offset): array
+    {
+        return [
             'headers' => [
                 'Accept' => 'application/vnd.api+json',
             ],
@@ -53,8 +92,19 @@ final class DrupalOrgProjectSearch
                 'page[limit]' => $limit,
                 'page[offset]' => $offset,
             ],
-        ]);
+        ];
+    }
 
+    /**
+     * @return list<array{
+     *     machineName: string,
+     *     title: string,
+     *     description: string,
+     *     url: string
+     * }>
+     */
+    private function parseResponse(ResponseInterface $response): array
+    {
         try {
             $payload = json_decode(
                 $response->getBody()->getContents(),

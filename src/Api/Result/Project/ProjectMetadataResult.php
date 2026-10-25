@@ -8,26 +8,22 @@ use mglaman\DrupalOrg\Result\ResultInterface;
 
 final class ProjectMetadataResult implements ResultInterface
 {
+    /** @var list<SupportingOrganization> */
+    public readonly array $supportingOrganizations;
+
+    public readonly ProjectIssueSettings $issues;
+
+    public readonly ProjectResources $resources;
+
     /**
      * @param list<string> $dependencies
      * @param list<string> $features
      * @param list<string> $integrations
      * @param list<string> $categories
      * @param list<string> $ecosystems
-     * @param list<array{name: string, howTheyHelped: string}> $supportingOrganizations
-     * @param array{
-     *     components: list<string>,
-     *     submissionGuidelines: string,
-     *     summaryTemplate: string,
-     *     enableTracker: bool
-     * } $issues
-     * @param array{
-     *     homepage: string,
-     *     changelog: string,
-     *     demo: string,
-     *     documentation: list<array{title: string, url: string}>,
-     *     screenshots: list<string>
-     * } $resources
+     * @param list<array{name: string, howTheyHelped: string}|SupportingOrganization> $supportingOrganizations
+     * @param array<string, mixed>|ProjectIssueSettings $issues
+     * @param array<string, mixed>|ProjectResources $resources
      * @param array{input: ?int, output: ?int, total: ?int} $tokenUsage
      */
     public function __construct(
@@ -45,21 +41,22 @@ final class ProjectMetadataResult implements ResultInterface
         public readonly array $tokenUsage,
         public readonly array $categories = [],
         public readonly array $ecosystems = [],
-        public readonly array $supportingOrganizations = [],
-        public readonly array $issues = [
-            'components' => [],
-            'submissionGuidelines' => '',
-            'summaryTemplate' => '',
-            'enableTracker' => true,
-        ],
-        public readonly array $resources = [
-            'homepage' => '',
-            'changelog' => '',
-            'demo' => '',
-            'documentation' => [],
-            'screenshots' => [],
-        ],
+        array $supportingOrganizations = [],
+        array|ProjectIssueSettings $issues = [],
+        array|ProjectResources $resources = [],
     ) {
+        $this->supportingOrganizations = array_map(
+            static fn(array|SupportingOrganization $organization): SupportingOrganization => $organization instanceof SupportingOrganization
+                ? $organization
+                : SupportingOrganization::fromArray($organization),
+            $supportingOrganizations,
+        );
+        $this->issues = $issues instanceof ProjectIssueSettings
+            ? $issues
+            : ProjectIssueSettings::fromArray($issues);
+        $this->resources = $resources instanceof ProjectResources
+            ? $resources
+            : ProjectResources::fromArray($resources);
     }
 
     public function jsonSerialize(): mixed
@@ -79,9 +76,12 @@ final class ProjectMetadataResult implements ResultInterface
             'token_usage' => $this->tokenUsage,
             'categories' => $this->categories,
             'ecosystems' => $this->ecosystems,
-            'supporting_organizations' => $this->supportingOrganizations,
-            'issues' => $this->issues,
-            'resources' => $this->resources,
+            'supporting_organizations' => array_map(
+                static fn(SupportingOrganization $organization): array => $organization->toArray(),
+                $this->supportingOrganizations,
+            ),
+            'issues' => $this->issues->toArray(),
+            'resources' => $this->resources->jsonSerialize(),
         ];
     }
 }

@@ -51,39 +51,37 @@ final class ProjectMetadataRenderer
             foreach ($metadata->supportingOrganizations as $organization) {
                 $output->writeln(sprintf(
                     '- %s: %s',
-                    $organization['name'],
-                    $organization['howTheyHelped'],
+                    $organization->name,
+                    $organization->howTheyHelped,
                 ));
             }
         }
         $this->writeSection($output, 'Issues');
-        $issues = $metadata->issues;
         $output->writeln('Components:');
-        $this->writeListOrEmpty($output, $issues['components']);
-        $output->writeln('Issue tracker: ' . ($issues['enableTracker'] ? 'enabled' : 'disabled'));
-        $output->writeln('Submission guidelines: ' . ($issues['submissionGuidelines'] !== ''
-            ? $issues['submissionGuidelines']
+        $this->writeListOrEmpty($output, $metadata->issues->components);
+        $output->writeln('Issue tracker: ' . ($metadata->issues->enableTracker ? 'enabled' : 'disabled'));
+        $output->writeln('Submission guidelines: ' . ($metadata->issues->submissionGuidelines !== ''
+            ? $metadata->issues->submissionGuidelines
             : 'None declared/generated.'));
-        $output->writeln('Summary template: ' . ($issues['summaryTemplate'] !== ''
-            ? $issues['summaryTemplate']
+        $output->writeln('Summary template: ' . ($metadata->issues->summaryTemplate !== ''
+            ? $metadata->issues->summaryTemplate
             : 'None declared/generated.'));
         $this->writeSection($output, 'Resources');
-        $resources = $metadata->resources;
         $resourceUrls = array_filter([
-            'Homepage' => $resources['homepage'],
-            'Changelog' => $resources['changelog'],
-            'Demo' => $resources['demo'],
+            'Homepage' => $metadata->resources->homepage,
+            'Changelog' => $metadata->resources->changelog,
+            'Demo' => $metadata->resources->demo,
         ]);
         foreach ($resourceUrls as $label => $url) {
             $output->writeln(sprintf('- %s: %s', $label, $url));
         }
-        foreach ($resources['documentation'] as $documentation) {
+        foreach ($metadata->resources->documentation as $documentation) {
             $output->writeln(sprintf('- %s: %s', $documentation['title'], $documentation['url']));
         }
-        foreach ($resources['screenshots'] as $screenshot) {
+        foreach ($metadata->resources->screenshots as $screenshot) {
             $output->writeln('- Screenshot: ' . $screenshot);
         }
-        if ($resourceUrls === [] && $resources['documentation'] === [] && $resources['screenshots'] === []) {
+        if ($resourceUrls === [] && $metadata->resources->documentation === [] && $metadata->resources->screenshots === []) {
             $output->writeln('None declared/generated.');
         }
 

@@ -4,6 +4,7 @@ namespace mglaman\DrupalOrg\Tests\Project;
 
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
 use mglaman\DrupalOrg\Project\ModuleLocator;
+use mglaman\DrupalOrg\Project\ResolvedModule;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
@@ -37,16 +38,12 @@ class ModuleLocatorTest extends TestCase
         $resolvedPath = realpath($modulePath);
 
         self::assertIsString($resolvedPath);
-        self::assertSame(
-            [
-                'resolvedPath' => $resolvedPath,
-                'moduleName' => 'my_module',
-                'infoFile' => $resolvedPath . '/my_module.info.yml',
-                'projectRoot' => null,
-                'webRoot' => null,
-            ],
-            $location
-        );
+        self::assertInstanceOf(ResolvedModule::class, $location);
+        self::assertSame($resolvedPath, $location->resolvedPath);
+        self::assertSame('my_module', $location->machineName);
+        self::assertSame($resolvedPath . '/my_module.info.yml', $location->infoFile);
+        self::assertNull($location->projectRoot);
+        self::assertNull($location->webRoot);
     }
 
     public function testRelativePathUsesCurrentWorkingDirectory(): void

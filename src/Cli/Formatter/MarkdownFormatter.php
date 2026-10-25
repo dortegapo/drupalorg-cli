@@ -137,11 +137,11 @@ class MarkdownFormatter extends AbstractFormatter
         $lines[] = '';
         $lines[] = '- **Maintenance status:** Actively maintained';
         $lines[] = '- **Development status:** Under active development';
-        $lines[] = '- **Issue tracker:** ' . ($result->issues['enableTracker'] ? 'enabled' : 'disabled');
+        $lines[] = '- **Issue tracker:** ' . ($result->issues->enableTracker ? 'enabled' : 'disabled');
         foreach ([
             'Categories' => $result->categories,
             'Ecosystems' => $result->ecosystems,
-            'Issue components' => $result->issues['components'],
+            'Issue components' => $result->issues->components,
         ] as $label => $items) {
             $lines[] = '';
             $lines[] = '### ' . $label;
@@ -155,13 +155,13 @@ class MarkdownFormatter extends AbstractFormatter
         }
         $lines[] = '';
         $lines[] = '### Issue submission guidelines';
-        $lines[] = $result->issues['submissionGuidelines'] !== ''
-            ? $result->issues['submissionGuidelines']
+        $lines[] = $result->issues->submissionGuidelines !== ''
+            ? $result->issues->submissionGuidelines
             : 'None declared.';
         $lines[] = '';
         $lines[] = '### Issue summary template';
-        $lines[] = $result->issues['summaryTemplate'] !== ''
-            ? $result->issues['summaryTemplate']
+        $lines[] = $result->issues->summaryTemplate !== ''
+            ? $result->issues->summaryTemplate
             : 'None declared.';
         $lines[] = '';
         $lines[] = '### Supporting organizations';
@@ -169,24 +169,24 @@ class MarkdownFormatter extends AbstractFormatter
             $lines[] = 'None declared.';
         } else {
             foreach ($result->supportingOrganizations as $organization) {
-                $lines[] = '- ' . $organization['name'] . ': ' . $organization['howTheyHelped'];
+                $lines[] = '- ' . $organization->name . ': ' . $organization->howTheyHelped;
             }
         }
         $lines[] = '';
         $lines[] = '### Resources';
         foreach ([
-            'Homepage' => $result->resources['homepage'],
-            'Changelog' => $result->resources['changelog'],
-            'Demo' => $result->resources['demo'],
+            'Homepage' => $result->resources->homepage,
+            'Changelog' => $result->resources->changelog,
+            'Demo' => $result->resources->demo,
         ] as $label => $url) {
             if ($url !== '') {
                 $lines[] = '- ' . $label . ': ' . $url;
             }
         }
-        foreach ($result->resources['documentation'] as $documentation) {
-            $lines[] = '- Documentation — ' . $documentation['title'] . ': ' . $documentation['url'];
+        foreach ($result->resources->documentation as $documentation) {
+            $lines[] = '- Documentation — ' . $documentation->title . ': ' . $documentation->url;
         }
-        foreach ($result->resources['screenshots'] as $screenshot) {
+        foreach ($result->resources->screenshots as $screenshot) {
             $lines[] = '- Screenshot: ' . $screenshot;
         }
 

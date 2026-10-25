@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrg\Tests\Command\Project;
 
 use mglaman\DrupalOrg\Client;
+use mglaman\DrupalOrg\Project\ModuleContext;
+use mglaman\DrupalOrg\Project\ModuleInfo;
+use mglaman\DrupalOrg\Project\PreparedModuleSource;
+use mglaman\DrupalOrg\Project\ResolvedModule;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflowResult;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -299,7 +303,7 @@ final class ModuleReviewWorkflowTest extends TestCase
             public int $analyzeCalls = 0;
             public int $pdfCalls = 0;
             /** @var array<string, mixed>|null */
-            public ?array $analyzePreparedSource = null;
+            public PreparedModuleSource|array|null $analyzePreparedSource = null;
         };
         $sourceFiles ??= self::sourceFiles(20);
         $workflow = new ModuleReviewWorkflow(
@@ -333,7 +337,7 @@ final class ModuleReviewWorkflowTest extends TestCase
                 array $resolvedRuntime,
                 ?callable $progress,
                 ?string $humanName,
-                ?array $preparedSource,
+                PreparedModuleSource|array|null $preparedSource,
             ) use (
                 $state,
                 $analysisResult,
@@ -377,7 +381,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         $input->setInteractive(true);
         $input->setStream(self::inputStream($inputContents));
         $output = new BufferedOutput();
-        $result = $workflow->run($input, $output, new QuestionHelper(), self::module(), self::moduleInfo());
+        $result = $workflow->run($input, $output, new QuestionHelper(), self::module());
 
         return [$result, $state, $output->fetch()];
     }
@@ -394,22 +398,18 @@ final class ModuleReviewWorkflowTest extends TestCase
         return ['aiEnabled' => true, 'providerId' => 'local-provider', 'modelId' => 'local-model'];
     }
 
-    /** @return array{resolvedPath: string, moduleName: string, infoFile: string, projectRoot: ?string, webRoot: ?string} */
-    private static function module(): array
+    private static function module(): ModuleContext
     {
-        return [
-            'resolvedPath' => '/tmp/example',
-            'moduleName' => 'example',
-            'infoFile' => '/tmp/example/example.info.yml',
-            'projectRoot' => '/tmp',
-            'webRoot' => 'web',
-        ];
-    }
-
-    /** @return array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} */
-    private static function moduleInfo(): array
-    {
-        return ['name' => 'Example', 'type' => 'module', 'coreVersionRequirement' => '^11', 'dependencies' => []];
+        return new ModuleContext(
+            new ResolvedModule(
+                '/tmp/example',
+                'example',
+                '/tmp/example/example.info.yml',
+                '/tmp',
+                'web',
+            ),
+            new ModuleInfo('Example', 'module', '^11', []),
+        );
     }
 
     /** @return list<array{path: string, bytes: int, content: string}> */

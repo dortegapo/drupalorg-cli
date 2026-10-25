@@ -23,6 +23,7 @@ use mglaman\DrupalOrg\Project\ModuleReviewComparisonResultValidator;
 use mglaman\DrupalOrg\Project\ModuleReviewCollector;
 use mglaman\DrupalOrg\Project\ModuleReviewPromptBuilder;
 use mglaman\DrupalOrg\Project\ModuleReviewResultValidator;
+use mglaman\DrupalOrg\Project\ModuleReviewResult;
 use mglaman\DrupalOrg\Project\ModuleReviewSensitiveDataSanitizer;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -1000,10 +1001,7 @@ PHP
         return $payload;
     }
 
-    /**
-     * @param array<string, mixed> $result
-     */
-    private static function assertIncompleteAt(string $stage, array $result): void
+    private static function assertIncompleteAt(string $stage, ModuleReviewResult $result): void
     {
         self::assertFalse($result['complete']);
         self::assertSame($stage, $result['limitations'][0]['stage']);

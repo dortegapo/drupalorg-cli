@@ -11,6 +11,10 @@ use mglaman\DrupalOrg\Project\ModuleReviewAnalyzer;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\ModuleReviewPdfReportWriter;
 use mglaman\DrupalOrg\Project\ModuleReviewSourceSelector;
+use mglaman\DrupalOrg\Project\ModuleContext;
+use mglaman\DrupalOrg\Project\ModuleReviewResult;
+use mglaman\DrupalOrg\Project\PreparedModuleSource;
+use mglaman\DrupalOrg\Project\SourceCoverage;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -40,24 +44,13 @@ final class ModuleReviewWorkflow
     ) {
     }
 
-    /**
-     * @param array{
-     *     resolvedPath: string,
-     *     moduleName: string,
-     *     infoFile: string,
-     *     projectRoot: ?string,
-     *     webRoot: ?string
-     * } $module
-     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
-     */
     public function run(
         InputInterface $input,
         OutputInterface $output,
         QuestionHelper $helper,
-        array $module,
-        array $moduleInfo,
+        ModuleContext $module,
     ): ModuleReviewWorkflowResult {
-        $runtime = $this->resolveDrupalRuntime($module['projectRoot']);
+        $runtime = $this->resolveDrupalRuntime($module->projectRoot);
         if ($runtime === null) {
             $output->writeln('Drupal AI review is not available for this project environment.');
 
@@ -90,7 +83,7 @@ final class ModuleReviewWorkflow
         $progress->registerReviewPhases();
         $progress->start(ProjectPublishProgressRenderer::PREPARING_SOURCE);
         try {
-            $preparedSource = $this->prepareModuleSource($module['resolvedPath']);
+            $preparedSource = $this->prepareModuleSource($module->resolvedPath);
         } catch (\RuntimeException) {
             $progress->fail(ProjectPublishProgressRenderer::PREPARING_SOURCE);
             $progress->warning('Preparing module source... failed');
@@ -99,13 +92,13 @@ final class ModuleReviewWorkflow
         }
 
         $selector = new ModuleReviewSourceSelector();
-        $eligibleBytes = $preparedSource['totalBytes'];
+        $eligibleBytes = $preparedSource->totalBytes;
         $progress->complete(ProjectPublishProgressRenderer::PREPARING_SOURCE);
         if ($output->isVerbose()) {
             $progress->detail(sprintf(
                 'Eligible source: %s across %d files.',
                 $this->formatKilobytes($eligibleBytes),
-                count($preparedSource['files']),
+                count($preparedSource->files),
             ));
         }
 
@@ -119,10 +112,12 @@ final class ModuleReviewWorkflow
             }
         }
 
-        $selection = $selector->select($preparedSource['files'], $sourceBudget);
-        $preparedSource['files'] = $selection['files'];
-        $preparedSource['totalBytes'] = $selection['selectedBytes'];
-        $preparedSource['coverage'] = $selection['coverage'];
+        $selection = $selector->select($preparedSource->files, $sourceBudget);
+        $preparedSource = $preparedSource->withSelection(
+            $selection['files'],
+            $selection['selectedBytes'],
+            SourceCoverage::fromArray($selection['coverage']),
+        );
         if ($selection['coverage']['mode'] === 'selected') {
             if ($output->isVerbose()) {
                 $output->writeln(sprintf(
@@ -145,14 +140,15 @@ final class ModuleReviewWorkflow
         };
         $result = null;
         try {
-            $result = $this->analyzeModule(
-                $module['resolvedPath'],
-                $module['moduleName'],
+            $analysis = $this->analyzeModule(
+                $module->resolvedPath,
+                $module->machineName,
                 $runtime,
                 $eventProgress,
-                $moduleInfo['name'],
+                $module->humanName(),
                 $preparedSource,
             );
+            $result = $analysis instanceof ModuleReviewResult ? $analysis->toArray() : $analysis;
         } finally {
             $progressRenderer->finishOnFailure($result);
         }
@@ -160,7 +156,7 @@ final class ModuleReviewWorkflow
         $pdfPath = null;
         $progress->start(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         try {
-            $pdfPath = $this->writeModuleReviewPdf($result, $module, $moduleInfo);
+            $pdfPath = $this->writeModuleReviewPdf($result, $module);
             $progress->complete(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         } catch (\Exception) {
             $progress->fail(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
@@ -228,44 +224,37 @@ final class ModuleReviewWorkflow
         }
     }
 
-    /**
-     * @param array{resolvedPath: string, moduleName: string, projectRoot: ?string, infoFile: string, webRoot: ?string} $module
-     * @param array{name: string, type: string, coreVersionRequirement: string, dependencies: list<string>} $moduleInfo
-     * @param array<string, mixed> $result
-     */
-    private function writeModuleReviewPdf(array $result, array $module, array $moduleInfo): string
+    /** @param array<string, mixed> $result */
+    private function writeModuleReviewPdf(array $result, ModuleContext $module): string
     {
         $targetPath = $this->moduleReviewPdfPath($module);
         if ($this->pdfWriter !== null) {
             return ($this->pdfWriter)($targetPath, $result, [
-                'machineName' => $module['moduleName'],
-                'name' => $moduleInfo['name'],
-                'type' => $moduleInfo['type'],
-                'coreVersionRequirement' => $moduleInfo['coreVersionRequirement'],
+                'machineName' => $module->machineName,
+                'name' => $module->humanName(),
+                'type' => $module->extensionType(),
+                'coreVersionRequirement' => $module->coreVersionRequirement(),
             ]);
         }
 
         (new ModuleReviewPdfReportWriter())->write($targetPath, $result, [
-            'machineName' => $module['moduleName'],
-            'name' => $moduleInfo['name'],
-            'type' => $moduleInfo['type'],
-            'coreVersionRequirement' => $moduleInfo['coreVersionRequirement'],
+            'machineName' => $module->machineName,
+            'name' => $module->humanName(),
+            'type' => $module->extensionType(),
+            'coreVersionRequirement' => $module->coreVersionRequirement(),
         ]);
 
         return $targetPath;
     }
 
-    /**
-     * @param array{resolvedPath: string, moduleName: string, projectRoot: ?string} $module
-     */
-    private function moduleReviewPdfPath(array $module): string
+    private function moduleReviewPdfPath(ModuleContext $module): string
     {
-        $directory = $module['projectRoot'];
+        $directory = $module->projectRoot;
         if ($directory === null || !is_dir($directory)) {
             $directory = getcwd();
         }
         if ($directory === false || $directory === '') {
-            $directory = dirname($module['resolvedPath']);
+            $directory = dirname($module->resolvedPath);
         }
 
         $directory = rtrim($directory, '/\\');
@@ -273,7 +262,7 @@ final class ModuleReviewWorkflow
             $directory = DIRECTORY_SEPARATOR;
         }
 
-        return $directory . DIRECTORY_SEPARATOR . $module['moduleName']
+        return $directory . DIRECTORY_SEPARATOR . $module->machineName
             . '-drupalorg-contribution-review.pdf';
     }
 
@@ -304,12 +293,16 @@ final class ModuleReviewWorkflow
     }
 
     /**
-     * @return array<string, mixed>
+     * @return PreparedModuleSource
      */
-    private function prepareModuleSource(string $modulePath): array
+    private function prepareModuleSource(string $modulePath): PreparedModuleSource
     {
         if ($this->sourcePreparer !== null) {
-            return ($this->sourcePreparer)($modulePath);
+            $preparedSource = ($this->sourcePreparer)($modulePath);
+
+            return $preparedSource instanceof PreparedModuleSource
+                ? $preparedSource
+                : PreparedModuleSource::fromArray($preparedSource);
         }
 
         return $this->getAnalyzer()->prepareSource($modulePath);
@@ -317,7 +310,7 @@ final class ModuleReviewWorkflow
 
     /**
      * @param array{type: 'ddev'|'lando'|'local-drush', workingDirectory: string, command: list<string>} $runtime
-     * @param array<string, mixed> $preparedSource
+     * @param PreparedModuleSource $preparedSource
      *
      * @return array<string, mixed>
      */
@@ -327,8 +320,8 @@ final class ModuleReviewWorkflow
         array $runtime,
         callable $progress,
         string $humanName,
-        array $preparedSource,
-    ): array {
+        PreparedModuleSource $preparedSource,
+    ): array|ModuleReviewResult {
         if ($this->moduleAnalyzer !== null) {
             return ($this->moduleAnalyzer)(
                 $modulePath,

@@ -24,20 +24,9 @@ final class ModuleReviewComparisonResultValidator
      *     secondaryMatches: list<array{term: string, rank: int}>
      * }> $candidates
      *
-     * @return array{
-     *     verdict: 'no_clear_duplicate'|'possible_overlap'|'likely_duplicate',
-     *     confidence: int|float,
-     *     summary: string,
-     *     candidates: list<array{
-     *         machine_name: string,
-     *         assessment: 'likely_duplicate'|'possible_overlap'|'related_not_duplicate',
-     *         overlap: list<string>,
-     *         confirmed_differences: list<string>,
-     *         unverified_details: list<string>,
-     *         reason: string
-     *     }>}
+     * @return ProjectComparisonResult
      */
-    public function validate(array $result, array $candidates): array
+    public function validate(array $result, array $candidates): ProjectComparisonResult
     {
         $candidatePool = $this->validateCandidatePool($candidates);
         $verdict = $this->validateVerdict($result['verdict'] ?? null);
@@ -52,12 +41,7 @@ final class ModuleReviewComparisonResultValidator
             $this->invalidResult();
         }
 
-        return [
-            'verdict' => $verdict,
-            'confidence' => $confidence,
-            'summary' => $summary,
-            'candidates' => $outputCandidates,
-        ];
+        return new ProjectComparisonResult($verdict, $confidence, $summary, $outputCandidates);
     }
 
     /**

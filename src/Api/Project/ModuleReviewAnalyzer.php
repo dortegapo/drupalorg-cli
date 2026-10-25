@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
+use GuzzleHttp\Promise\Utils;
+
 final class ModuleReviewAnalyzer
 {
     private const SEARCH_LIMIT = 20;
 
     private const MAXIMUM_COMPARISON_CANDIDATES = 20;
+
+    private const SEARCH_CONCURRENCY = 4;
 
     /**
      * @var array<string, string>
@@ -52,25 +56,9 @@ final class ModuleReviewAnalyzer
      * The caller may subsequently replace the files and coverage metadata with
      * a relevance-selected subset before passing the result to analyze().
      *
-     * @return array{
-     *     files: list<array{path: string, bytes: int, content: string}>,
-     *     skipped: list<array{path: string, reason: string}>,
-     *     totalBytes: int,
-     *     redactions: list<array{path: string, line: int, type: string}>,
-     *     coverage: array{
-     *         mode: 'full'|'selected',
-     *         requestedBudgetBytes: ?int,
-     *         eligibleFiles: int,
-     *         eligibleBytes: int,
-     *         selectedFiles: int,
-     *         selectedBytes: int,
-     *         omittedFiles: int,
-     *         omittedBytes: int,
-     *         omittedBreakdown: array<string, int>
-     *     }
-     * }
+     * @return PreparedModuleSource
      */
-    public function prepareSource(string $modulePath): array
+    public function prepareSource(string $modulePath): PreparedModuleSource
     {
         $collection = $this->collector->collect($modulePath);
 
@@ -83,36 +71,20 @@ final class ModuleReviewAnalyzer
      *     skipped: list<array{path: string, reason: string}>
      * } $collection
      *
-     * @return array{
-     *     files: list<array{path: string, bytes: int, content: string}>,
-     *     skipped: list<array{path: string, reason: string}>,
-     *     totalBytes: int,
-     *     redactions: list<array{path: string, line: int, type: string}>,
-     *     coverage: array{
-     *         mode: 'full'|'selected',
-     *         requestedBudgetBytes: ?int,
-     *         eligibleFiles: int,
-     *         eligibleBytes: int,
-     *         selectedFiles: int,
-     *         selectedBytes: int,
-     *         omittedFiles: int,
-     *         omittedBytes: int,
-     *         omittedBreakdown: array<string, int>
-     *     }
-     * }
+     * @return PreparedModuleSource
      */
-    private function prepareSourceFromCollection(array $collection): array
+    private function prepareSourceFromCollection(array $collection): PreparedModuleSource
     {
         $sanitized = $this->sanitizer->sanitize($collection['files']);
         $selection = (new ModuleReviewSourceSelector())->select($sanitized['files']);
 
-        return [
-            'files' => $selection['files'],
-            'skipped' => $collection['skipped'],
-            'totalBytes' => $selection['selectedBytes'],
-            'redactions' => $sanitized['redactions'],
-            'coverage' => $selection['coverage'],
-        ];
+        return new PreparedModuleSource(
+            files: $selection['files'],
+            skipped: $collection['skipped'],
+            totalBytes: $selection['selectedBytes'],
+            redactions: $sanitized['redactions'],
+            coverage: SourceCoverage::fromArray($selection['coverage']),
+        );
     }
 
     /**
@@ -126,15 +98,9 @@ final class ModuleReviewAnalyzer
      *     workingDirectory: string,
      *     command: list<string>
      * } $runtime
-     * @param array{
-     *     files: list<array{path: string, bytes: int, content: string}>,
-     *     skipped: list<array{path: string, reason: string}>,
-     *     totalBytes: int,
-     *     redactions: list<array{path: string, line: int, type: string}>,
-     *     coverage: array<string, mixed>
-     * }|null $preparedSource
+     * @param PreparedModuleSource|array<string, mixed>|null $preparedSource
      *
-     * @return array<string, mixed>
+     * @return ModuleReviewResult
      */
     public function analyze(
         string $modulePath,
@@ -142,8 +108,8 @@ final class ModuleReviewAnalyzer
         array $runtime,
         ?callable $progress = null,
         ?string $humanName = null,
-        ?array $preparedSource = null,
-    ): array {
+        PreparedModuleSource|array|null $preparedSource = null,
+    ): ModuleReviewResult {
         $module = [
             'machineName' => $machineName,
             'path' => $modulePath,
@@ -153,6 +119,10 @@ final class ModuleReviewAnalyzer
             'review' => null,
             'comparison' => null,
         ];
+
+        if (is_array($preparedSource)) {
+            $preparedSource = PreparedModuleSource::fromArray($preparedSource);
+        }
 
         if ($preparedSource === null) {
             try {
@@ -168,15 +138,15 @@ final class ModuleReviewAnalyzer
         }
 
         $sanitizedCollection = [
-            'files' => $preparedSource['files'],
-            'skipped' => $preparedSource['skipped'],
-            'totalBytes' => $preparedSource['totalBytes'],
-            'coverage' => $preparedSource['coverage'],
+            'files' => $preparedSource->files,
+            'skipped' => $preparedSource->skipped,
+            'totalBytes' => $preparedSource->totalBytes,
+            'coverage' => $preparedSource->coverage->toArray(),
         ];
         $source['files'] = count($sanitizedCollection['files']);
         $source['bytes'] = $sanitizedCollection['totalBytes'];
         $source['skipped'] = $sanitizedCollection['skipped'];
-        $source['redactions'] = $preparedSource['redactions'];
+        $source['redactions'] = $preparedSource->redactions;
         $source['coverage'] = $sanitizedCollection['coverage'];
         $this->emitProgress($progress, 'source_prepared', [
             'files' => count($sanitizedCollection['files']),
@@ -233,17 +203,20 @@ final class ModuleReviewAnalyzer
         $searchTotal = count($searchPlan);
         $this->emitProgress($progress, 'project_search_started', ['total' => $searchTotal]);
         $searchCurrent = 0;
-        foreach ($searchPlan as $searchItem) {
-            $term = $searchItem['term'];
-            $type = $searchItem['type'];
+        foreach (array_chunk($searchPlan, self::SEARCH_CONCURRENCY) as $searchBatch) {
+            $promises = [];
+            foreach ($searchBatch as $searchItem) {
+                $promises[] = $this->projectSearch->searchAsync($searchItem['term'], self::SEARCH_LIMIT, 0);
+            }
             try {
-                $projects = $this->projectSearch->search($term, self::SEARCH_LIMIT, 0);
-            } catch (\RuntimeException) {
+                $settled = Utils::settle($promises)->wait();
+            } catch (\Throwable) {
+                $failedItem = $searchBatch[0];
                 $this->emitProgress($progress, 'project_search_failed', [
                     'current' => $searchCurrent + 1,
                     'total' => $searchTotal,
-                    'term' => $term,
-                    'type' => $type,
+                    'term' => $failedItem['term'],
+                    'type' => $failedItem['type'],
                 ]);
                 return $this->incomplete(
                     $module,
@@ -257,27 +230,53 @@ final class ModuleReviewAnalyzer
                 );
             }
 
-            ++$searchCurrent;
-            $searches[] = [
-                'type' => $type,
-                'term' => $term,
-                'results' => $projects,
-            ];
-            $ranking = [
-                'term' => $term,
-                'projects' => $projects,
-            ];
-            if (in_array($type, ['name', 'core', 'functional'], true)) {
-                $primaryRankings[] = $ranking;
-            } else {
-                $secondaryRankings[] = $ranking;
+            foreach ($settled as $index => $result) {
+                $searchItem = $searchBatch[$index];
+                $term = $searchItem['term'];
+                $type = $searchItem['type'];
+                if ($result['state'] !== 'fulfilled') {
+                    $this->emitProgress($progress, 'project_search_failed', [
+                        'current' => $searchCurrent + 1,
+                        'total' => $searchTotal,
+                        'term' => $term,
+                        'type' => $type,
+                    ]);
+                    return $this->incomplete(
+                        $module,
+                        $source,
+                        $review,
+                        $searches,
+                        [],
+                        null,
+                        $ai,
+                        'project_search',
+                    );
+                }
+
+                /** @var list<array{machineName: string, title: string, description: string, url: string}> $projects */
+                $projects = $result['value'];
+                ++$searchCurrent;
+                $searches[] = [
+                    'type' => $type,
+                    'term' => $term,
+                    'results' => $projects,
+                ];
+                $ranking = [
+                    'term' => $term,
+                    'projects' => $projects,
+                ];
+                if (in_array($type, ['name', 'core', 'functional'], true)) {
+                    $primaryRankings[] = $ranking;
+                } else {
+                    $secondaryRankings[] = $ranking;
+                }
+                $this->emitProgress($progress, 'project_search_progress', [
+                    'current' => $searchCurrent,
+                    'total' => $searchTotal,
+                    'term' => $term,
+                    'type' => $type,
+                ]);
             }
-            $this->emitProgress($progress, 'project_search_progress', [
-                'current' => $searchCurrent,
-                'total' => $searchTotal,
-                'term' => $term,
-                'type' => $type,
-            ]);
         }
         $this->emitProgress($progress, 'project_search_completed', [
             'total' => $searchTotal,
@@ -372,7 +371,7 @@ final class ModuleReviewAnalyzer
 
         $ai['comparison'] = $this->aiMetadata($comparisonAi);
         try {
-            $comparison = $this->comparisonValidator->validate($comparisonAi['result'], $candidates);
+            $comparison = $this->comparisonValidator->validate($comparisonAi['result'], $candidates)->toArray();
         } catch (\RuntimeException) {
             return $this->incomplete(
                 $module,
@@ -489,7 +488,7 @@ final class ModuleReviewAnalyzer
             'complete' => true,
         ]);
 
-        return $result;
+        return new ModuleReviewResult($result);
     }
 
     /**
@@ -501,7 +500,7 @@ final class ModuleReviewAnalyzer
      * @param array<string, mixed> $assessment
      * @param array<string, mixed> $ai
      *
-     * @return array<string, mixed>
+     * @return ModuleReviewResult
      */
     private function completeWithoutCandidates(
         array $module,
@@ -512,7 +511,7 @@ final class ModuleReviewAnalyzer
         array $assessment,
         array $ai,
         ?callable $progress,
-    ): array {
+    ): ModuleReviewResult {
         $result = [
             'complete' => true,
             'module' => $module,
@@ -538,7 +537,7 @@ final class ModuleReviewAnalyzer
             'complete' => true,
         ]);
 
-        return $result;
+        return new ModuleReviewResult($result);
     }
 
     /**
@@ -550,7 +549,7 @@ final class ModuleReviewAnalyzer
      * @param array<string, mixed>|null $comparison
      * @param array<string, mixed> $ai
      *
-     * @return array<string, mixed>
+     * @return ModuleReviewResult
      */
     private function incomplete(
         array $module,
@@ -561,8 +560,8 @@ final class ModuleReviewAnalyzer
         ?array $comparison,
         array $ai,
         string $stage,
-    ): array {
-        return [
+    ): ModuleReviewResult {
+        return new ModuleReviewResult([
             'complete' => false,
             'module' => $module,
             'source' => $source,
@@ -579,7 +578,7 @@ final class ModuleReviewAnalyzer
                     'message' => self::LIMITATION_MESSAGES[$stage],
                 ],
             ],
-        ];
+        ]);
     }
 
     /**

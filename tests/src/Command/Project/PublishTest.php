@@ -9,6 +9,7 @@ use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
+use mglaman\DrupalOrg\Project\PreparedModuleSource;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
@@ -506,7 +507,7 @@ class PublishTest extends TestCase
             /** @var array<string, mixed>|null */
             public ?array $analyzeRuntime = null;
             /** @var array<string, mixed>|null */
-            public ?array $analyzePreparedSource = null;
+            public PreparedModuleSource|array|null $analyzePreparedSource = null;
         };
 
         $workflow = new ModuleReviewWorkflow(
@@ -523,7 +524,7 @@ class PublishTest extends TestCase
 
                 return $aiContext;
             },
-            static function (string $modulePath) use ($client): array {
+            static function (string $modulePath) use ($client): array|PreparedModuleSource {
                 return (new ModuleReviewAnalyzerFactory($client))
                     ->create()
                     ->prepareSource($modulePath);
@@ -534,7 +535,7 @@ class PublishTest extends TestCase
                 array $runtime,
                 ?callable $progress = null,
                 ?string $humanName = null,
-                ?array $preparedSource = null,
+                PreparedModuleSource|array|null $preparedSource = null,
             ) use (
                 $state,
                 $analysisResult,

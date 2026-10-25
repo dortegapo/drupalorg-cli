@@ -15,17 +15,11 @@ class ModuleLocator
     /**
      * Locates a module from an explicit path or machine name.
      *
-     * @return array{
-     *     resolvedPath: string,
-     *     moduleName: string,
-     *     infoFile: string,
-     *     projectRoot: ?string,
-     *     webRoot: ?string
-     * }
-     *   The resolved module path, module name, info file path, and optional
+     * @return ResolvedModule
+     *   The resolved module path, machine name, info file path, and optional
      *   Composer project context.
      */
-    public function locate(string $modulePath): array
+    public function locate(string $modulePath): ResolvedModule
     {
         if (!file_exists($modulePath) && !$this->isExplicitPath($modulePath)) {
             $currentWorkingDirectory = getcwd();
@@ -47,15 +41,9 @@ class ModuleLocator
     /**
      * Resolves an explicit module path and finds its Composer context, when known.
      *
-     * @return array{
-     *     resolvedPath: string,
-     *     moduleName: string,
-     *     infoFile: string,
-     *     projectRoot: ?string,
-     *     webRoot: ?string
-     * }
+     * @return ResolvedModule
      */
-    private function locateExplicitPath(string $modulePath): array
+    private function locateExplicitPath(string $modulePath): ResolvedModule
     {
         $location = $this->resolvePath($modulePath);
 
@@ -78,15 +66,9 @@ class ModuleLocator
     }
 
     /**
-     * @return array{
-     *     resolvedPath: string,
-     *     moduleName: string,
-     *     infoFile: string,
-     *     projectRoot: ?string,
-     *     webRoot: ?string
-     * }
+     * @return ResolvedModule
      */
-    private function locateByMachineName(string $currentWorkingDirectory, string $moduleName): array
+    private function locateByMachineName(string $currentWorkingDirectory, string $moduleName): ResolvedModule
     {
         foreach ($this->composerContextLocator->findCandidates($currentWorkingDirectory) as $context) {
             $candidate = $this->buildModulePath($context['projectRoot'], $context['webRoot'], $moduleName);
@@ -111,9 +93,9 @@ class ModuleLocator
     }
 
     /**
-     * @return array{resolvedPath: string, moduleName: string, infoFile: string}
+     * @return ResolvedModule
      */
-    private function resolvePath(string $modulePath): array
+    private function resolvePath(string $modulePath): ResolvedModule
     {
         if (!file_exists($modulePath)) {
             throw new \RuntimeException(sprintf('Module path does not exist: %s', $modulePath));
@@ -134,35 +116,25 @@ class ModuleLocator
             throw new \RuntimeException(sprintf('Module info file does not exist: %s', $infoFile));
         }
 
-        return [
-            'resolvedPath' => $resolvedPath,
-            'moduleName' => $moduleName,
-            'infoFile' => $infoFile,
-        ];
+        return new ResolvedModule($resolvedPath, $moduleName, $infoFile, null, null);
     }
 
     /**
      * Adds the Composer context that contains a resolved module, when known.
      *
-     * @param array{resolvedPath: string, moduleName: string, infoFile: string} $location
+     * @param ResolvedModule $location
      * @param array{projectRoot: string, webRoot: string}|null $context
      *
-     * @return array{
-     *     resolvedPath: string,
-     *     moduleName: string,
-     *     infoFile: string,
-     *     projectRoot: ?string,
-     *     webRoot: ?string
-     * }
+     * @return ResolvedModule
      */
-    private function withComposerContext(array $location, ?array $context = null): array
+    private function withComposerContext(ResolvedModule $location, ?array $context = null): ResolvedModule
     {
-        return [
-            'resolvedPath' => $location['resolvedPath'],
-            'moduleName' => $location['moduleName'],
-            'infoFile' => $location['infoFile'],
-            'projectRoot' => $context['projectRoot'] ?? null,
-            'webRoot' => $context['webRoot'] ?? null,
-        ];
+        return new ResolvedModule(
+            $location->resolvedPath,
+            $location->machineName,
+            $location->infoFile,
+            $context['projectRoot'] ?? null,
+            $context['webRoot'] ?? null,
+        );
     }
 }

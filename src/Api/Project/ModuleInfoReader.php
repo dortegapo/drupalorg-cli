@@ -10,15 +10,7 @@ use Symfony\Component\Yaml\Yaml;
 final class ModuleInfoReader
 {
 
-    /**
-     * @return array{
-     *   name: string,
-     *   type: string,
-     *   coreVersionRequirement: string,
-     *   dependencies: list<string>
-     * }
-     */
-    public function read(string $infoFile, string $moduleName): array
+    public function read(string $infoFile, string $moduleName): ModuleInfo
     {
         try {
             $metadata = Yaml::parseFile($infoFile);
@@ -90,11 +82,11 @@ final class ModuleInfoReader
             }
         }
 
-        return [
-            'name' => $metadata['name'],
-            'type' => $type,
-            'coreVersionRequirement' => $metadata['core_version_requirement'],
-            'dependencies' => $dependencies,
-        ];
+        return new ModuleInfo(
+            $metadata['name'],
+            $type,
+            $metadata['core_version_requirement'],
+            $dependencies,
+        );
     }
 }

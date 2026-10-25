@@ -13,7 +13,9 @@ use mglaman\DrupalOrg\Entity\Project;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectDescriptionBuilder;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectFormData;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectPrefillUrlBuilder;
+use mglaman\DrupalOrg\Result\Project\DocumentationLink;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
+use mglaman\DrupalOrg\Result\Project\SupportingOrganization;
 use mglaman\DrupalOrgCli\Browser\BrowserCompanionSetupInteractor;
 use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Helper\QuestionHelper;
@@ -38,6 +40,8 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?ProjectPublishProgressRenderer $progress = null,
         private readonly ?BrowserCompanionManager $browserCompanionManager = null,
         private readonly ?BrowserLauncher $browserLauncher = null,
+        private readonly ?BrowserPlatformDetector $browserPlatformDetector = null,
+        private readonly ?BrowserCompanionSetupInteractor $browserCompanionSetupInteractor = null,
     ) {
     }
 
@@ -176,10 +180,11 @@ final class DrupalOrgProjectCreationHandoff
         }
 
         $manager = $this->browserCompanionManager ?? new BrowserCompanionManager();
+        $launcher = $this->browserLauncher ?? new BrowserLauncher();
         $browserFamily = $url !== null ? $manager->getBrowserFamily() : null;
         $opened = $browserFamily !== null
-            ? ($this->browserLauncher ?? new BrowserLauncher())->open($browserFamily, $projectCreationUrl)
-            : ($this->browserLauncher ?? new BrowserLauncher())->openDefault($projectCreationUrl);
+            ? $launcher->open($browserFamily, $projectCreationUrl)
+            : $launcher->openDefault($projectCreationUrl);
         if ($opened) {
             $errorOutput->writeln('<info>Opened</info>: ' . self::PROJECT_CREATION_URL);
 
@@ -213,7 +218,7 @@ final class DrupalOrgProjectCreationHandoff
         if (!$browserCompanionManager->isConfigured()) {
             $this->progress?->suspend();
             $distribution = $browserCompanionManager->distribution();
-            $platformDetector = new BrowserPlatformDetector();
+            $platformDetector = $this->browserPlatformDetector ?? new BrowserPlatformDetector();
             if ($browserCompanionManager->publishedFamilies($platformDetector->browserFamilies()) === []) {
                 $this->writeManualPrefillFallback(
                     $output,
@@ -222,22 +227,24 @@ final class DrupalOrgProjectCreationHandoff
 
                 return null;
             }
-            $status = (new BrowserCompanionSetupInteractor(
+            $setupInteractor = $this->browserCompanionSetupInteractor ?? new BrowserCompanionSetupInteractor(
                 $browserCompanionManager,
                 $distribution,
                 $platformDetector,
-            ))->run(
+            );
+            $launcher = $this->browserLauncher ?? new BrowserLauncher();
+            $status = $setupInteractor->run(
                 $input,
                 $output,
                 $helper,
-                $this->browserLauncher ?? new BrowserLauncher(),
-                function (BrowserFamily $family, string $url) use ($errorOutput, $output): bool {
+                $launcher,
+                function (BrowserFamily $family, string $url) use ($errorOutput, $output, $launcher): bool {
                     if ($this->openUrl !== null) {
                         ($this->openUrl)($url, $errorOutput, $output);
                         return true;
                     }
 
-                    return ($this->browserLauncher ?? new BrowserLauncher())->open($family, $url);
+                    return $launcher->open($family, $url);
                 },
             );
             if (!in_array($status, [
@@ -268,10 +275,8 @@ final class DrupalOrgProjectCreationHandoff
 
         try {
             $descriptionHtml = ($this->descriptionBuilder ?? new DrupalOrgProjectDescriptionBuilder())->build($metadata);
-            $issues = $metadata->issues;
-            $resources = $metadata->resources;
-            $issueComponents = $issues['components'] !== []
-                ? $issues['components']
+            $issueComponents = $metadata->issues->components !== []
+                ? $metadata->issues->components
                 : DrupalOrgProjectFormData::DEFAULT_ISSUE_COMPONENTS;
             $formData = new DrupalOrgProjectFormData(
                 title: $metadata->title,
@@ -283,16 +288,22 @@ final class DrupalOrgProjectCreationHandoff
                 developmentStatus: DrupalOrgProjectFormData::DEVELOPMENT_STATUSES[0],
                 categories: $metadata->categories,
                 ecosystems: $metadata->ecosystems,
-                supportingOrganizations: $metadata->supportingOrganizations,
+                supportingOrganizations: array_map(
+                    static fn(SupportingOrganization $organization): array => $organization->toArray(),
+                    $metadata->supportingOrganizations,
+                ),
                 issueComponents: $issueComponents,
-                enableIssueTracker: $issues['enableTracker'],
-                issueGuidelines: $issues['submissionGuidelines'],
-                issueSummaryTemplate: $issues['summaryTemplate'],
-                homepage: $resources['homepage'],
-                changelog: $resources['changelog'],
-                demo: $resources['demo'],
-                documentation: $resources['documentation'],
-                screenshots: $resources['screenshots'],
+                enableIssueTracker: $metadata->issues->enableTracker,
+                issueGuidelines: $metadata->issues->submissionGuidelines,
+                issueSummaryTemplate: $metadata->issues->summaryTemplate,
+                homepage: $metadata->resources->homepage,
+                changelog: $metadata->resources->changelog,
+                demo: $metadata->resources->demo,
+                documentation: array_map(
+                    static fn(DocumentationLink $link): array => $link->toArray(),
+                    $metadata->resources->documentation,
+                ),
+                screenshots: $metadata->resources->screenshots,
             );
             $url = ($this->prefillUrlBuilder ?? new DrupalOrgProjectPrefillUrlBuilder())->build($formData);
             $this->progress?->complete(ProjectPublishProgressRenderer::PREPARING_PROJECT_FORM);
