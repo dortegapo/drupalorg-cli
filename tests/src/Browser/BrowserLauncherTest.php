@@ -6,6 +6,7 @@ namespace mglaman\DrupalOrg\Tests\Browser;
 
 use mglaman\DrupalOrg\Browser\BrowserFamily;
 use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
+use mglaman\DrupalOrgCli\Browser\BrowserExecutableResolver;
 use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -33,6 +34,45 @@ final class BrowserLauncherTest extends TestCase
         self::assertFalse($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
         self::assertSame([
             ['cmd' => ['where.exe', 'firefox.exe'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/c', 'if exist "%LOCALAPPDATA%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/c', 'if exist "%PROGRAMFILES%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/c', 'if exist "%PROGRAMFILES(X86)%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
+        ], $commands);
+    }
+
+    public function testWindowsUsesAStandardInstallPathWhenBrowserIsNotOnPath(): void
+    {
+        $commands = [];
+        $detector = new BrowserPlatformDetector(
+            'Windows',
+            ['LOCALAPPDATA' => 'C:\\Users\\Test\\AppData\\Local'],
+            '',
+        );
+        $resolver = new BrowserExecutableResolver($detector, [
+            'LOCALAPPDATA' => 'C:\\Users\\Test\\AppData\\Local',
+            'PROGRAMFILES' => 'C:\\Program Files',
+            'PROGRAMFILES(X86)' => 'C:\\Program Files (x86)',
+        ]);
+        $launcher = new BrowserLauncher(
+            $detector,
+            static function (array $command) use (&$commands): bool {
+                $commands[] = ['cmd' => $command, 'run' => false];
+
+                return str_contains($command[2] ?? '', 'C:\\Users\\Test');
+            },
+            static function (array $command) use (&$commands): bool {
+                $commands[] = ['cmd' => $command, 'run' => true];
+
+                return true;
+            },
+            $resolver,
+        );
+
+        self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
+        self::assertSame([
+            ['cmd' => ['where.exe', 'firefox.exe'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/c', 'if exist "C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/c', 'start', '', 'C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe', 'https://example.test'], 'run' => true],
         ], $commands);
     }
 

@@ -5,6 +5,7 @@
     const FORM_SELECTOR = '#project-module-node-form';
     const MAX_WAIT_MS = 10000;
     const POLL_INTERVAL_MS = 100;
+    const ROW_WAIT_MS = 2000;
     const MAINTENANCE_STATUSES = [
         'Actively maintained',
         'Minimally maintained',
@@ -148,7 +149,10 @@
 
         element.value = value;
         if (element instanceof HTMLTextAreaElement) {
-            const editor = window.CKEDITOR?.instances?.[element.id];
+            const editor = window.CKEDITOR?.instances?.[element.id]
+                || element.ckeditorInstance
+                || element.editor
+                || element.__ckeditorInstance;
             if (editor && typeof editor.setData === 'function') {
                 editor.setData(value);
             }
@@ -334,6 +338,71 @@
         return filled;
     }
 
+    function rowWaitTimeout() {
+        return typeof window.__drupalorgCliPrefillRowWaitMs === 'number'
+            ? window.__drupalorgCliPrefillRowWaitMs
+            : ROW_WAIT_MS;
+    }
+
+    function waitForRows(selector, count) {
+        if (document.querySelectorAll(selector).length >= count) {
+            return Promise.resolve(true);
+        }
+
+        return new Promise((resolve) => {
+            const started = Date.now();
+            let observer = null;
+            let timer = null;
+            const finish = (result) => {
+                if (observer !== null) observer.disconnect();
+                if (timer !== null) window.clearTimeout(timer);
+                resolve(result);
+            };
+            const check = () => {
+                if (document.querySelectorAll(selector).length >= count) {
+                    finish(true);
+                    return;
+                }
+                if (Date.now() - started >= rowWaitTimeout()) {
+                    finish(false);
+                    return;
+                }
+                timer = window.setTimeout(check, POLL_INTERVAL_MS);
+            };
+            if (typeof window.MutationObserver === 'function') {
+                observer = new window.MutationObserver(check);
+                observer.observe(document.body || document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                });
+            }
+            check();
+        });
+    }
+
+    async function ensureNumberOfRows(rowSelector, addSelectors, requiredCount, warnings) {
+        while (document.querySelectorAll(rowSelector).length < requiredCount) {
+            const addButton = addSelectors
+                .map((selector) => document.querySelector(selector))
+                .find((element) => element !== null);
+            if (addButton === undefined || typeof addButton.click !== 'function') {
+                warnings.push(`Could not create another row for: ${rowSelector}`);
+                return false;
+            }
+
+            addButton.click();
+            if (!await waitForRows(rowSelector, Math.min(
+                requiredCount,
+                document.querySelectorAll(rowSelector).length + 1,
+            ))) {
+                warnings.push(`Timed out creating rows for: ${rowSelector}`);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     function fillIssueComponents(components, warnings) {
         if (components.length === 0) {
             return 0;
@@ -386,34 +455,96 @@
         return filled;
     }
 
-    async function fillForm(payload) {
+    async function fillForm(payload, onFillStarted = null) {
         const warnings = [];
         let filled = 0;
-        if (setInputValue('#edit-title', payload.title, warnings)) filled++;
-        if (selectOptionByValue('#edit-field-project-type-und', payload.projectType, warnings)) filled++;
-        if (setInputValue('#edit-field-project-machine-name-und-0-value', payload.machineName, warnings)) filled++;
-        if (setInputValue('#edit-body-und-0-summary', payload.summary, warnings)) filled++;
-        if (setInputValue('#edit-body-und-0-value', payload.descriptionHtml, warnings)) filled++;
-        if (selectRadioByLabel('taxonomy_vocabulary_44[und]', payload.maintenanceStatus, warnings)) filled++;
-        if (selectRadioByLabel('taxonomy_vocabulary_46[und]', payload.developmentStatus, warnings)) filled++;
-        if (selectCategories(payload.categories, warnings)) filled++;
-        filled += await setAutocompleteValues(
+        const markStarted = () => {
+            if (onFillStarted !== null) onFillStarted();
+        };
+        if (setInputValue('#edit-title', payload.title, warnings)) { filled++; markStarted(); }
+        if (selectOptionByValue('#edit-field-project-type-und', payload.projectType, warnings)) { filled++; markStarted(); }
+        if (setInputValue('#edit-field-project-machine-name-und-0-value', payload.machineName, warnings)) { filled++; markStarted(); }
+        if (setInputValue('#edit-body-und-0-summary', payload.summary, warnings)) { filled++; markStarted(); }
+        if (setInputValue('#edit-body-und-0-value', payload.descriptionHtml, warnings)) { filled++; markStarted(); }
+        if (selectRadioByLabel('taxonomy_vocabulary_44[und]', payload.maintenanceStatus, warnings)) { filled++; markStarted(); }
+        if (selectRadioByLabel('taxonomy_vocabulary_46[und]', payload.developmentStatus, warnings)) { filled++; markStarted(); }
+        if (selectCategories(payload.categories, warnings)) { filled++; markStarted(); }
+        await ensureNumberOfRows(
+            'input[id^="edit-field-project-ecosystem-und-"][id$="-target-id"]',
+            [
+                '[name="field_project_ecosystem_add_more"]',
+                '#edit-field-project-ecosystem-und-add-more',
+                '[data-field-name="field_project_ecosystem"] .field-multiple-add-more-submit',
+            ],
+            payload.ecosystems.length,
+            warnings,
+        );
+        const ecosystemCount = await setAutocompleteValues(
             payload.ecosystems.map((_, index) => `#edit-field-project-ecosystem-und-${index}-target-id`),
             payload.ecosystems,
             warnings,
         );
-        filled += await fillSupportingOrganizations(payload.supportingOrganizations, warnings);
-        filled += fillIssueComponents(payload.issueComponents, warnings);
-        if (setInputValue('#edit-field-project-issue-guidelines-und-0-value', payload.issueGuidelines, warnings)) filled++;
-        if (setInputValue('#edit-field-issue-summary-template-und-0-value', payload.issueSummaryTemplate, warnings)) filled++;
-        if (setCheckbox('#edit-field-project-has-issue-queue-und', payload.enableIssueTracker, warnings)) filled++;
-        if (payload.homepage !== '' && setInputValue('#edit-field-project-homepage-und-0-url', payload.homepage, warnings)) filled++;
-        if (payload.changelog !== '' && setInputValue('#edit-field-project-changelog-und-0-url', payload.changelog, warnings)) filled++;
-        if (payload.demo !== '' && setInputValue('#edit-field-project-demo-und-0-url', payload.demo, warnings)) filled++;
-        filled += fillDocumentation(payload.documentation, warnings);
+        if (ecosystemCount > 0) markStarted();
+        filled += ecosystemCount;
+        await ensureNumberOfRows(
+            'input[id^="edit-field-supporting-organizations-und-"][id$="-target-id"]',
+            [
+                '[name="field_supporting_organizations_add_more"]',
+                '#edit-field-supporting-organizations-und-add-more',
+            ],
+            payload.supportingOrganizations.length,
+            warnings,
+        );
+        const organizationCount = await fillSupportingOrganizations(payload.supportingOrganizations, warnings);
+        if (organizationCount > 0) markStarted();
+        filled += organizationCount;
+        await ensureNumberOfRows(
+            'input[id^="edit-field-project-components-und-"][id$="-value"]',
+            [
+                '[name="field_project_components_add_more"]',
+                '#edit-field-project-components-und-add-more',
+            ],
+            payload.issueComponents.length,
+            warnings,
+        );
+        const componentCount = fillIssueComponents(payload.issueComponents, warnings);
+        if (componentCount > 0) markStarted();
+        filled += componentCount;
+        if (setInputValue('#edit-field-project-issue-guidelines-und-0-value', payload.issueGuidelines, warnings)) { filled++; markStarted(); }
+        if (setInputValue('#edit-field-issue-summary-template-und-0-value', payload.issueSummaryTemplate, warnings)) { filled++; markStarted(); }
+        if (setCheckbox('#edit-field-project-has-issue-queue-und', payload.enableIssueTracker, warnings)) { filled++; markStarted(); }
+        if (payload.homepage !== '' && setInputValue('#edit-field-project-homepage-und-0-url', payload.homepage, warnings)) { filled++; markStarted(); }
+        if (payload.changelog !== '' && setInputValue('#edit-field-project-changelog-und-0-url', payload.changelog, warnings)) { filled++; markStarted(); }
+        if (payload.demo !== '' && setInputValue('#edit-field-project-demo-und-0-url', payload.demo, warnings)) { filled++; markStarted(); }
+        await ensureNumberOfRows(
+            'input[id^="edit-field-project-documentation-und-"][id$="-title"]',
+            [
+                '[name="field_project_documentation_add_more"]',
+                '#edit-field-project-documentation-und-add-more',
+            ],
+            payload.documentation.length,
+            warnings,
+        );
+        const documentationCount = fillDocumentation(payload.documentation, warnings);
+        if (documentationCount > 0) markStarted();
+        filled += documentationCount;
+        await ensureNumberOfRows(
+            'input[id^="edit-field-project-screenshots-und-"][id$="-url"]',
+            [
+                '[name="field_project_screenshots_add_more"]',
+                '#edit-field-project-screenshots-und-add-more',
+            ],
+            payload.screenshots.length,
+            warnings,
+        );
+        let screenshotCount = 0;
         payload.screenshots.forEach((screenshot, index) => {
-            if (setInputValue(`#edit-field-project-screenshots-und-${index}-url`, screenshot, warnings)) filled++;
+            if (setInputValue(`#edit-field-project-screenshots-und-${index}-url`, screenshot, warnings)) {
+                filled++;
+                screenshotCount++;
+            }
         });
+        if (screenshotCount > 0) markStarted();
 
         return {filled, warnings};
     }
@@ -448,10 +579,18 @@
         const started = Date.now();
         const attempt = () => {
             if (formIsReady() && document.readyState !== 'loading') {
-                // The payload stays in the fragment until the form exists and
-                // this controlled fill attempt has started.
-                removeFragment();
-                fillForm(payload).then(showBanner).catch((error) => {
+                let fillPromise;
+                let fillStarted = false;
+                const markFillStarted = () => {
+                    if (!fillStarted) {
+                        fillStarted = true;
+                        // Do not remove the only retry payload when every
+                        // selector fails before a controlled fill starts.
+                        removeFragment();
+                    }
+                };
+                fillPromise = fillForm(payload, markFillStarted);
+                fillPromise.then(showBanner).catch((error) => {
                     console.warn('drupalorg-cli prefill failed while filling the form.', error);
                 });
                 return;
@@ -471,6 +610,8 @@
             decodePayload,
             validatePayload,
             readPayload,
+            fillForm,
+            fillWhenReady,
         };
         return;
     }

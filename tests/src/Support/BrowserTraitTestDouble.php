@@ -6,6 +6,8 @@ namespace mglaman\DrupalOrg\Tests\Support;
 
 use mglaman\DrupalOrg\Browser\BrowserPlatform;
 use mglaman\DrupalOrgCli\BrowserTrait;
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
+use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
 use Symfony\Component\Console\Output\OutputInterface;
 
 final class BrowserTraitTestDouble
@@ -55,5 +57,24 @@ final class BrowserTraitTestDouble
     {
         $this->launches[] = [$browser, $url];
         return $this->launchResult;
+    }
+
+    protected function browserLauncher(): BrowserLauncher
+    {
+        return new BrowserLauncher(
+            new BrowserPlatformDetector('Linux', $this->windowsSubsystemForLinux ? ['WSL_INTEROP' => '1'] : [], ''),
+            function (array $command): bool {
+                $browser = $command[0] === 'cmd.exe'
+                    ? 'cmd.exe'
+                    : ($command[1] ?? $command[0] ?? '');
+
+                return in_array($browser, $this->availableBrowsers, true);
+            },
+            function (array $command): bool {
+                $this->launches[] = [$command[0], end($command)];
+
+                return $this->launchResult;
+            },
+        );
     }
 }
