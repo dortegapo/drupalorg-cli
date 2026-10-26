@@ -76,7 +76,7 @@ final class ProjectMetadataRenderer
             $output->writeln(sprintf('- %s: %s', $label, $url));
         }
         foreach ($metadata->resources->documentation as $documentation) {
-            $output->writeln(sprintf('- %s: %s', $documentation['title'], $documentation['url']));
+            $output->writeln(sprintf('- %s: %s', $documentation->title, $documentation->url));
         }
         foreach ($metadata->resources->screenshots as $screenshot) {
             $output->writeln('- Screenshot: ' . $screenshot);

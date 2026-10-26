@@ -50,7 +50,7 @@ final class ModuleReviewWorkflow
         QuestionHelper $helper,
         ModuleContext $module,
     ): ModuleReviewWorkflowResult {
-        $runtime = $this->resolveDrupalRuntime($module->projectRoot);
+        $runtime = $this->resolveDrupalRuntime($module->location->projectRoot);
         if ($runtime === null) {
             $output->writeln('Drupal AI review is not available for this project environment.');
 
@@ -83,7 +83,7 @@ final class ModuleReviewWorkflow
         $progress->registerReviewPhases();
         $progress->start(ProjectPublishProgressRenderer::PREPARING_SOURCE);
         try {
-            $preparedSource = $this->prepareModuleSource($module->resolvedPath);
+            $preparedSource = $this->prepareModuleSource($module->location->resolvedPath);
         } catch (\RuntimeException) {
             $progress->fail(ProjectPublishProgressRenderer::PREPARING_SOURCE);
             $progress->warning('Preparing module source... failed');
@@ -141,11 +141,11 @@ final class ModuleReviewWorkflow
         $result = null;
         try {
             $analysis = $this->analyzeModule(
-                $module->resolvedPath,
-                $module->machineName,
+                $module->location->resolvedPath,
+                $module->location->machineName,
                 $runtime,
                 $eventProgress,
-                $module->humanName(),
+                $module->info->name,
                 $preparedSource,
             );
             $result = $analysis instanceof ModuleReviewResult ? $analysis->toArray() : $analysis;
@@ -230,18 +230,18 @@ final class ModuleReviewWorkflow
         $targetPath = $this->moduleReviewPdfPath($module);
         if ($this->pdfWriter !== null) {
             return ($this->pdfWriter)($targetPath, $result, [
-                'machineName' => $module->machineName,
-                'name' => $module->humanName(),
-                'type' => $module->extensionType(),
-                'coreVersionRequirement' => $module->coreVersionRequirement(),
+                'machineName' => $module->location->machineName,
+                'name' => $module->info->name,
+                'type' => $module->info->type,
+                'coreVersionRequirement' => $module->info->coreVersionRequirement,
             ]);
         }
 
         (new ModuleReviewPdfReportWriter())->write($targetPath, $result, [
-            'machineName' => $module->machineName,
-            'name' => $module->humanName(),
-            'type' => $module->extensionType(),
-            'coreVersionRequirement' => $module->coreVersionRequirement(),
+            'machineName' => $module->location->machineName,
+            'name' => $module->info->name,
+            'type' => $module->info->type,
+            'coreVersionRequirement' => $module->info->coreVersionRequirement,
         ]);
 
         return $targetPath;
@@ -249,12 +249,12 @@ final class ModuleReviewWorkflow
 
     private function moduleReviewPdfPath(ModuleContext $module): string
     {
-        $directory = $module->projectRoot;
+        $directory = $module->location->projectRoot;
         if ($directory === null || !is_dir($directory)) {
             $directory = getcwd();
         }
         if ($directory === false || $directory === '') {
-            $directory = dirname($module->resolvedPath);
+            $directory = dirname($module->location->resolvedPath);
         }
 
         $directory = rtrim($directory, '/\\');
@@ -262,7 +262,7 @@ final class ModuleReviewWorkflow
             $directory = DIRECTORY_SEPARATOR;
         }
 
-        return $directory . DIRECTORY_SEPARATOR . $module->machineName
+        return $directory . DIRECTORY_SEPARATOR . $module->location->machineName
             . '-drupalorg-contribution-review.pdf';
     }
 

@@ -4,12 +4,9 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Result\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
-/** @implements ArrayAccess<string, string> */
-final class DocumentationLink implements ArrayAccess, JsonSerializable
+final class DocumentationLink implements JsonSerializable
 {
     public function __construct(
         public readonly string $title,
@@ -27,26 +24,6 @@ final class DocumentationLink implements ArrayAccess, JsonSerializable
     public function toArray(): array
     {
         return ['title' => $this->title, 'url' => $this->url];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Documentation link is immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Documentation link is immutable.');
     }
 
     /** @return array<string, string> */

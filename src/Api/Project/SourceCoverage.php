@@ -4,16 +4,13 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
 /**
  * Describes how much eligible module source was selected for an analysis.
  *
- * @implements ArrayAccess<string, mixed>
  */
-final class SourceCoverage implements ArrayAccess, JsonSerializable
+final class SourceCoverage implements JsonSerializable
 {
     /**
      * @param 'full'|'selected' $mode
@@ -79,26 +76,6 @@ final class SourceCoverage implements ArrayAccess, JsonSerializable
             'omittedBytes' => $this->omittedBytes,
             'omittedBreakdown' => $this->omittedBreakdown,
         ];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Source coverage is immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Source coverage is immutable.');
     }
 
     /** @return array<string, mixed> */

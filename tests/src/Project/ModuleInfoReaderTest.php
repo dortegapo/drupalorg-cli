@@ -57,7 +57,7 @@ class ModuleInfoReaderTest extends TestCase
     {
         $infoFile = $this->writeInfo("name: My Module\ntype: module\ncore_version_requirement: ^11\n");
 
-        self::assertSame([], (new ModuleInfoReader())->read($infoFile, 'my_module')['dependencies']);
+        self::assertSame([], (new ModuleInfoReader())->read($infoFile, 'my_module')->dependencies);
     }
 
     public function testRejectsDependenciesMapping(): void

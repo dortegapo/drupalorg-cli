@@ -48,13 +48,13 @@ class ModuleLocator
         $location = $this->resolvePath($modulePath);
 
         try {
-            foreach ($this->composerContextLocator->findCandidates($location['resolvedPath']) as $context) {
+            foreach ($this->composerContextLocator->findCandidates($location->resolvedPath) as $context) {
                 $candidate = $this->buildModulePath(
                     $context['projectRoot'],
                     $context['webRoot'],
-                    $location['moduleName']
+                    $location->machineName,
                 );
-                if (realpath($candidate) === $location['resolvedPath']) {
+                if (realpath($candidate) === $location->resolvedPath) {
                     return $this->withComposerContext($location, $context);
                 }
             }

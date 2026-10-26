@@ -23,7 +23,6 @@ use mglaman\DrupalOrg\Project\ModuleReviewComparisonResultValidator;
 use mglaman\DrupalOrg\Project\ModuleReviewCollector;
 use mglaman\DrupalOrg\Project\ModuleReviewPromptBuilder;
 use mglaman\DrupalOrg\Project\ModuleReviewResultValidator;
-use mglaman\DrupalOrg\Project\ModuleReviewResult;
 use mglaman\DrupalOrg\Project\ModuleReviewSensitiveDataSanitizer;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -100,6 +99,7 @@ class ModuleReviewAnalyzerTest extends TestCase
                 $events[] = [$event, $context];
             },
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame(
@@ -214,7 +214,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer([], [self::aiFailure('provider_failure')]);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('review_ai', $result);
         self::assertSame([], $result['searches']);
@@ -259,6 +259,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             'Original Palette',
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame(
@@ -302,6 +303,7 @@ class ModuleReviewAnalyzerTest extends TestCase
                 $events[] = [$event, $context];
             },
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame('11.4.8', $result['core']['runtimeVersion']);
@@ -373,6 +375,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             'Admin Quickjump POC',
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame('original_palette', $result['candidates'][0]['machineName']);
@@ -403,6 +406,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             'Reservations',
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame(['Reservations', 'records', 'reservation management'], array_column($result['searches'], 'term'));
@@ -435,6 +439,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             'Example Module',
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertCount(10, $result['searches']);
@@ -466,7 +471,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
         ]);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertSame([
             'searches' => 3,
@@ -515,6 +520,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             'Example Module',
         );
+        $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame(200, $result['discovery']['rawResultOccurrences']);
@@ -545,7 +551,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             $captureDir,
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame([], $result['candidates']);
@@ -560,7 +566,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         file_put_contents($this->modulePath . '/module.php', str_repeat('a', 131073));
         $analyzer = $this->analyzer([], []);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('review_ai', $result);
         self::assertSame([], $this->history);
@@ -601,6 +607,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             null,
             $preparedSource,
         );
+        $result = $result->toArray();
 
         self::assertIncompleteAt('review_ai', $result);
         self::assertSame('full', $result['source']['coverage']['mode']);
@@ -619,7 +626,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             [self::aiSuccess(self::reviewResult())],
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('project_search', $result);
         self::assertCount(1, $result['searches']);
@@ -644,7 +651,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             ],
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('comparison_ai', $result);
         self::assertNotNull($result['review']);
@@ -657,7 +664,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer([], [self::aiSuccess(['unexpected' => 'result'])]);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('review_validation', $result);
         self::assertSame([], $result['searches']);
@@ -679,7 +686,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             ],
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('comparison_validation', $result);
         self::assertNull($result['comparison']);
@@ -697,7 +704,7 @@ class ModuleReviewAnalyzerTest extends TestCase
             ],
         );
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame([], $result['candidates']);
@@ -710,7 +717,7 @@ class ModuleReviewAnalyzerTest extends TestCase
     {
         $analyzer = $this->analyzer([], []);
 
-        $result = $analyzer->analyze($this->workDir . '/missing', 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->workDir . '/missing', 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('collection', $result);
         self::assertSame([], $result['source']['skipped']);
@@ -721,7 +728,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         file_put_contents($this->modulePath . '/logo.png', 'binary-looking content');
         $analyzer = $this->analyzer([], []);
 
-        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime);
+        $result = $analyzer->analyze($this->modulePath, 'example_module', $this->runtime)->toArray();
 
         self::assertIncompleteAt('source_empty', $result);
         self::assertNull($result['review']);
@@ -1001,7 +1008,8 @@ PHP
         return $payload;
     }
 
-    private static function assertIncompleteAt(string $stage, ModuleReviewResult $result): void
+    /** @param array<string, mixed> $result */
+    private static function assertIncompleteAt(string $stage, array $result): void
     {
         self::assertFalse($result['complete']);
         self::assertSame($stage, $result['limitations'][0]['stage']);

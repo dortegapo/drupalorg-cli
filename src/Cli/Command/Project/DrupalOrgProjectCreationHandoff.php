@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Client;
+use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Browser\BrowserCompanionManager;
 use mglaman\DrupalOrg\Browser\BrowserCompanionSetupStatus;
 use mglaman\DrupalOrg\Browser\BrowserFamily;
@@ -42,6 +43,7 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?BrowserLauncher $browserLauncher = null,
         private readonly ?BrowserPlatformDetector $browserPlatformDetector = null,
         private readonly ?BrowserCompanionSetupInteractor $browserCompanionSetupInteractor = null,
+        private readonly ?GetProjectAction $projectLookupAction = null,
     ) {
     }
 
@@ -121,7 +123,8 @@ final class DrupalOrgProjectCreationHandoff
                         ProjectPublishProgressRenderer::VERIFYING_PROJECT => 'Verifying Drupal.org project',
                     ]);
                     $this->progress?->start(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
-                    $project = $this->client->getProject($machineName);
+                    $projectResult = ($this->projectLookupAction ?? new GetProjectAction($this->client))($machineName);
+                    $project = $projectResult->project;
                 } catch (\Exception $exception) {
                     $this->progress?->fail(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
                     $errorOutput->writeln(sprintf(

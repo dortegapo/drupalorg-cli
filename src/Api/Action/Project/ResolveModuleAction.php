@@ -8,6 +8,7 @@ use mglaman\DrupalOrg\Action\ActionInterface;
 use mglaman\DrupalOrg\Project\ModuleContext;
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
 
 final class ResolveModuleAction implements ActionInterface
 {
@@ -17,11 +18,11 @@ final class ResolveModuleAction implements ActionInterface
     ) {
     }
 
-    public function __invoke(string $module): ModuleContext
+    public function __invoke(string $module): ResolveModuleResult
     {
         $location = $this->locator->locate($module);
         $info = $this->infoReader->read($location->infoFile, $location->machineName);
 
-        return new ModuleContext($location, $info);
+        return new ResolveModuleResult(new ModuleContext($location, $info));
     }
 }

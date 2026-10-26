@@ -21,6 +21,8 @@ use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -110,6 +112,19 @@ XML;
             $items .= "    </item>\n";
         }
         return "<drupal_context>\n  <project>{$projectTitle}</project>\n  <items>\n{$items}  </items>\n</drupal_context>";
+    }
+
+    protected function formatGetProject(GetProjectResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->machineName);
+        if (!$result->found()) {
+            return "<project_lookup><machine_name>{$machineName}</machine_name><found>false</found></project_lookup>";
+        }
+
+        $title = $this->xmlEscape($result->project?->title ?? '');
+
+        return "<project_lookup><machine_name>{$machineName}</machine_name><found>true</found>"
+            . "<title>{$title}</title></project_lookup>";
     }
 
     protected function formatProjectMetadata(ProjectMetadataResult $result): string
@@ -231,6 +246,16 @@ XML;
 {$tagsXml}  </tags>
 </drupal_context>
 XML;
+    }
+
+    protected function formatResolveModule(ResolveModuleResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->module->location->machineName);
+        $path = $this->xmlEscape($result->module->location->resolvedPath);
+        $infoFile = $this->xmlEscape($result->module->location->infoFile);
+
+        return "<module><machine_name>{$machineName}</machine_name><path>{$path}</path>"
+            . "<info_file>{$infoFile}</info_file></module>";
     }
 
     protected function formatIssueFork(IssueForkResult $result): string

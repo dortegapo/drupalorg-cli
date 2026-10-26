@@ -22,7 +22,7 @@ final class ModuleReviewWorkflowResult
             ? null
             : ($analysisResult instanceof ModuleReviewResult
                 ? $analysisResult
-                : new ModuleReviewResult($analysisResult));
+                : ModuleReviewResult::fromArray($analysisResult));
     }
 
     public readonly ?ModuleReviewResult $analysisResult;

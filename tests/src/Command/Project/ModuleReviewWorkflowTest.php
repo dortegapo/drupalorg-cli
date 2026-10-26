@@ -152,8 +152,8 @@ final class ModuleReviewWorkflowTest extends TestCase
         self::assertTrue($result->continuePublishing);
         self::assertSame(1, $state->analyzeCalls);
         self::assertNotNull($state->analyzePreparedSource);
-        self::assertSame('selected', $state->analyzePreparedSource['coverage']['mode']);
-        self::assertLessThanOrEqual(128 * 1024, $state->analyzePreparedSource['totalBytes']);
+        self::assertSame('selected', $state->analyzePreparedSource->coverage->mode);
+        self::assertLessThanOrEqual(128 * 1024, $state->analyzePreparedSource->totalBytes);
         self::assertStringContainsString('128 KiB  Recommended · lowest token usage', $display);
         self::assertStringContainsString('Cancel AI review', $display);
     }
@@ -171,7 +171,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         );
 
         self::assertTrue($result->continuePublishing);
-        self::assertSame('full', $state->analyzePreparedSource['coverage']['mode']);
+        self::assertSame('full', $state->analyzePreparedSource->coverage->mode);
         self::assertStringContainsString('✓ Preparing module source', $display);
         self::assertStringNotContainsString('Choose how much source', $display);
     }
@@ -189,7 +189,7 @@ final class ModuleReviewWorkflowTest extends TestCase
         );
 
         self::assertTrue($result->continuePublishing);
-        self::assertSame(256 * 1024, $state->analyzePreparedSource['coverage']['requestedBudgetBytes']);
+        self::assertSame(256 * 1024, $state->analyzePreparedSource->coverage->requestedBudgetBytes);
         self::assertStringContainsString('  2. 256 KiB', $display);
     }
 
@@ -206,8 +206,8 @@ final class ModuleReviewWorkflowTest extends TestCase
         );
 
         self::assertTrue($result->continuePublishing);
-        self::assertSame('full', $state->analyzePreparedSource['coverage']['mode']);
-        self::assertGreaterThan(512 * 1024, $state->analyzePreparedSource['totalBytes']);
+        self::assertSame('full', $state->analyzePreparedSource->coverage->mode);
+        self::assertGreaterThan(512 * 1024, $state->analyzePreparedSource->totalBytes);
     }
 
     public function testSourceBudgetSelectionCanBeCancelled(): void

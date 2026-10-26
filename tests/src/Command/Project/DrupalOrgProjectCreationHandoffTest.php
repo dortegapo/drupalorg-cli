@@ -607,7 +607,8 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         $display = $output->fetch();
         $errors = $errorOutput->fetch();
         self::assertNotEmpty($launched);
-        $launchUrl = $launched[0][1];
+        $launchCommand = $launched[0];
+        $launchUrl = $launchCommand[array_key_last($launchCommand)];
         self::assertIsString($launchUrl);
         $encodedPayload = substr($launchUrl, strpos($launchUrl, '=') + 1);
         self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $display);
@@ -662,7 +663,8 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         $display = $output->fetch();
         $errors = $errorOutput->fetch();
         self::assertNotEmpty($launched);
-        $launchUrl = $launched[0][1];
+        $launchCommand = $launched[0];
+        $launchUrl = $launchCommand[array_key_last($launchCommand)];
         self::assertIsString($launchUrl);
         $encodedPayload = substr($launchUrl, strpos($launchUrl, '=') + 1);
         self::assertStringNotContainsString(DrupalOrgProjectPrefillUrlBuilder::FRAGMENT_PREFIX, $display);

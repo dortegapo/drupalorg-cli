@@ -4,12 +4,9 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Result\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
-/** @implements ArrayAccess<string, mixed> */
-final class ProjectResources implements ArrayAccess, JsonSerializable
+final class ProjectResources implements JsonSerializable
 {
     /**
      * @param list<DocumentationLink> $documentation
@@ -51,26 +48,6 @@ final class ProjectResources implements ArrayAccess, JsonSerializable
             'documentation' => $this->documentation,
             'screenshots' => $this->screenshots,
         ];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Project resources are immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Project resources are immutable.');
     }
 
     /** @return array<string, mixed> */

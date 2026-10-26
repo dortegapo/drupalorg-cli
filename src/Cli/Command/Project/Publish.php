@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrgCli\Command\Project;
 
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
+use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Action\Project\ResolveModuleAction;
 use mglaman\DrupalOrg\Project\ModuleContext;
 use mglaman\DrupalOrg\Project\ModuleInfoReader;
 use mglaman\DrupalOrg\Project\ModuleLocator;
 use mglaman\DrupalOrg\Project\ComposerContextLocator;
-use mglaman\DrupalOrg\Project\ProjectPublishState;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Helper\QuestionHelper;
@@ -27,12 +27,14 @@ class Publish extends Command
      * @param GenerateProjectMetadataAction|null $metadataAction
      * @param DrupalOrgProjectCreationHandoff|null $projectCreationHandoff
      * @param ResolveModuleAction|null $moduleResolver
+     * @param GetProjectAction|null $projectLookupAction
      */
     public function __construct(
         private readonly ?ModuleReviewWorkflow $reviewWorkflow = null,
         private readonly ?GenerateProjectMetadataAction $metadataAction = null,
         private readonly ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
         private readonly ?ResolveModuleAction $moduleResolver = null,
+        private readonly ?GetProjectAction $projectLookupAction = null,
     ) {
         parent::__construct();
     }
@@ -68,10 +70,11 @@ class Publish extends Command
         $progress->start(ProjectPublishProgressRenderer::PREPARING_MODULE);
 
         try {
-            $module = ($this->moduleResolver ?? new ResolveModuleAction(
+            $moduleResult = ($this->moduleResolver ?? new ResolveModuleAction(
                 new ModuleLocator(new ComposerContextLocator()),
                 new ModuleInfoReader(),
             ))($modulePath);
+            $module = $moduleResult->module;
         } catch (\RuntimeException $exception) {
             $progress->fail(ProjectPublishProgressRenderer::PREPARING_MODULE);
             $this->stdErr->writeln(sprintf('<error>%s</error>', $exception->getMessage()));
@@ -82,7 +85,10 @@ class Publish extends Command
 
         $progress->start(ProjectPublishProgressRenderer::CHECKING_PROJECT);
         try {
-            $project = $this->client->getProject($module->machineName);
+            $projectResult = ($this->projectLookupAction ?? new GetProjectAction($this->client))(
+                $module->location->machineName,
+            );
+            $project = $projectResult->project;
         } catch (\Exception $exception) {
             $progress->fail(ProjectPublishProgressRenderer::CHECKING_PROJECT);
             $this->stdErr->writeln(sprintf(
@@ -94,23 +100,22 @@ class Publish extends Command
         }
         $progress->complete(ProjectPublishProgressRenderer::CHECKING_PROJECT);
 
-        $state = (new ProjectPublishState($module))->withProject($project);
         if ((bool) $input->getOption('dry-run')) {
-            $this->writeDryRun($output, $state);
+            $this->writeDryRun($output, $module, $project);
 
             return self::SUCCESS;
         }
 
-        $this->writeProjectHeader($output, $state);
+        $this->writeProjectHeader($output, $module, $project);
 
-        if ($state->projectExists()) {
+        if ($project !== null) {
             $output->writeln('Drupal.org project already exists.');
             $output->writeln('<comment>Repository and release publication are not implemented yet.</comment>');
             return self::SUCCESS;
         }
 
         if (!$input->isInteractive()) {
-            $this->writeNonInteractiveProjectCreationInstructions($module->machineName);
+            $this->writeNonInteractiveProjectCreationInstructions($module->location->machineName);
 
             return self::SUCCESS;
         }
@@ -137,10 +142,10 @@ class Publish extends Command
             $output,
             $this->stdErr,
             $this->questionHelper(),
-            $module->machineName,
-            $module->humanName(),
-            $module->extensionType(),
-            $module->coreVersionRequirement(),
+            $module->location->machineName,
+            $module->info->name,
+            $module->info->type,
+            $module->info->coreVersionRequirement,
             $metadata,
         );
 
@@ -153,10 +158,9 @@ class Publish extends Command
      */
     private function writeDryRun(
         OutputInterface $output,
-        ProjectPublishState $state,
+        ModuleContext $module,
+        ?\mglaman\DrupalOrg\Entity\Project $project,
     ): void {
-        $module = $state->module;
-        $project = $state->project;
         $output->writeln('<fg=cyan;options=bold>DRY RUN</>');
         $output->writeln('');
         $this->writeProjectIdentity($output, $module, $project);
@@ -175,7 +179,7 @@ class Publish extends Command
                 'Stop after the project creation handoff and verification.',
             ]
             : [
-                sprintf('Use the existing Drupal.org project "%s".', $module->machineName),
+                sprintf('Use the existing Drupal.org project "%s".', $module->location->machineName),
                 'Report that repository and release publication are not implemented.',
             ];
 
@@ -214,7 +218,7 @@ class Publish extends Command
         ProjectPublishProgressRenderer $progress,
     ): ?ProjectMetadataResult {
         $analysis = $review->analysisResult;
-        if ($review->runtime === null || $analysis === null || !is_array($analysis['review'] ?? null)) {
+        if ($review->runtime === null || $analysis === null || $analysis->review === null) {
             return null;
         }
 
@@ -235,23 +239,14 @@ class Publish extends Command
         ]);
         $progress->start(ProjectPublishProgressRenderer::GENERATING_METADATA);
         try {
-            /** @var array{
-             *     review: array{
-             *         purpose: string,
-             *         capabilities: list<string>,
-             *         drupal_concepts: list<string>,
-             *         integrations: list<string>,
-             *         reusability: array{status: string}
-             *     }
-             * } $analysis */
             $metadata = ($this->metadataAction ?? new GenerateProjectMetadataAction())(
                 $review->runtime,
-                $module->machineName,
-                $module->humanName(),
-                $module->extensionType(),
-                $module->coreVersionRequirement(),
-                $module->dependencies(),
-                $analysis['review'],
+                $module->location->machineName,
+                $module->info->name,
+                $module->info->type,
+                $module->info->coreVersionRequirement,
+                $module->info->dependencies,
+                $analysis->review,
                 $review->sourceCoverage,
                 $progress->tickCallback(),
             );
@@ -271,10 +266,9 @@ class Publish extends Command
      */
     private function writeProjectHeader(
         OutputInterface $output,
-        ProjectPublishState $state,
+        ModuleContext $module,
+        ?\mglaman\DrupalOrg\Entity\Project $project,
     ): void {
-        $module = $state->module;
-        $project = $state->project;
         $output->writeln('');
         $output->writeln('<fg=cyan;options=bold>PROJECT PUBLISH</>');
         $output->writeln('----------------------------------------');
@@ -296,8 +290,8 @@ class Publish extends Command
         $state = $project === null
             ? '<fg=yellow;options=bold>NOT PUBLISHED</>'
             : '<fg=green;options=bold>PROJECT EXISTS</>';
-        $output->writeln(sprintf('%s (%s)', $module->humanName(), $module->machineName));
-        $output->writeln('Core ' . $module->coreVersionRequirement() . ' · Drupal.org: ' . $state);
+        $output->writeln(sprintf('%s (%s)', $module->info->name, $module->location->machineName));
+        $output->writeln('Core ' . $module->info->coreVersionRequirement . ' · Drupal.org: ' . $state);
     }
 
     /**
@@ -308,12 +302,12 @@ class Publish extends Command
     ): void {
         $output->writeln('');
         $output->writeln('<comment>Module details</comment>');
-        $output->writeln('Module path: ' . $module->resolvedPath);
-        $output->writeln('Info file: ' . $module->infoFile);
-        if ($module->projectRoot !== null) {
-            $output->writeln('Project root: ' . $module->projectRoot);
+        $output->writeln('Module path: ' . $module->location->resolvedPath);
+        $output->writeln('Info file: ' . $module->location->infoFile);
+        if ($module->location->projectRoot !== null) {
+            $output->writeln('Project root: ' . $module->location->projectRoot);
         }
-        $output->writeln('Module type: ' . $module->extensionType());
+        $output->writeln('Module type: ' . $module->info->type);
     }
 
     private function writeNonInteractiveProjectCreationInstructions(string $machineName): void

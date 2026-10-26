@@ -4,16 +4,13 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
 /**
  * Source selected and prepared for an AI module review.
  *
- * @implements ArrayAccess<string, mixed>
  */
-final class PreparedModuleSource implements ArrayAccess, JsonSerializable
+final class PreparedModuleSource implements JsonSerializable
 {
     /**
      * @param list<array{path: string, bytes: int, content: string}> $files
@@ -86,26 +83,6 @@ final class PreparedModuleSource implements ArrayAccess, JsonSerializable
             'redactions' => $this->redactions,
             'coverage' => $this->coverage->toArray(),
         ];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Prepared module source is immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Prepared module source is immutable.');
     }
 
     /** @return array<string, mixed> */

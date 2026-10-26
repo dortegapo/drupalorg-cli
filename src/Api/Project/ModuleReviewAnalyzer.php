@@ -488,7 +488,7 @@ final class ModuleReviewAnalyzer
             'complete' => true,
         ]);
 
-        return new ModuleReviewResult($result);
+        return ModuleReviewResult::fromArray($result);
     }
 
     /**
@@ -537,7 +537,7 @@ final class ModuleReviewAnalyzer
             'complete' => true,
         ]);
 
-        return new ModuleReviewResult($result);
+        return ModuleReviewResult::fromArray($result);
     }
 
     /**
@@ -561,7 +561,7 @@ final class ModuleReviewAnalyzer
         array $ai,
         string $stage,
     ): ModuleReviewResult {
-        return new ModuleReviewResult([
+        return ModuleReviewResult::fromArray([
             'complete' => false,
             'module' => $module,
             'source' => $source,

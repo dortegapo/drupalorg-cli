@@ -4,12 +4,9 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Result\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
-/** @implements ArrayAccess<string, mixed> */
-final class ProjectIssueSettings implements ArrayAccess, JsonSerializable
+final class ProjectIssueSettings implements JsonSerializable
 {
     /** @param list<string> $components */
     public function __construct(
@@ -40,26 +37,6 @@ final class ProjectIssueSettings implements ArrayAccess, JsonSerializable
             'summaryTemplate' => $this->summaryTemplate,
             'enableTracker' => $this->enableTracker,
         ];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Project issue settings are immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Project issue settings are immutable.');
     }
 
     /** @return array<string, mixed> */

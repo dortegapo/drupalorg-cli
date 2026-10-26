@@ -21,6 +21,8 @@ use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -88,6 +90,20 @@ class MarkdownFormatter extends AbstractFormatter
             $lines[] = "- **{$issue->nid}** [{$status}] [{$issue->title}]({$url})";
         }
         return implode("\n", $lines);
+    }
+
+    protected function formatGetProject(GetProjectResult $result): string
+    {
+        if (!$result->found()) {
+            return '# ' . $result->machineName . "\n\nProject not found.";
+        }
+
+        return sprintf(
+            "# %s\n\n- **Machine name:** %s\n- **NID:** %s",
+            $result->project?->title,
+            $result->project?->machineName,
+            $result->project?->nid,
+        );
     }
 
     protected function formatProjectMetadata(ProjectMetadataResult $result): string
@@ -234,6 +250,17 @@ class MarkdownFormatter extends AbstractFormatter
         $lines[] = '';
         $lines[] = $result->tags === [] ? 'None' : '- ' . implode("\n- ", $result->tags);
         return implode("\n", $lines);
+    }
+
+    protected function formatResolveModule(ResolveModuleResult $result): string
+    {
+        return sprintf(
+            "# %s\n\n- **Machine name:** %s\n- **Path:** %s\n- **Info file:** %s",
+            $result->module->info->name,
+            $result->module->location->machineName,
+            $result->module->location->resolvedPath,
+            $result->module->location->infoFile,
+        );
     }
 
     protected function formatIssueFork(IssueForkResult $result): string

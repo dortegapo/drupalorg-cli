@@ -20,7 +20,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         ]);
         $result['summary'] = ' summary ';
 
-        $validated = $this->validator()->validate($result, self::pool());
+        $validated = $this->validator()->validate($result, self::pool())->toArray();
 
         self::assertSame('possible_overlap', $validated['verdict']);
         self::assertSame(0.95, $validated['confidence']);
@@ -44,7 +44,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             self::outputCandidate('profile', 'related_not_duplicate', [], [], 'Related resource.'),
         ], 'no_clear_duplicate');
 
-        self::assertSame('no_clear_duplicate', $this->validator()->validate($result, self::pool())['verdict']);
+        self::assertSame('no_clear_duplicate', $this->validator()->validate($result, self::pool())->verdict);
     }
 
     public function testLikelyDuplicateWinsTheGlobalVerdict(): void
@@ -55,7 +55,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             self::outputCandidate('professional_directory', 'related_not_duplicate', []),
         ], 'likely_duplicate');
 
-        self::assertSame('likely_duplicate', $this->validator()->validate($result, self::pool())['verdict']);
+        self::assertSame('likely_duplicate', $this->validator()->validate($result, self::pool())->verdict);
     }
 
     public function testAcceptsLikelyDuplicateWithUnverifiedDetailsAndNoConfirmedDifferences(): void
@@ -67,7 +67,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             'The public metadata does not establish whether access filtering is available.',
         ];
 
-        $validated = $this->validator()->validate($result, self::pool());
+        $validated = $this->validator()->validate($result, self::pool())->toArray();
 
         self::assertSame([], $validated['candidates'][0]['confirmed_differences']);
         self::assertSame(
@@ -83,7 +83,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             self::outputCandidate('profile', 'possible_overlap', ['profiles'], ['Different scope.']),
         ]);
 
-        self::assertSame([], $this->validator()->validate($result, self::pool())['candidates'][0]['unverified_details']);
+        self::assertSame([], $this->validator()->validate($result, self::pool())->candidates[0]['unverified_details']);
     }
 
     public function testPossibleOverlapWinsWithoutLikelyDuplicate(): void
@@ -93,7 +93,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
             self::outputCandidate('record', 'possible_overlap', ['records']),
         ]);
 
-        self::assertSame('possible_overlap', $this->validator()->validate($result, self::pool())['verdict']);
+        self::assertSame('possible_overlap', $this->validator()->validate($result, self::pool())->verdict);
     }
 
     #[DataProvider('inconsistentVerdictProvider')]
@@ -160,7 +160,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         }
 
         $result = self::comparisonResult($output, 'no_clear_duplicate');
-        self::assertCount(8, $this->validator()->validate($result, $pool)['candidates']);
+        self::assertCount(8, $this->validator()->validate($result, $pool)->candidates);
 
         $result['candidates'][] = self::outputCandidate('candidate_9', 'related_not_duplicate', []);
         $this->expectInvalidResult();
@@ -173,7 +173,7 @@ class ModuleReviewComparisonResultValidatorTest extends TestCase
         $result = self::comparisonResult([], 'no_clear_duplicate');
         $result['confidence'] = $confidence;
 
-        self::assertSame($confidence, $this->validator()->validate($result, self::pool())['confidence']);
+        self::assertSame($confidence, $this->validator()->validate($result, self::pool())->confidence);
     }
 
     /**

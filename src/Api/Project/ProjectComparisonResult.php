@@ -4,16 +4,13 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Project;
 
-use ArrayAccess;
 use JsonSerializable;
-use LogicException;
 
 /**
  * Validated semantic comparison of Drupal.org candidates.
  *
- * @implements ArrayAccess<string, mixed>
  */
-final class ProjectComparisonResult implements ArrayAccess, JsonSerializable
+final class ProjectComparisonResult implements JsonSerializable
 {
     /**
      * @param 'no_clear_duplicate'|'possible_overlap'|'likely_duplicate' $verdict
@@ -36,26 +33,6 @@ final class ProjectComparisonResult implements ArrayAccess, JsonSerializable
             'summary' => $this->summary,
             'candidates' => $this->candidates,
         ];
-    }
-
-    public function offsetExists(mixed $offset): bool
-    {
-        return array_key_exists($offset, $this->toArray());
-    }
-
-    public function offsetGet(mixed $offset): mixed
-    {
-        return $this->toArray()[$offset] ?? null;
-    }
-
-    public function offsetSet(mixed $offset, mixed $value): void
-    {
-        throw new LogicException('Project comparison result is immutable.');
-    }
-
-    public function offsetUnset(mixed $offset): void
-    {
-        throw new LogicException('Project comparison result is immutable.');
     }
 
     /** @return array<string, mixed> */
