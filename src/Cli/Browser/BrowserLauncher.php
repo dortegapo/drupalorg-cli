@@ -11,6 +11,10 @@ use Symfony\Component\Process\Process;
 
 final class BrowserLauncher
 {
+    private const PROBE_TIMEOUT = 5.0;
+
+    private const LAUNCH_TIMEOUT = 10.0;
+
     /**
      * @param Closure(list<string>): bool|null $commandExists
      * @param Closure(list<string>): bool|null $processRunner
@@ -26,8 +30,8 @@ final class BrowserLauncher
     public function open(BrowserFamily $browserFamily, string $url): bool
     {
         foreach ($this->commands($browserFamily) as $command) {
-            if ($this->exists($command['probe'])) {
-                return $this->run($command['launch']($url));
+            if ($this->exists($command['probe']) && $this->run($command['launch']($url))) {
+                return true;
             }
         }
 
@@ -49,26 +53,22 @@ final class BrowserLauncher
     {
         $resolver = $this->executableResolver ?? new BrowserExecutableResolver($this->platformDetector);
         foreach ($resolver->defaultCommands() as $command) {
-            if ($this->exists($command['probe'])) {
-                return $this->run($command['launch']($url));
+            if ($this->exists($command['probe']) && $this->run($command['launch']($url))) {
+                return true;
             }
         }
 
         return false;
     }
 
-    /**
-     * @return list<array{probe: list<string>, launch: Closure(string): list<string>}>
-     */
+    /** @return list<array{probe: list<string>, launch: Closure(string): list<string>}> */
     private function commands(BrowserFamily $browserFamily): array
     {
         return ($this->executableResolver ?? new BrowserExecutableResolver($this->platformDetector))
             ->commands($browserFamily);
     }
 
-    /**
-     * @param list<string> $command
-     */
+    /** @param list<string> $command */
     private function exists(array $command): bool
     {
         if ($this->commandExists !== null) {
@@ -77,6 +77,7 @@ final class BrowserLauncher
 
         try {
             $process = new Process($command);
+            $process->setTimeout(self::PROBE_TIMEOUT);
             $process->run();
         } catch (\Exception) {
             return false;
@@ -86,6 +87,10 @@ final class BrowserLauncher
     }
 
     /**
+     * Launch commands are wrappers that detach the actual browser process:
+     * cmd.exe/start on Windows and WSL, LaunchServices on macOS, and nohup
+     * for an explicitly selected Linux browser.
+     *
      * @param list<string> $command
      */
     private function run(array $command): bool
@@ -96,11 +101,12 @@ final class BrowserLauncher
 
         try {
             $process = new Process($command);
-            $process->start();
+            $process->setTimeout(self::LAUNCH_TIMEOUT);
+            $process->run();
         } catch (\Exception) {
             return false;
         }
 
-        return true;
+        return $process->isSuccessful();
     }
 }

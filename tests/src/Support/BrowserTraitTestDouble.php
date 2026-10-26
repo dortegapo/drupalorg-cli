@@ -71,7 +71,11 @@ final class BrowserTraitTestDouble
                 return in_array($browser, $this->availableBrowsers, true);
             },
             function (array $command): bool {
-                $this->launches[] = [$command[0], end($command)];
+                $target = (string) end($command);
+                if ($command[0] === 'cmd.exe' && preg_match('/"([^"]+)"$/', $target, $matches) === 1) {
+                    $target = $matches[1];
+                }
+                $this->launches[] = [$command[0], $target];
 
                 return $this->launchResult;
             },

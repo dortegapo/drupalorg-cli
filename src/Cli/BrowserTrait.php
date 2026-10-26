@@ -13,19 +13,6 @@ use Symfony\Component\Process\Process;
 
 trait BrowserTrait
 {
-
-    protected function getDefaultBrowser(): ?string
-    {
-        $resolver = new BrowserExecutableResolver($this->traitPlatformDetector());
-        foreach ($resolver->defaultCommands() as $command) {
-            $browser = ($command['launch'])('')[0];
-            if ($this->browserCommandExists($browser)) {
-                return $browser;
-            }
-        }
-        return null;
-    }
-
     protected function openUrl(
         string $url,
         OutputInterface $stdErr,
@@ -35,11 +22,11 @@ trait BrowserTrait
         $displayUrl ??= $url;
         if (($this->browserLauncher())->openDefaultUrl($url)) {
             $stdErr->writeln("<info>Opened</info>: $displayUrl");
+
             return true;
         }
-        if ($this->getDefaultBrowser() === null) {
-            $stdErr->writeln('<error>Could not open a browser automatically.</error>');
-        }
+
+        $stdErr->writeln('<error>Could not open a browser automatically.</error>');
         $stdOut->writeln($displayUrl);
 
         return false;
@@ -48,6 +35,23 @@ trait BrowserTrait
     protected function browserLauncher(): BrowserLauncher
     {
         return new BrowserLauncher();
+    }
+
+    /**
+     * Compatibility hooks retained for commands and test doubles that used
+     * the original BrowserTrait extension points.
+     */
+    protected function getDefaultBrowser(): ?string
+    {
+        $resolver = new BrowserExecutableResolver($this->traitPlatformDetector());
+        foreach ($resolver->defaultCommands() as $command) {
+            $browser = ($command['launch'])('')[0];
+            if ($this->browserCommandExists($browser)) {
+                return $browser;
+            }
+        }
+
+        return null;
     }
 
     protected function browserPlatform(): BrowserPlatform

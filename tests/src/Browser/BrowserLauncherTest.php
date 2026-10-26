@@ -12,18 +12,20 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
 #[CoversClass(BrowserLauncher::class)]
+#[CoversClass(BrowserExecutableResolver::class)]
 final class BrowserLauncherTest extends TestCase
 {
-    public function testWindowsLaunchesTheSelectedFirefox(): void
+    public function testWindowsLaunchesTheSelectedFirefoxDetached(): void
     {
         $commands = [];
         $launcher = $this->launcher('Windows', [], '', $commands);
 
         self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
-        self::assertSame([
-            ['cmd' => ['where.exe', 'firefox.exe'], 'run' => false],
-            ['cmd' => ['firefox.exe', 'https://example.test'], 'run' => true],
-        ], $commands);
+        self::assertSame(['where.exe', 'firefox.exe'], $commands[0]['cmd']);
+        self::assertTrue($commands[1]['run']);
+        self::assertSame('cmd.exe', $commands[1]['cmd'][0]);
+        self::assertStringContainsString('firefox.exe', $commands[1]['cmd'][4]);
+        self::assertStringContainsString('https://example.test', $commands[1]['cmd'][4]);
     }
 
     public function testWindowsDoesNotUseAnotherBrowserWhenSelectedBrowserIsUnavailable(): void
@@ -34,13 +36,15 @@ final class BrowserLauncherTest extends TestCase
         self::assertFalse($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
         self::assertSame([
             ['cmd' => ['where.exe', 'firefox.exe'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'if exist "%LOCALAPPDATA%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'if exist "%PROGRAMFILES%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'if exist "%PROGRAMFILES(X86)%\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
+            ['cmd' => ['reg.exe', 'query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\firefox.exe', '/ve'], 'run' => false],
+            ['cmd' => ['reg.exe', 'query', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\firefox.exe', '/ve'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/d', '/s', '/c', 'if exist "%LOCALAPPDATA%\\Mozilla Firefox\\firefox.exe" (exit /b 0) else (exit /b 1)'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/d', '/s', '/c', 'if exist "%PROGRAMFILES%\\Mozilla Firefox\\firefox.exe" (exit /b 0) else (exit /b 1)'], 'run' => false],
+            ['cmd' => ['cmd.exe', '/d', '/s', '/c', 'if exist "%PROGRAMFILES(X86)%\\Mozilla Firefox\\firefox.exe" (exit /b 0) else (exit /b 1)'], 'run' => false],
         ], $commands);
     }
 
-    public function testWindowsUsesAStandardInstallPathWhenBrowserIsNotOnPath(): void
+    public function testWindowsUsesAStandardInstallPathWhenBrowserIsNotOnPathOrAppPaths(): void
     {
         $commands = [];
         $detector = new BrowserPlatformDetector(
@@ -58,7 +62,8 @@ final class BrowserLauncherTest extends TestCase
             static function (array $command) use (&$commands): bool {
                 $commands[] = ['cmd' => $command, 'run' => false];
 
-                return str_contains($command[2] ?? '', 'C:\\Users\\Test');
+                return ($command[0] ?? '') === 'cmd.exe'
+                    && str_contains($command[4] ?? '', 'C:\\Users\\Test');
             },
             static function (array $command) use (&$commands): bool {
                 $commands[] = ['cmd' => $command, 'run' => true];
@@ -69,11 +74,11 @@ final class BrowserLauncherTest extends TestCase
         );
 
         self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
-        self::assertSame([
-            ['cmd' => ['where.exe', 'firefox.exe'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'if exist "C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe" exit /b 0'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'start', '', 'C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe', 'https://example.test'], 'run' => true],
-        ], $commands);
+        $launch = array_values(array_filter($commands, static fn(array $entry): bool => $entry['run']))[0];
+        self::assertStringContainsString(
+            'C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe',
+            $launch['cmd'][4],
+        );
     }
 
     public function testWslLaunchesTheSelectedEdgeThroughWindows(): void
@@ -82,22 +87,22 @@ final class BrowserLauncherTest extends TestCase
         $launcher = $this->launcher('Linux', ['WSL_INTEROP' => '1'], '', $commands);
 
         self::assertTrue($launcher->open(BrowserFamily::EDGE, 'https://example.test'));
-        self::assertSame([
-            ['cmd' => ['cmd.exe', '/c', 'where', 'msedge.exe'], 'run' => false],
-            ['cmd' => ['cmd.exe', '/c', 'start', '', 'msedge.exe', 'https://example.test'], 'run' => true],
-        ], $commands);
+        self::assertSame(['where.exe', 'msedge.exe'], $commands[0]['cmd']);
+        self::assertSame('cmd.exe', $commands[1]['cmd'][0]);
+        self::assertStringContainsString('msedge.exe', $commands[1]['cmd'][4]);
     }
 
-    public function testLinuxLaunchesChromium(): void
+    public function testLinuxLaunchesSelectedChromiumThroughDetachedShell(): void
     {
         $commands = [];
         $launcher = $this->launcher('Linux', [], '', $commands);
 
         self::assertTrue($launcher->open(BrowserFamily::CHROMIUM, 'https://example.test'));
-        self::assertSame([
-            ['cmd' => ['which', 'google-chrome'], 'run' => false],
-            ['cmd' => ['google-chrome', 'https://example.test'], 'run' => true],
-        ], $commands);
+        self::assertSame(['which', 'google-chrome'], $commands[0]['cmd']);
+        self::assertSame('sh', $commands[1]['cmd'][0]);
+        self::assertStringContainsString('nohup', $commands[1]['cmd'][2]);
+        self::assertSame('google-chrome', $commands[1]['cmd'][4]);
+        self::assertSame('https://example.test', $commands[1]['cmd'][5]);
     }
 
     public function testMacosLaunchesSafariExplicitly(): void
@@ -106,20 +111,52 @@ final class BrowserLauncherTest extends TestCase
         $launcher = $this->launcher('Darwin', [], '', $commands);
 
         self::assertTrue($launcher->open(BrowserFamily::SAFARI, 'https://example.test'));
-        self::assertSame([
-            ['cmd' => ['open'], 'run' => false],
-            ['cmd' => ['open', '-a', 'Safari', 'https://example.test'], 'run' => true],
-        ], $commands);
+        self::assertSame(['open', '-Ra', 'Safari'], $commands[0]['cmd']);
+        self::assertSame(['open', '-a', 'Safari', 'https://example.test'], $commands[1]['cmd']);
     }
 
-    public function testDefaultLauncherCanOpenACleanUrlWithoutChangingConfiguredFamily(): void
+    public function testLauncherTriesAnotherCompatibleBrowserWhenFirstLaunchFails(): void
+    {
+        $commands = [];
+        $launches = 0;
+        $launcher = new BrowserLauncher(
+            new BrowserPlatformDetector('Linux', [], ''),
+            static function (array $command) use (&$commands): bool {
+                $commands[] = ['cmd' => $command, 'run' => false];
+
+                return true;
+            },
+            static function (array $command) use (&$commands, &$launches): bool {
+                $commands[] = ['cmd' => $command, 'run' => true];
+                ++$launches;
+
+                return $launches > 1;
+            },
+        );
+
+        self::assertTrue($launcher->open(BrowserFamily::CHROMIUM, 'https://example.test'));
+        self::assertSame(2, $launches);
+    }
+
+    public function testLaunchFailureReturnsFalse(): void
+    {
+        $launcher = new BrowserLauncher(
+            new BrowserPlatformDetector('Linux', [], ''),
+            static fn(array $command): bool => true,
+            static fn(array $command): bool => false,
+        );
+
+        self::assertFalse($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
+    }
+
+    public function testDefaultLauncherCanOpenACleanUrl(): void
     {
         $commands = [];
         $launcher = $this->launcher('Linux', [], '', $commands);
         $url = 'https://www.drupal.org/node/add/project-module';
 
-        self::assertTrue($launcher->openDefault($url));
-        self::assertSame($url, $commands[1]['cmd'][1]);
+        self::assertTrue($launcher->openDefaultUrl($url));
+        self::assertSame(['xdg-open', $url], $commands[1]['cmd']);
     }
 
     /**

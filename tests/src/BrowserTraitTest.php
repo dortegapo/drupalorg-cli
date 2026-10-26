@@ -84,7 +84,7 @@ class BrowserTraitTest extends TestCase
         self::assertSame([
             ['xdg-open', 'https://example.test/device'],
         ], $browser->launches);
-        self::assertSame('', $stdErr->fetch());
+        self::assertSame("Could not open a browser automatically.\n", $stdErr->fetch());
         self::assertSame("https://example.test/device\n", $stdOut->fetch());
     }
 

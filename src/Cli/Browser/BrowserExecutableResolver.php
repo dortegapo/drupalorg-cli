@@ -10,10 +10,7 @@ use mglaman\DrupalOrg\Browser\BrowserPlatform;
 use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
 
 /**
- * Builds browser probe and launch commands for the detected desktop.
- *
- * Windows paths deliberately remain small and predictable. The resolver does
- * not choose another family when the requested executable is unavailable.
+ * Builds browser probe and detached launch commands for the detected desktop.
  */
 final class BrowserExecutableResolver
 {
@@ -33,67 +30,37 @@ final class BrowserExecutableResolver
     {
         $platform = $this->platformDetector->detect();
         if ($platform === BrowserPlatform::MACOS) {
-            $application = match ($browserFamily) {
-                BrowserFamily::CHROMIUM => 'Google Chrome',
-                BrowserFamily::EDGE => 'Microsoft Edge',
-                BrowserFamily::FIREFOX => 'Firefox',
-                BrowserFamily::SAFARI => 'Safari',
-            };
-
-            return [[
-                'probe' => ['open'],
-                'launch' => static fn(string $url): array => ['open', '-a', $application, $url],
-            ]];
+            return array_map(
+                static fn(string $application): array => [
+                    'probe' => ['open', '-Ra', $application],
+                    'launch' => static fn(string $url): array => ['open', '-a', $application, $url],
+                ],
+                $this->macApplications($browserFamily),
+            );
         }
 
         if ($browserFamily === BrowserFamily::SAFARI) {
             return [];
         }
 
-        $windows = $platform === BrowserPlatform::WINDOWS || $platform === BrowserPlatform::WSL;
-        if (!$windows) {
-            $executables = match ($browserFamily) {
-                BrowserFamily::CHROMIUM => ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'],
-                BrowserFamily::EDGE => ['microsoft-edge', 'microsoft-edge-stable'],
-                BrowserFamily::FIREFOX => ['firefox'],
-            };
-
-            return array_map(static fn(string $executable): array => [
-                'probe' => ['which', $executable],
-                'launch' => static fn(string $url): array => [$executable, $url],
-            ], $executables);
+        if ($platform === BrowserPlatform::WINDOWS || $platform === BrowserPlatform::WSL) {
+            return $this->windowsCommands($browserFamily);
         }
 
-        $executable = match ($browserFamily) {
-            BrowserFamily::CHROMIUM => 'chrome.exe',
-            BrowserFamily::EDGE => 'msedge.exe',
-            BrowserFamily::FIREFOX => 'firefox.exe',
-        };
-        $commands = [[
-            'probe' => $platform === BrowserPlatform::WSL
-                ? ['cmd.exe', '/c', 'where', $executable]
-                : ['where.exe', $executable],
-            'launch' => $platform === BrowserPlatform::WSL
-                ? static fn(string $url): array => ['cmd.exe', '/c', 'start', '', $executable, $url]
-                : static fn(string $url): array => [$executable, $url],
-        ]];
-
-        foreach ($this->standardWindowsPaths($browserFamily) as $path) {
-            $probe = ['cmd.exe', '/c', 'if exist "' . $path . '" exit /b 0'];
-            $commands[] = [
-                'probe' => $probe,
+        return array_map(
+            static fn(string $executable): array => [
+                'probe' => ['which', $executable],
                 'launch' => static fn(string $url): array => [
-                    'cmd.exe',
-                    '/c',
-                    'start',
-                    '',
-                    $path,
+                    'sh',
+                    '-c',
+                    'nohup "$1" "$2" >/dev/null 2>&1 < /dev/null &',
+                    'drupalorg-cli-browser',
+                    $executable,
                     $url,
                 ],
-            ];
-        }
-
-        return $commands;
+            ],
+            $this->linuxExecutables($browserFamily),
+        );
     }
 
     /**
@@ -102,13 +69,10 @@ final class BrowserExecutableResolver
     public function defaultCommands(): array
     {
         return match ($this->platformDetector->detect()) {
-            BrowserPlatform::WSL => [[
-                'probe' => ['cmd.exe', '/c', 'where', 'cmd.exe'],
-                'launch' => static fn(string $url): array => ['cmd.exe', '/c', 'start', '', $url],
-            ]],
+            BrowserPlatform::WSL,
             BrowserPlatform::WINDOWS => [[
-                'probe' => ['where.exe', 'explorer.exe'],
-                'launch' => static fn(string $url): array => ['explorer.exe', $url],
+                'probe' => ['cmd.exe', '/d', '/s', '/c', 'exit /b 0'],
+                'launch' => static fn(string $url): array => self::windowsStartCommand(null, $url),
             ]],
             BrowserPlatform::MACOS => [[
                 'probe' => ['which', 'open'],
@@ -122,14 +86,108 @@ final class BrowserExecutableResolver
     }
 
     /**
-     * @return list<string>
+     * @return list<array{probe: list<string>, launch: Closure(string): list<string>}>
      */
+    private function windowsCommands(BrowserFamily $browserFamily): array
+    {
+        $commands = [];
+        foreach ($this->windowsExecutables($browserFamily) as $executable) {
+            $commands[] = [
+                'probe' => ['where.exe', $executable],
+                'launch' => static fn(string $url): array => self::windowsStartCommand($executable, $url),
+            ];
+
+            foreach (['HKCU', 'HKLM'] as $hive) {
+                $registryPath = $hive
+                    . '\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\'
+                    . $executable;
+                $commands[] = [
+                    'probe' => ['reg.exe', 'query', $registryPath, '/ve'],
+                    'launch' => static fn(string $url): array => self::windowsStartCommand($executable, $url),
+                ];
+            }
+        }
+
+        foreach ($this->standardWindowsPaths($browserFamily) as $path) {
+            $escapedPath = self::escapeCmdQuotedValue($path);
+            $commands[] = [
+                'probe' => [
+                    'cmd.exe',
+                    '/d',
+                    '/s',
+                    '/c',
+                    'if exist "' . $escapedPath . '" (exit /b 0) else (exit /b 1)',
+                ],
+                'launch' => static fn(string $url): array => self::windowsStartCommand($path, $url),
+            ];
+        }
+
+        return $commands;
+    }
+
+    /** @return list<string> */
+    private function linuxExecutables(BrowserFamily $browserFamily): array
+    {
+        return match ($browserFamily) {
+            BrowserFamily::CHROMIUM => [
+                'google-chrome',
+                'google-chrome-stable',
+                'chromium',
+                'chromium-browser',
+                'brave-browser',
+                'vivaldi',
+                'opera',
+            ],
+            BrowserFamily::EDGE => ['microsoft-edge', 'microsoft-edge-stable'],
+            BrowserFamily::FIREFOX => ['firefox'],
+            BrowserFamily::SAFARI => [],
+        };
+    }
+
+    /** @return list<string> */
+    private function windowsExecutables(BrowserFamily $browserFamily): array
+    {
+        return match ($browserFamily) {
+            BrowserFamily::CHROMIUM => [
+                'chrome.exe',
+                'chromium.exe',
+                'brave.exe',
+                'vivaldi.exe',
+                'opera.exe',
+            ],
+            BrowserFamily::EDGE => ['msedge.exe'],
+            BrowserFamily::FIREFOX => ['firefox.exe'],
+            BrowserFamily::SAFARI => [],
+        };
+    }
+
+    /** @return list<string> */
+    private function macApplications(BrowserFamily $browserFamily): array
+    {
+        return match ($browserFamily) {
+            BrowserFamily::CHROMIUM => [
+                'Google Chrome',
+                'Chromium',
+                'Brave Browser',
+                'Vivaldi',
+                'Opera',
+            ],
+            BrowserFamily::EDGE => ['Microsoft Edge'],
+            BrowserFamily::FIREFOX => ['Firefox'],
+            BrowserFamily::SAFARI => ['Safari'],
+        };
+    }
+
+    /** @return list<string> */
     private function standardWindowsPaths(BrowserFamily $browserFamily): array
     {
         $paths = match ($browserFamily) {
             BrowserFamily::CHROMIUM => [
                 ['Google', 'Chrome', 'Application', 'chrome.exe'],
-                ['Chromium', 'Application', 'chrome.exe'],
+                ['Chromium', 'Application', 'chromium.exe'],
+                ['BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'],
+                ['Vivaldi', 'Application', 'vivaldi.exe'],
+                ['Programs', 'Opera', 'launcher.exe'],
             ],
             BrowserFamily::EDGE => [
                 ['Microsoft', 'Edge', 'Application', 'msedge.exe'],
@@ -148,6 +206,7 @@ final class BrowserExecutableResolver
                 ?? $this->environmentValue($environment, 'ProgramFiles(x86)')
                 ?? '%PROGRAMFILES(X86)%',
         ];
+
         $result = [];
         foreach ($bases as $base) {
             foreach ($paths as $parts) {
@@ -158,13 +217,27 @@ final class BrowserExecutableResolver
         return array_values(array_unique($result));
     }
 
-    /**
-     * @param array<string, string|false> $environment
-     */
+    /** @param array<string, string|false> $environment */
     private function environmentValue(array $environment, string $name): ?string
     {
         $value = $environment[$name] ?? null;
 
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /** @return list<string> */
+    private static function windowsStartCommand(?string $executable, string $url): array
+    {
+        $target = $executable === null
+            ? '"' . self::escapeCmdQuotedValue($url) . '"'
+            : '"' . self::escapeCmdQuotedValue($executable) . '" "'
+                . self::escapeCmdQuotedValue($url) . '"';
+
+        return ['cmd.exe', '/d', '/s', '/c', 'start "" ' . $target];
+    }
+
+    private static function escapeCmdQuotedValue(string $value): string
+    {
+        return str_replace('"', '""', $value);
     }
 }
