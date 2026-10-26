@@ -71,8 +71,12 @@ final class BrowserExecutableResolver
         return match ($this->platformDetector->detect()) {
             BrowserPlatform::WSL,
             BrowserPlatform::WINDOWS => [[
-                'probe' => ['cmd.exe', '/d', '/s', '/c', 'exit /b 0'],
-                'launch' => static fn(string $url): array => self::windowsStartCommand(null, $url),
+                'probe' => ['where.exe', 'rundll32.exe'],
+                'launch' => static fn(string $url): array => [
+                    'rundll32.exe',
+                    'url.dll,FileProtocolHandler',
+                    $url,
+                ],
             ]],
             BrowserPlatform::MACOS => [[
                 'probe' => ['which', 'open'],
@@ -94,7 +98,7 @@ final class BrowserExecutableResolver
         foreach ($this->windowsExecutables($browserFamily) as $executable) {
             $commands[] = [
                 'probe' => ['where.exe', $executable],
-                'launch' => static fn(string $url): array => self::windowsStartCommand($executable, $url),
+                'launch' => static fn(string $url): array => [$executable, $url],
             ];
 
             foreach (['HKCU', 'HKLM'] as $hive) {
@@ -103,7 +107,7 @@ final class BrowserExecutableResolver
                     . $executable;
                 $commands[] = [
                     'probe' => ['reg.exe', 'query', $registryPath, '/ve'],
-                    'launch' => static fn(string $url): array => self::windowsStartCommand($executable, $url),
+                    'launch' => static fn(string $url): array => [$executable, $url],
                 ];
             }
         }
@@ -118,7 +122,7 @@ final class BrowserExecutableResolver
                     '/c',
                     'if exist "' . $escapedPath . '" (exit /b 0) else (exit /b 1)',
                 ],
-                'launch' => static fn(string $url): array => self::windowsStartCommand($path, $url),
+                'launch' => static fn(string $url): array => [$path, $url],
             ];
         }
 
@@ -223,17 +227,6 @@ final class BrowserExecutableResolver
         $value = $environment[$name] ?? null;
 
         return is_string($value) && $value !== '' ? $value : null;
-    }
-
-    /** @return list<string> */
-    private static function windowsStartCommand(?string $executable, string $url): array
-    {
-        $target = $executable === null
-            ? '"' . self::escapeCmdQuotedValue($url) . '"'
-            : '"' . self::escapeCmdQuotedValue($executable) . '" "'
-                . self::escapeCmdQuotedValue($url) . '"';
-
-        return ['cmd.exe', '/d', '/s', '/c', 'start "" ' . $target];
     }
 
     private static function escapeCmdQuotedValue(string $value): string

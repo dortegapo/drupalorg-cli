@@ -14,14 +14,14 @@ class BrowserTraitTest extends TestCase
 {
     public function testUsesCmdExeToLaunchUrlsFromWsl(): void
     {
-        $browser = new BrowserTraitTestDouble(['cmd.exe', 'xdg-open'], true);
+        $browser = new BrowserTraitTestDouble(['rundll32.exe'], true);
         $stdErr = new BufferedOutput();
         $stdOut = new BufferedOutput();
 
         $browser->open('https://example.test/device', $stdErr, $stdOut);
 
         self::assertSame([
-            ['cmd.exe', 'https://example.test/device'],
+            ['rundll32.exe', 'https://example.test/device'],
         ], $browser->launches);
         self::assertSame("Opened: https://example.test/device\n", $stdErr->fetch());
         self::assertSame('', $stdOut->fetch());

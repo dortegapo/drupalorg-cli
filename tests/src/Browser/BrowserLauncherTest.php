@@ -23,9 +23,7 @@ final class BrowserLauncherTest extends TestCase
         self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
         self::assertSame(['where.exe', 'firefox.exe'], $commands[0]['cmd']);
         self::assertTrue($commands[1]['run']);
-        self::assertSame('cmd.exe', $commands[1]['cmd'][0]);
-        self::assertStringContainsString('firefox.exe', $commands[1]['cmd'][4]);
-        self::assertStringContainsString('https://example.test', $commands[1]['cmd'][4]);
+        self::assertSame(['firefox.exe', 'https://example.test'], $commands[1]['cmd']);
     }
 
     public function testWindowsDoesNotUseAnotherBrowserWhenSelectedBrowserIsUnavailable(): void
@@ -75,10 +73,10 @@ final class BrowserLauncherTest extends TestCase
 
         self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
         $launch = array_values(array_filter($commands, static fn(array $entry): bool => $entry['run']))[0];
-        self::assertStringContainsString(
+        self::assertSame([
             'C:\\Users\\Test\\AppData\\Local\\Mozilla Firefox\\firefox.exe',
-            $launch['cmd'][4],
-        );
+            'https://example.test',
+        ], $launch['cmd']);
     }
 
     public function testWslLaunchesTheSelectedEdgeThroughWindows(): void
@@ -88,8 +86,25 @@ final class BrowserLauncherTest extends TestCase
 
         self::assertTrue($launcher->open(BrowserFamily::EDGE, 'https://example.test'));
         self::assertSame(['where.exe', 'msedge.exe'], $commands[0]['cmd']);
-        self::assertSame('cmd.exe', $commands[1]['cmd'][0]);
-        self::assertStringContainsString('msedge.exe', $commands[1]['cmd'][4]);
+        self::assertSame(['msedge.exe', 'https://example.test'], $commands[1]['cmd']);
+    }
+
+    public function testWslLaunchesTheSelectedFirefoxDirectly(): void
+    {
+        $commands = [];
+        $launcher = $this->launcher('Linux', ['WSL_INTEROP' => '1'], '', $commands);
+
+        self::assertTrue($launcher->open(BrowserFamily::FIREFOX, 'https://example.test'));
+        self::assertSame(['firefox.exe', 'https://example.test'], $commands[1]['cmd']);
+    }
+
+    public function testWslLaunchesTheSelectedChromiumDirectly(): void
+    {
+        $commands = [];
+        $launcher = $this->launcher('Linux', ['WSL_INTEROP' => '1'], '', $commands);
+
+        self::assertTrue($launcher->open(BrowserFamily::CHROMIUM, 'https://example.test'));
+        self::assertSame(['chrome.exe', 'https://example.test'], $commands[1]['cmd']);
     }
 
     public function testLinuxLaunchesSelectedChromiumThroughDetachedShell(): void
@@ -157,6 +172,23 @@ final class BrowserLauncherTest extends TestCase
 
         self::assertTrue($launcher->openDefaultUrl($url));
         self::assertSame(['xdg-open', $url], $commands[1]['cmd']);
+    }
+
+    public function testWslDefaultLauncherUsesRundll32WithTheUrlAsAnArgument(): void
+    {
+        $commands = [];
+        $launcher = $this->launcher('Linux', ['WSL_INTEROP' => '1'], '', $commands);
+        $url = 'https://www.drupal.org/node/add/project-module#drupalorg-cli-prefill=abc123';
+
+        self::assertTrue($launcher->openDefaultUrl($url));
+        self::assertSame(['where.exe', 'rundll32.exe'], $commands[0]['cmd']);
+        self::assertSame([
+            'rundll32.exe',
+            'url.dll,FileProtocolHandler',
+            $url,
+        ], $commands[1]['cmd']);
+        self::assertNotContains('cmd.exe', $commands[1]['cmd']);
+        self::assertNotContains('start ""', $commands[1]['cmd']);
     }
 
     /**
