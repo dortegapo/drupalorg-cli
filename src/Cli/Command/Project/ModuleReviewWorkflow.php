@@ -138,7 +138,6 @@ final class ModuleReviewWorkflow
         $eventProgress = static function (string $event, array $context) use ($progressRenderer): void {
             $progressRenderer->handle($event, $context);
         };
-        $result = null;
         try {
             $analysis = $this->analyzeModule(
                 $module->location->resolvedPath,
@@ -148,15 +147,16 @@ final class ModuleReviewWorkflow
                 $module->info->name,
                 $preparedSource,
             );
-            $result = $analysis instanceof ModuleReviewResult ? $analysis->toArray() : $analysis;
-        } finally {
-            $progressRenderer->finishOnFailure($result);
+        } catch (\Throwable $exception) {
+            $progressRenderer->finishOnFailure();
+            throw $exception;
         }
+        $progressRenderer->finishOnFailure($analysis);
 
         $pdfPath = null;
         $progress->start(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         try {
-            $pdfPath = $this->writeModuleReviewPdf($result, $module);
+            $pdfPath = $this->writeModuleReviewPdf($analysis->toArray(), $module);
             $progress->complete(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
         } catch (\Exception) {
             $progress->fail(ProjectPublishProgressRenderer::GENERATING_REVIEW_REPORT);
@@ -166,11 +166,10 @@ final class ModuleReviewWorkflow
         // The progress renderer owns a console section. Clear it before writing
         // the summary so the section is not emitted a second time around it.
         $progress->suspend();
-        (new ModuleReviewSummaryRenderer($output))->render($result, $pdfPath);
+        (new ModuleReviewSummaryRenderer($output))->render($analysis->toArray(), $pdfPath);
 
-        $assessmentStatus = is_array($result['assessment'] ?? null)
-            && is_string($result['assessment']['status'] ?? null)
-            ? $result['assessment']['status']
+        $assessmentStatus = is_string($analysis->assessment['status'] ?? null)
+            ? $analysis->assessment['status']
             : null;
         $continueDefault = in_array($assessmentStatus, ['candidate', 'candidate_with_changes'], true);
         $continuePrompt = $continueDefault
@@ -187,16 +186,16 @@ final class ModuleReviewWorkflow
             return new ModuleReviewWorkflowResult(
                 false,
                 $runtime,
-                $result,
-                $this->sourceCoverage($result),
+                $analysis,
+                $this->sourceCoverage($analysis),
             );
         }
 
         return new ModuleReviewWorkflowResult(
             true,
             $runtime,
-            $result,
-            $this->sourceCoverage($result),
+            $analysis,
+            $this->sourceCoverage($analysis),
         );
     }
 
@@ -312,7 +311,7 @@ final class ModuleReviewWorkflow
      * @param array{type: 'ddev'|'lando'|'local-drush', workingDirectory: string, command: list<string>} $runtime
      * @param PreparedModuleSource $preparedSource
      *
-     * @return array<string, mixed>
+     * @return ModuleReviewResult
      */
     private function analyzeModule(
         string $modulePath,
@@ -321,9 +320,9 @@ final class ModuleReviewWorkflow
         callable $progress,
         string $humanName,
         PreparedModuleSource $preparedSource,
-    ): array|ModuleReviewResult {
+    ): ModuleReviewResult {
         if ($this->moduleAnalyzer !== null) {
-            return ($this->moduleAnalyzer)(
+            $result = ($this->moduleAnalyzer)(
                 $modulePath,
                 $machineName,
                 $runtime,
@@ -331,6 +330,16 @@ final class ModuleReviewWorkflow
                 $humanName,
                 $preparedSource,
             );
+
+            if ($result instanceof ModuleReviewResult) {
+                return $result;
+            }
+
+            if (!is_array($result)) {
+                throw new \RuntimeException('Module review analyzer returned an invalid result.');
+            }
+
+            return ModuleReviewResult::fromArray($result);
         }
 
         return $this->getAnalyzer()->analyze(
@@ -413,13 +422,9 @@ final class ModuleReviewWorkflow
         return rtrim(rtrim($value, '0'), '.') . ' KiB';
     }
 
-    /**
-     * @param array<string, mixed> $analysisResult
-     */
-    private function sourceCoverage(array $analysisResult): string
+    private function sourceCoverage(ModuleReviewResult $analysisResult): string
     {
-        $source = $analysisResult['source'] ?? null;
-        $coverage = is_array($source) ? $source['coverage'] ?? null : null;
+        $coverage = $analysisResult->source['coverage'] ?? null;
 
         return is_array($coverage) && ($coverage['mode'] ?? null) === 'selected' ? 'partial' : 'full';
     }

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Tests\Support;
 
-use mglaman\DrupalOrg\Browser\BrowserPlatform;
 use mglaman\DrupalOrgCli\BrowserTrait;
 use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
@@ -29,11 +28,6 @@ final class BrowserTraitTestDouble
     ) {
     }
 
-    public function defaultBrowser(): ?string
-    {
-        return $this->getDefaultBrowser();
-    }
-
     public function open(
         string $url,
         OutputInterface $stdErr,
@@ -41,22 +35,6 @@ final class BrowserTraitTestDouble
         ?string $displayUrl = null,
     ): bool {
         return $this->openUrl($url, $stdErr, $stdOut, $displayUrl);
-    }
-
-    protected function browserPlatform(): BrowserPlatform
-    {
-        return $this->windowsSubsystemForLinux ? BrowserPlatform::WSL : BrowserPlatform::LINUX;
-    }
-
-    protected function browserCommandExists(string $browser): bool
-    {
-        return in_array($browser, $this->availableBrowsers, true);
-    }
-
-    protected function launchBrowser(string $browser, string $url): bool
-    {
-        $this->launches[] = [$browser, $url];
-        return $this->launchResult;
     }
 
     protected function browserLauncher(): BrowserLauncher

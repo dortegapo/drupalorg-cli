@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrgCli\Command\Project;
 
+use mglaman\DrupalOrg\Project\ModuleReviewResult;
+
 final class ModuleReviewProgressRenderer
 {
     public function __construct(
@@ -45,15 +47,11 @@ final class ModuleReviewProgressRenderer
         };
     }
 
-    /**
-     * @param array<string, mixed>|null $result
-     */
-    public function finishOnFailure(?array $result = null): void
+    public function finishOnFailure(?ModuleReviewResult $result = null): void
     {
-        $stage = is_array($result['limitations'][0] ?? null)
-            && is_string($result['limitations'][0]['stage'] ?? null)
-            ? $result['limitations'][0]['stage']
-            : null;
+        $stage = $result === null || $result->limitations === []
+            ? null
+            : $result->limitations[0]['stage'];
         $phase = match ($stage) {
             'collection', 'sanitization', 'source_empty' => ProjectPublishProgressRenderer::PREPARING_SOURCE,
             'review_prompt', 'review_ai', 'review_validation' => ProjectPublishProgressRenderer::ANALYZING_MODULE,
@@ -62,7 +60,7 @@ final class ModuleReviewProgressRenderer
             'core_version', 'compatibility' => ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY,
             default => null,
         };
-        if ($phase !== null && ($result['complete'] ?? true) !== true) {
+        if ($phase !== null && ($result?->complete ?? true) !== true) {
             $this->progress->fail($phase);
             return;
         }

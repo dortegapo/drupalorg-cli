@@ -4,12 +4,8 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrgCli;
 
-use mglaman\DrupalOrg\Browser\BrowserPlatform;
-use mglaman\DrupalOrg\Browser\BrowserPlatformDetector;
-use mglaman\DrupalOrgCli\Browser\BrowserExecutableResolver;
 use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Process\Process;
 
 trait BrowserTrait
 {
@@ -35,67 +31,5 @@ trait BrowserTrait
     protected function browserLauncher(): BrowserLauncher
     {
         return new BrowserLauncher();
-    }
-
-    /**
-     * Compatibility hooks retained for commands and test doubles that used
-     * the original BrowserTrait extension points.
-     */
-    protected function getDefaultBrowser(): ?string
-    {
-        $resolver = new BrowserExecutableResolver($this->traitPlatformDetector());
-        foreach ($resolver->defaultCommands() as $command) {
-            $browser = ($command['launch'])('')[0];
-            if ($this->browserCommandExists($browser)) {
-                return $browser;
-            }
-        }
-
-        return null;
-    }
-
-    protected function browserPlatform(): BrowserPlatform
-    {
-        return (new BrowserPlatformDetector())->detect();
-    }
-
-    protected function traitPlatformDetector(): BrowserPlatformDetector
-    {
-        return match ($this->browserPlatform()) {
-            BrowserPlatform::WSL => new BrowserPlatformDetector('Linux', ['WSL_INTEROP' => '1'], ''),
-            BrowserPlatform::WINDOWS => new BrowserPlatformDetector('Windows', [], ''),
-            BrowserPlatform::MACOS => new BrowserPlatformDetector('Darwin', [], ''),
-            BrowserPlatform::LINUX => new BrowserPlatformDetector('Linux', [], ''),
-        };
-    }
-
-    protected function browserCommandExists(string $browser): bool
-    {
-        $lookup = $this->browserPlatform() === BrowserPlatform::WINDOWS
-            ? ['where.exe', $browser]
-            : ['which', $browser];
-        try {
-            $process = new Process($lookup);
-            $process->run();
-        } catch (\Exception) {
-            return false;
-        }
-
-        return $process->isSuccessful();
-    }
-
-    protected function launchBrowser(string $browser, string $url): bool
-    {
-        $command = $browser === 'cmd.exe'
-            ? [$browser, '/c', 'start', '', $url]
-            : [$browser, $url];
-        try {
-            $process = new Process($command);
-            $process->run();
-        } catch (\Exception) {
-            return false;
-        }
-
-        return $process->isSuccessful();
     }
 }

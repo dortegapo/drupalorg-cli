@@ -138,9 +138,4 @@ final class ModuleReviewResult
 
         return $data;
     }
-
-    public function isComplete(): bool
-    {
-        return $this->complete;
-    }
 }

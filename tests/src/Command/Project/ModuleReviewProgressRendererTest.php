@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace mglaman\DrupalOrg\Tests\Command\Project;
 
+use mglaman\DrupalOrg\Project\ModuleReviewResult;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewProgressRenderer;
 use mglaman\DrupalOrgCli\Command\Project\ProjectPublishProgressRenderer;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -135,12 +136,12 @@ final class ModuleReviewProgressRendererTest extends TestCase
         ]);
         $renderer = new ModuleReviewProgressRenderer($progress);
 
-        $renderer->finishOnFailure([
+        $renderer->finishOnFailure(ModuleReviewResult::fromArray([
             'complete' => false,
             'limitations' => [
                 ['stage' => 'review_validation'],
             ],
-        ]);
+        ]));
 
         rewind($stream);
         $display = stream_get_contents($stream);
