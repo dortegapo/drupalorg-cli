@@ -88,8 +88,9 @@ final class BrowserLauncher
 
     /**
      * Launch commands are wrappers that detach the actual browser process:
-     * Windows and WSL use direct executable invocation, LaunchServices on
-     * macOS, and nohup for an explicitly selected Linux browser.
+     * Windows uses ShellExecute via rundll32, WSL uses cmd.exe/start,
+     * LaunchServices on macOS, and nohup for an explicitly selected Linux
+     * browser.
      *
      * @param list<string> $command
      */

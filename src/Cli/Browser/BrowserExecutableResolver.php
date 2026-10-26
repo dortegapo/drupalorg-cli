@@ -94,11 +94,21 @@ final class BrowserExecutableResolver
      */
     private function windowsCommands(BrowserFamily $browserFamily): array
     {
+        $platform = $this->platformDetector->detect();
         $commands = [];
         foreach ($this->windowsExecutables($browserFamily) as $executable) {
             $commands[] = [
                 'probe' => ['where.exe', $executable],
-                'launch' => static fn(string $url): array => [$executable, $url],
+                'launch' => $platform === BrowserPlatform::WSL
+                    ? static fn(string $url): array => [
+                        'cmd.exe',
+                        '/c',
+                        'start',
+                        '',
+                        $executable,
+                        $url,
+                    ]
+                    : static fn(string $url): array => self::windowsShellExecuteCommand($executable, $url),
             ];
 
             foreach (['HKCU', 'HKLM'] as $hive) {
@@ -107,7 +117,16 @@ final class BrowserExecutableResolver
                     . $executable;
                 $commands[] = [
                     'probe' => ['reg.exe', 'query', $registryPath, '/ve'],
-                    'launch' => static fn(string $url): array => [$executable, $url],
+                    'launch' => $platform === BrowserPlatform::WSL
+                        ? static fn(string $url): array => [
+                            'cmd.exe',
+                            '/c',
+                            'start',
+                            '',
+                            $executable,
+                            $url,
+                        ]
+                        : static fn(string $url): array => self::windowsShellExecuteCommand($executable, $url),
                 ];
             }
         }
@@ -122,7 +141,16 @@ final class BrowserExecutableResolver
                     '/c',
                     'if exist "' . $escapedPath . '" (exit /b 0) else (exit /b 1)',
                 ],
-                'launch' => static fn(string $url): array => [$path, $url],
+                'launch' => $platform === BrowserPlatform::WSL
+                    ? static fn(string $url): array => [
+                        'cmd.exe',
+                        '/c',
+                        'start',
+                        '',
+                        $path,
+                        $url,
+                    ]
+                    : static fn(string $url): array => self::windowsShellExecuteCommand($path, $url),
             ];
         }
 
@@ -232,5 +260,16 @@ final class BrowserExecutableResolver
     private static function escapeCmdQuotedValue(string $value): string
     {
         return str_replace('"', '""', $value);
+    }
+
+    /** @return list<string> */
+    private static function windowsShellExecuteCommand(string $executable, string $url): array
+    {
+        return [
+            'rundll32.exe',
+            'shell32.dll,ShellExec_RunDLL',
+            $executable,
+            $url,
+        ];
     }
 }
