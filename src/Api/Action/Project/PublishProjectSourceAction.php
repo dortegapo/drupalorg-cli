@@ -43,9 +43,8 @@ class PublishProjectSourceAction implements ActionInterface
                 throw new \RuntimeException('Could not inspect Drupal.org branch: ' . trim($branchProbe->getErrorOutput()));
             }
             $branchExists = $branchProbe->isSuccessful();
-            $this->assertExpectedBranch($staging, $branch, $expectedSource, $branchExists);
+            $this->fetchAndValidateExpectedBranch($staging, $branch, $expectedSource, $branchExists);
             if ($branchExists) {
-                $this->mustRun($staging, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
                 $this->mustRun($staging, ['checkout', '-B', $branch->name, 'FETCH_HEAD']);
                 $this->mustRun($staging, ['rm', '-r', '--ignore-unmatch', '.']);
             }
@@ -156,22 +155,22 @@ class PublishProjectSourceAction implements ActionInterface
         return trim($this->mustRun($cwd, $args)->getOutput());
     }
 
-    private function assertExpectedBranch(
+    private function fetchAndValidateExpectedBranch(
         string $staging,
         ProjectReleaseBranch $branch,
         ?ProjectSourceStatusResult $expected,
         bool $currentExists,
     ): void {
-        if ($expected === null) {
-            return;
-        }
-        if ($expected->branchExists !== $currentExists) {
+        if ($expected !== null && $expected->branchExists !== $currentExists) {
             throw new \RuntimeException("Drupal.org branch changed after source inspection.\n\nThe publication plan is stale.\nRun project:publish again to review the new remote changes.");
         }
         if (!$currentExists) {
             return;
         }
         $this->mustRun($staging, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
+        if ($expected === null) {
+            return;
+        }
         $currentTree = $this->git($staging, ['rev-parse', 'FETCH_HEAD^{tree}']);
         if ($expected->branchTreeSha === null || !hash_equals($expected->branchTreeSha, $currentTree)) {
             throw new \RuntimeException("Drupal.org branch changed after source inspection.\n\nThe publication plan is stale.\nRun project:publish again to review the new remote changes.");

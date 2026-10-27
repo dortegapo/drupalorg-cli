@@ -303,6 +303,17 @@ class Publish extends Command
         return $result;
     }
 
+    private function inspectRepositoryAfterMutation(string $machineName): ProjectRepositoryResult
+    {
+        $result = $this->inspectRepositoryWithRetry($machineName);
+        if (!$result->reachable && $result->failure !== 'repository_not_ready') {
+            throw new \RuntimeException(
+                'Could not inspect Drupal.org repository after publication: ' . ($result->failure ?? 'network_failure') . '.',
+            );
+        }
+        return $result;
+    }
+
     private function buildState(
         ProjectRepositoryResult $repository,
         ?ProjectSourceStatusResult $source,
@@ -375,7 +386,11 @@ class Publish extends Command
                 $source = $publisher($module, $module->location->machineName, $state->branch, $state->version, $this->sourceStatusFromState($state));
                 $progress->complete(ProjectPublishProgressRenderer::PUBLISHING_SOURCE);
                 $output->writeln($source->alreadyUpToDate ? 'Source already published.' : 'Source published to ' . $source->branch . '.');
-                $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
+                $repository = $this->inspectRepositoryAfterMutation($module->location->machineName);
+                if (!$repository->reachable) {
+                    $state = $this->buildState($repository, null, $state->branch, $state->version, $state->releaseExists);
+                    return $this->runPublication($input, $output, $progress, $module, $project, $state);
+                }
                 $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
                 $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
                 return $this->runPublication($input, $output, $progress, $module, $project, $state);
@@ -404,7 +419,11 @@ class Publish extends Command
                 $tag = ($this->tagCreator ?? new CreateProjectTagAction($this->repositoryUrls))($module->location->machineName, $state->branch, $state->version, $this->sourceStatusFromState($state));
                 $progress->complete(ProjectPublishProgressRenderer::CREATING_TAG);
                 $output->writeln('Tag ' . $tag->tag . ($tag->created ? ' published.' : ' already exists.'));
-                $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
+                $repository = $this->inspectRepositoryAfterMutation($module->location->machineName);
+                if (!$repository->reachable) {
+                    $state = $this->buildState($repository, null, $state->branch, $state->version, $state->releaseExists);
+                    return $this->runPublication($input, $output, $progress, $module, $project, $state);
+                }
                 $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
                 $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
                 return $this->runPublication($input, $output, $progress, $module, $project, $state);

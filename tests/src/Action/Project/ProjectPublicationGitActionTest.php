@@ -159,6 +159,28 @@ final class ProjectPublicationGitActionTest extends TestCase
         $publisher($this->module, 'foo', $branch, $version, $status);
     }
 
+    public function testPublicationCommitUsesTheValidatedRemoteBranchSnapshot(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', $branch, $version);
+        $repository = (new InspectProjectRepositoryAction($this->urls))('foo');
+        $status = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $repository);
+        $validatedRemoteCommit = $status->branchCommitSha;
+        self::assertNotNull($validatedRemoteCommit);
+
+        file_put_contents($this->source . '/foo.module', "<?php\nlocal change\n");
+        $this->git($this->source, ['add', 'foo.module']);
+        $this->git($this->source, ['commit', '-m', 'Local publication change']);
+        $published = $publisher($this->module, 'foo', $branch, $version, $status);
+
+        self::assertSame(
+            $validatedRemoteCommit,
+            $this->git($this->remote, ['rev-parse', $published->commitSha . '^']),
+        );
+    }
+
     public function testBranchCanAdvanceAfterMatchingTag(): void
     {
         $branch = ProjectReleaseBranch::fromString('1.x');
