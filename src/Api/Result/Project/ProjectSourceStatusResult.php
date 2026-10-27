@@ -20,6 +20,8 @@ final class ProjectSourceStatusResult implements ResultInterface
         public readonly int $filesAdded = 0,
         public readonly int $filesModified = 0,
         public readonly int $filesDeleted = 0,
+        public readonly ?string $branchCommitSha = null,
+        public readonly ?string $tagCommitSha = null,
     ) {
     }
 

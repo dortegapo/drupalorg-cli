@@ -10,6 +10,9 @@ use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\PreparedModuleSource;
+use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
+use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
@@ -394,6 +397,33 @@ class PublishTest extends TestCase
         );
     }
 
+    public function testDryRunDoesNotRetryNetworkRepositoryFailures(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+        $inspector = $this->createMock(InspectProjectRepositoryAction::class);
+        $inspector->expects(self::once())
+            ->method('__invoke')
+            ->with('my_module')
+            ->willReturn(new ProjectRepositoryResult('read', false, failure: 'network_failure'));
+        $tester = $this->commandTesterWithInspector(
+            $inspector,
+            self::jsonResponse(['list' => [[
+                'nid' => '123',
+                'title' => 'My Module',
+                'field_project_machine_name' => 'my_module',
+            ]]]),
+        );
+
+        self::assertSame(1, $tester->execute([
+            'module' => 'my_module',
+            '--dry-run' => true,
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]));
+        self::assertStringContainsString('network_failure', $tester->getDisplay());
+    }
+
     public function testInvalidYamlFails(): void
     {
         $modulePath = $this->workDir . '/my_module';
@@ -448,6 +478,15 @@ class PublishTest extends TestCase
         $command = $this->publishCommand($client);
 
         return new CommandTester($command);
+    }
+
+    private function commandTesterWithInspector(InspectProjectRepositoryAction $inspector, Response ...$responses): CommandTester
+    {
+        $this->history = [];
+        $stack = HandlerStack::create(new MockHandler($responses));
+        $stack->push(Middleware::history($this->history));
+        $client = new Client(false, $stack);
+        return new CommandTester($this->publishCommand($client, repositoryInspector: $inspector));
     }
 
     /**
@@ -623,20 +662,30 @@ class PublishTest extends TestCase
         ?ModuleReviewWorkflow $reviewWorkflow = null,
         ?GenerateProjectMetadataAction $metadataAction = null,
         ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
+        ?InspectProjectRepositoryAction $repositoryInspector = null,
     ): Publish {
         return new class(
             $client,
             $reviewWorkflow,
             $metadataAction,
             $projectCreationHandoff,
+            $repositoryInspector,
         ) extends Publish {
             public function __construct(
                 private readonly Client $testClient,
                 ?ModuleReviewWorkflow $reviewWorkflow,
                 ?GenerateProjectMetadataAction $metadataAction,
                 ?DrupalOrgProjectCreationHandoff $projectCreationHandoff,
+                ?InspectProjectRepositoryAction $repositoryInspector,
             ) {
-                parent::__construct($reviewWorkflow, $metadataAction, $projectCreationHandoff);
+                parent::__construct(
+                    $reviewWorkflow,
+                    $metadataAction,
+                    $projectCreationHandoff,
+                    repositoryInspector: $repositoryInspector ?? new InspectProjectRepositoryAction(
+                        new ProjectRepositoryUrls('/definitely/not/a/repository', '/definitely/not/a/repository'),
+                    ),
+                );
             }
 
             protected function initialize(InputInterface $input, OutputInterface $output): void

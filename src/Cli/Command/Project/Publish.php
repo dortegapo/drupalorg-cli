@@ -184,24 +184,45 @@ class Publish extends Command
             return self::FAILURE;
         }
 
+        $isDryRun = (bool) $input->getOption('dry-run');
         $progress->register([ProjectPublishProgressRenderer::CHECKING_REPOSITORY => 'Checking Git repository']);
         $progress->start(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
-        $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
+        $repository = $isDryRun
+            ? ($this->repositoryInspector ?? new InspectProjectRepositoryAction($this->repositoryUrls))($module->location->machineName)
+            : $this->inspectRepositoryWithRetry($module->location->machineName);
         $progress->complete(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
-        $sourceStatus = $repository->reachable
-            ? ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $branch, $version, $repository)
-            : null;
-        $releaseExists = $repository->reachable && $this->releaseExists($project, $version);
-        $state = $this->buildState($repository, $sourceStatus, $branch, $version, $releaseExists);
-        if ((bool) $input->getOption('dry-run')) {
-            $this->writePublicationDryRun($output, $module, $project, $state);
-            return self::SUCCESS;
-        }
         if (!$repository->reachable && $repository->failure !== 'repository_not_ready') {
             $this->stdErr->writeln('<error>Could not inspect Drupal.org repository: ' . ($repository->failure ?? 'network_failure') . '.</error>');
             return self::FAILURE;
         }
-        return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
+        $sourceStatus = null;
+        if ($repository->reachable) {
+            try {
+                $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $branch, $version, $repository);
+            } catch (\Throwable $exception) {
+                $message = $exception->getMessage();
+                $label = preg_match('/not a git repository|does not have a commit checked out/i', $message) === 1
+                    ? 'Module is not inside a Git repository'
+                    : 'Could not inspect Drupal.org remote source';
+                $this->stdErr->writeln('<error>' . $label . ': ' . $message . '</error>');
+                return self::FAILURE;
+            }
+        }
+        $releaseExists = false;
+        if ($repository->reachable) {
+            try {
+                $releaseExists = $this->releaseExists($project, $version);
+            } catch (\Throwable $exception) {
+                $this->stdErr->writeln('<error>Could not inspect Drupal.org releases: ' . $exception->getMessage() . '</error>');
+                return self::FAILURE;
+            }
+        }
+        $state = $this->buildState($repository, $sourceStatus, $branch, $version, $releaseExists);
+        if ($isDryRun) {
+            $this->writePublicationDryRun($output, $state);
+            return self::SUCCESS;
+        }
+        return $this->runPublication($input, $output, $progress, $module, $project, $state);
     }
 
     /**
@@ -303,10 +324,11 @@ class Publish extends Command
             $source?->tagMatchesSource ?? false,
             $releaseExists,
             false,
-            $repository->failure,
             $source?->filesAdded ?? 0,
             $source?->filesModified ?? 0,
             $source?->filesDeleted ?? 0,
+            $source?->branchCommitSha,
+            $source?->tagCommitSha,
         );
     }
 
@@ -317,7 +339,6 @@ class Publish extends Command
         ModuleContext $module,
         \mglaman\DrupalOrg\Entity\Project $project,
         ProjectPublishState $state,
-        ProjectRepositoryResult $repository,
     ): int {
         $plan = ProjectPublishPlan::fromState($state);
         $this->writePublicationState($output, $state, $plan);
@@ -351,13 +372,13 @@ class Publish extends Command
                 }
                 $progress->register([ProjectPublishProgressRenderer::PUBLISHING_SOURCE => 'Publishing source']);
                 $progress->start(ProjectPublishProgressRenderer::PUBLISHING_SOURCE);
-                $source = $publisher($module, $module->location->machineName, $state->branch, $state->version);
+                $source = $publisher($module, $module->location->machineName, $state->branch, $state->version, $this->sourceStatusFromState($state));
                 $progress->complete(ProjectPublishProgressRenderer::PUBLISHING_SOURCE);
                 $output->writeln($source->alreadyUpToDate ? 'Source already published.' : 'Source published to ' . $source->branch . '.');
                 $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
                 $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
                 $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
-                return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
+                return $this->runPublication($input, $output, $progress, $module, $project, $state);
             }
             if ($plan->nextStep === ProjectPublishStep::CREATE_TAG) {
                 if ($input->isInteractive() && !$this->askConfirmation(
@@ -386,7 +407,7 @@ class Publish extends Command
                 $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
                 $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
                 $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
-                return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
+                return $this->runPublication($input, $output, $progress, $module, $project, $state);
             }
             if ($plan->nextStep === ProjectPublishStep::CREATE_RELEASE) {
                 if (!$input->isInteractive()) {
@@ -423,9 +444,13 @@ class Publish extends Command
                     $state->tagMatchesSource,
                     true,
                     false,
-                    $state->repositoryFailure,
+                    $state->filesAdded,
+                    $state->filesModified,
+                    $state->filesDeleted,
+                    $state->branchCommitSha,
+                    $state->tagCommitSha,
                 );
-                return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
+                return $this->runPublication($input, $output, $progress, $module, $project, $state);
             }
             if ($plan->nextStep === ProjectPublishStep::VERIFY_COMPOSER) {
                 $progress->register([ProjectPublishProgressRenderer::VERIFYING_COMPOSER => 'Verifying Composer package']);
@@ -452,9 +477,12 @@ class Publish extends Command
 
     private function sourceStatusFromState(ProjectPublishState $state): ProjectSourceStatusResult
     {
+        if ($state->localSourceCommitSha === null || $state->localTreeSha === null) {
+            throw new \LogicException('Local source status is unavailable; inspect the repository again before publishing.');
+        }
         return new ProjectSourceStatusResult(
-            $state->localSourceCommitSha ?? '',
-            $state->localTreeSha ?? '',
+            $state->localSourceCommitSha,
+            $state->localTreeSha,
             $state->branchExists,
             $state->branchTreeSha,
             $state->branchMatchesSource,
@@ -464,6 +492,8 @@ class Publish extends Command
             $state->filesAdded,
             $state->filesModified,
             $state->filesDeleted,
+            $state->branchCommitSha,
+            $state->tagCommitSha,
         );
     }
 
@@ -483,10 +513,11 @@ class Publish extends Command
             $state->tagMatchesSource,
             $state->releaseExists,
             true,
-            $state->repositoryFailure,
             $state->filesAdded,
             $state->filesModified,
             $state->filesDeleted,
+            $state->branchCommitSha,
+            $state->tagCommitSha,
         );
     }
 
@@ -501,7 +532,7 @@ class Publish extends Command
         $output->writeln('Resuming from: ' . $plan->nextStep->value);
     }
 
-    private function writePublicationDryRun(OutputInterface $output, ModuleContext $module, ?\mglaman\DrupalOrg\Entity\Project $project, ProjectPublishState $state): void
+    private function writePublicationDryRun(OutputInterface $output, ProjectPublishState $state): void
     {
         $plan = ProjectPublishPlan::fromState($state);
         $output->writeln('<fg=cyan;options=bold>DRY RUN</>');

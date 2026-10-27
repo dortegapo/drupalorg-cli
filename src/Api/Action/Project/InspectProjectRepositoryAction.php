@@ -57,6 +57,11 @@ class InspectProjectRepositoryAction implements ActionInterface
 
     private function failure(string $error): string
     {
+        return self::classifyFailure($error);
+    }
+
+    public static function classifyFailure(string $error): string
+    {
         $error = strtolower($error);
         if (str_contains($error, 'authentication') || str_contains($error, 'permission denied')) {
             return 'authentication_failed';
@@ -64,7 +69,8 @@ class InspectProjectRepositoryAction implements ActionInterface
         if (str_contains($error, 'git:') && str_contains($error, 'not found')) {
             return 'git_not_available';
         }
-        if (str_contains($error, 'repository not found') || str_contains($error, 'does not appear')) {
+        if (preg_match('/repository\b.*\bnot found|project\b.*\bcould not be found|http\s*404/i', $error) === 1
+            || str_contains($error, 'does not appear')) {
             return 'repository_not_ready';
         }
         return 'network_failure';

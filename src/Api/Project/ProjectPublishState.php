@@ -21,10 +21,11 @@ final class ProjectPublishState
         public readonly bool $tagMatchesSource = false,
         public readonly bool $releaseExists = false,
         public readonly bool $composerPackageVisible = false,
-        public readonly ?string $repositoryFailure = null,
         public readonly int $filesAdded = 0,
         public readonly int $filesModified = 0,
         public readonly int $filesDeleted = 0,
+        public readonly ?string $branchCommitSha = null,
+        public readonly ?string $tagCommitSha = null,
     ) {
     }
 }

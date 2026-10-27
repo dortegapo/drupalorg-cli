@@ -33,7 +33,10 @@ class CreateProjectTagAction implements ActionInterface
                     $version->value,
                 ));
             }
-            return new CreateProjectTagResult($version->value, $source->localSourceCommitSha ?? '', false);
+            if ($source->tagCommitSha === null) {
+                throw new \RuntimeException('The existing release tag has no resolvable Drupal.org commit. Inspect the repository again.');
+            }
+            return new CreateProjectTagResult($version->value, $source->tagCommitSha, false);
         }
         if (!$source->branchExists || !$source->branchMatchesSource) {
             throw new \RuntimeException('The release branch does not match the committed local module source. Publish source first.');
@@ -41,24 +44,86 @@ class CreateProjectTagAction implements ActionInterface
 
         $directory = $this->temporaryDirectory();
         try {
-            $remote = ($this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName))->writeUrl;
+            $urls = $this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName);
             $this->run($directory, ['init']);
-            $this->run($directory, ['remote', 'add', 'drupal', $remote]);
-            $this->run($directory, ['fetch', '--no-tags', 'drupal', 'refs/heads/' . $branch->name]);
-            $branchCommit = trim($this->run($directory, ['rev-parse', 'FETCH_HEAD'])->getOutput());
+            $this->run($directory, ['remote', 'add', 'read', $urls->readUrl]);
+            $this->run($directory, ['remote', 'add', 'drupal', $urls->writeUrl]);
+            $tagProbe = $this->run($directory, ['ls-remote', '--exit-code', '--tags', 'read', 'refs/tags/' . $version->value], false);
+            if (!$tagProbe->isSuccessful() && $tagProbe->getExitCode() !== 2) {
+                throw new \RuntimeException('Could not inspect Drupal.org release tag: ' . trim($tagProbe->getErrorOutput()));
+            }
+            $tagNowExists = $tagProbe->isSuccessful();
+            if ($tagNowExists) {
+                [$tagCommit, $tagTree] = $this->fetchTag($directory, $version->value);
+                if (!hash_equals($source->localTreeSha, $tagTree)) {
+                    throw $this->tagConflict($version);
+                }
+                return new CreateProjectTagResult($version->value, $tagCommit, false);
+            }
+            $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
             $branchTree = trim($this->run($directory, ['rev-parse', 'FETCH_HEAD^{tree}'])->getOutput());
-            if (!hash_equals($source->localTreeSha, $branchTree)) {
+            if ($source->branchTreeSha === null || !hash_equals($source->branchTreeSha, $branchTree)
+                || !hash_equals($source->localTreeSha, $branchTree)) {
                 throw new \RuntimeException('Drupal.org branch changed while publishing. Fetch the current repository state and rerun.');
             }
             $this->run($directory, ['tag', $version->value, 'FETCH_HEAD']);
             $push = $this->run($directory, ['push', 'drupal', 'refs/tags/' . $version->value], false);
             if (!$push->isSuccessful()) {
-                throw new \RuntimeException('Could not push release tag. Verify SSH access with: ssh -T git@git.drupal.org');
+                $tagNowExists = $this->run($directory, ['ls-remote', '--exit-code', '--tags', 'read', 'refs/tags/' . $version->value], false)->isSuccessful();
+                if ($tagNowExists) {
+                    [$tagCommit, $tagTree] = $this->fetchTag($directory, $version->value);
+                    if (hash_equals($source->localTreeSha, $tagTree)) {
+                        return new CreateProjectTagResult($version->value, $tagCommit, false);
+                    }
+                    throw $this->tagConflict($version);
+                }
+                throw new \RuntimeException($this->pushFailureMessage($push->getErrorOutput()));
             }
-            return new CreateProjectTagResult($version->value, $branchCommit, true);
+            [$tagCommit] = $this->fetchTag($directory, $version->value);
+            return new CreateProjectTagResult($version->value, $tagCommit, true);
         } finally {
             $this->removeDirectory($directory);
         }
+    }
+
+    /** @return array{string, string} */
+    private function fetchTag(string $directory, string $tag): array
+    {
+        $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/tags/' . $tag]);
+        return [
+            trim($this->run($directory, ['rev-parse', 'FETCH_HEAD^{commit}'])->getOutput()),
+            trim($this->run($directory, ['rev-parse', 'FETCH_HEAD^{tree}'])->getOutput()),
+        ];
+    }
+
+    private function tagConflict(ProjectReleaseVersion $version): \RuntimeException
+    {
+        return new \RuntimeException(sprintf(
+            "Release tag %s already exists for different source code.\n\nRelease tags are immutable.\nUse a new release version or check out the source corresponding to %s.",
+            $version->value,
+            $version->value,
+        ));
+    }
+
+    private function pushFailureMessage(string $error): string
+    {
+        $lower = strtolower($error);
+        if (str_contains($lower, 'permission denied') || str_contains($lower, 'publickey')
+            || str_contains($lower, 'authentication') || str_contains($lower, 'could not read from remote repository')) {
+            return "Could not authenticate to Drupal.org Git.\n\nVerify SSH access with:\n  ssh -T git@git.drupal.org";
+        }
+        if (str_contains($lower, 'non-fast-forward') || str_contains($lower, 'fetch first')
+            || str_contains($lower, 'rejected') || str_contains($lower, 'stale info')) {
+            return "Drupal.org tag changed while publishing.\n\nRun project:publish again to inspect the current remote state.";
+        }
+        $safe = self::redactDiagnostic($error);
+        return 'Could not publish release tag to Drupal.org: ' . ($safe === null || $safe === '' ? 'unknown Git error' : $safe);
+    }
+
+    private static function redactDiagnostic(string $error): ?string
+    {
+        $safe = preg_replace('/(token|password|secret|authorization)\s*[:=]\s*\S+/i', '$1=[redacted]', trim($error));
+        return $safe === null ? null : preg_replace('#//[^/\s:@]+:[^/\s@]+@#', '//[redacted]@', $safe);
     }
 
     /** @param list<string> $args */

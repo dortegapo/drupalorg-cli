@@ -30,7 +30,9 @@ class InspectProjectSourceAction implements ActionInterface
         $prefix = trim($this->git($module->location->resolvedPath, ['rev-parse', '--show-prefix']));
         $commit = $this->git($root, ['rev-parse', 'HEAD']);
         $tree = $this->git($root, ['rev-parse', $prefix === '' ? 'HEAD^{tree}' : 'HEAD:' . rtrim($prefix, '/')]);
+        $branchCommit = null;
         $branchTree = null;
+        $tagCommit = null;
         $tagTree = null;
         $added = 0;
         $modified = 0;
@@ -43,16 +45,22 @@ class InspectProjectSourceAction implements ActionInterface
                 $this->run($directory, ['remote', 'add', 'read', $remote]);
                 if ($repository->branchSha($branch->name) !== null) {
                     $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
+                    $branchCommit = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{commit}']);
                     $branchTree = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{tree}']);
                     [$added, $modified, $deleted] = $this->changeSummary($root, $prefix, $directory);
                 }
                 if ($repository->tagSha($version->value) !== null) {
                     $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/tags/' . $version->value]);
+                    $tagCommit = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{commit}']);
                     $tagTree = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{tree}']);
                 }
             } finally {
                 $this->removeDirectory($directory);
             }
+        }
+        if ($branchCommit === null) {
+            $localTree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
+            $added = count($this->treeEntries($root, $localTree));
         }
 
         return new ProjectSourceStatusResult(
@@ -67,6 +75,8 @@ class InspectProjectSourceAction implements ActionInterface
             $added,
             $modified,
             $deleted,
+            $branchCommit,
+            $tagCommit,
         );
     }
 
@@ -81,7 +91,7 @@ class InspectProjectSourceAction implements ActionInterface
     private function run(string $cwd, array $args): Process
     {
         $process = new Process(array_merge(['git'], $args), $cwd, null, null, 60);
-        $process->setEnv(['GIT_TERMINAL_PROMPT' => '0']);
+        $process->setEnv(array_merge($_ENV, $_SERVER, ['GIT_TERMINAL_PROMPT' => '0']));
         $process->mustRun();
         return $process;
     }
@@ -98,21 +108,9 @@ class InspectProjectSourceAction implements ActionInterface
     /** @return array{int, int, int} */
     private function changeSummary(string $root, string $prefix, string $repository): array
     {
-        $localArchive = $repository . DIRECTORY_SEPARATOR . 'local.tar';
-        $remoteArchive = $repository . DIRECTORY_SEPARATOR . 'remote.tar';
-        $tree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
-        $this->run($root, ['archive', '--format=tar', '--output=' . $localArchive, $tree]);
-        $this->run($repository, ['archive', '--format=tar', '--output=' . $remoteArchive, 'FETCH_HEAD']);
-        $local = $repository . DIRECTORY_SEPARATOR . 'local';
-        $remote = $repository . DIRECTORY_SEPARATOR . 'remote';
-        mkdir($local);
-        mkdir($remote);
-        (new \PharData($localArchive))->extractTo($local, null, true);
-        (new \PharData($remoteArchive))->extractTo($remote, null, true);
-        unlink($localArchive);
-        unlink($remoteArchive);
-        $localFiles = $this->files($local);
-        $remoteFiles = $this->files($remote);
+        $localTree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
+        $localFiles = $this->treeEntries($root, $localTree);
+        $remoteFiles = $this->treeEntries($repository, 'FETCH_HEAD');
         $added = count(array_diff_key($localFiles, $remoteFiles));
         $deleted = count(array_diff_key($remoteFiles, $localFiles));
         $modified = 0;
@@ -125,18 +123,22 @@ class InspectProjectSourceAction implements ActionInterface
     }
 
     /** @return array<string, string> */
-    private function files(string $directory): array
+    private function treeEntries(string $cwd, string $tree): array
     {
-        $files = [];
-        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS));
-        foreach ($iterator as $file) {
-            if ($file->isFile()) {
-                $relative = substr($file->getPathname(), strlen($directory) + 1);
-                $hash = sha1_file($file->getPathname());
-                $files[$relative] = $hash === false ? '' : $hash;
+        $entries = [];
+        $output = $this->git($cwd, ['ls-tree', '-r', $tree]);
+        $lines = preg_split('/\R/', $output);
+        foreach ($lines === false ? [] : $lines as $line) {
+            if ($line === '' || !str_contains($line, "\t")) {
+                continue;
+            }
+            [$metadata, $path] = explode("\t", $line, 2);
+            $parts = preg_split('/\s+/', $metadata);
+            if ($parts !== false && count($parts) >= 3) {
+                $entries[$path] = $parts[0] . ':' . $parts[2];
             }
         }
-        return $files;
+        return $entries;
     }
 
     private function removeDirectory(string $directory): void

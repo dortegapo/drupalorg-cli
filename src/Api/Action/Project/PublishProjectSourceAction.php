@@ -10,6 +10,7 @@ use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use Symfony\Component\Process\Process;
 
 /** Publishes only the committed module subtree through an isolated repository. */
@@ -24,6 +25,7 @@ class PublishProjectSourceAction implements ActionInterface
         string $machineName,
         ProjectReleaseBranch $branch,
         ProjectReleaseVersion $version,
+        ?ProjectSourceStatusResult $expectedSource = null,
     ): PublishProjectSourceResult {
         $source = $this->sourceContext($module);
         $this->assertCleanModule($source['root'], $source['prefix']);
@@ -32,12 +34,18 @@ class PublishProjectSourceAction implements ActionInterface
         [$name, $email] = $this->identity($source['root']);
         $staging = $this->temporaryDirectory('drupalorg-publish-');
         try {
-            $remote = ($this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName))->writeUrl;
+            $urls = $this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName);
             $this->run($staging, ['init']);
-            $this->run($staging, ['remote', 'add', 'drupal', $remote]);
-            $branchExists = $this->run($staging, ['ls-remote', '--exit-code', '--heads', 'drupal', $branch->name], false)->isSuccessful();
+            $this->run($staging, ['remote', 'add', 'read', $urls->readUrl]);
+            $this->run($staging, ['remote', 'add', 'drupal', $urls->writeUrl]);
+            $branchProbe = $this->run($staging, ['ls-remote', '--exit-code', '--heads', 'read', $branch->name], false);
+            if (!$branchProbe->isSuccessful() && $branchProbe->getExitCode() !== 2) {
+                throw new \RuntimeException('Could not inspect Drupal.org branch: ' . trim($branchProbe->getErrorOutput()));
+            }
+            $branchExists = $branchProbe->isSuccessful();
+            $this->assertExpectedBranch($staging, $branch, $expectedSource, $branchExists);
             if ($branchExists) {
-                $this->mustRun($staging, ['fetch', '--no-tags', 'drupal', 'refs/heads/' . $branch->name]);
+                $this->mustRun($staging, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
                 $this->mustRun($staging, ['checkout', '-B', $branch->name, 'FETCH_HEAD']);
                 $this->mustRun($staging, ['rm', '-r', '--ignore-unmatch', '.']);
             }
@@ -60,7 +68,7 @@ class PublishProjectSourceAction implements ActionInterface
             }
             $push = $this->run($staging, ['push', 'drupal', 'HEAD:refs/heads/' . $branch->name], false);
             if (!$push->isSuccessful()) {
-                throw new \RuntimeException('Drupal.org branch changed while publishing. Fetch the current repository state and rerun.');
+                throw new \RuntimeException($this->pushFailureMessage($push->getErrorOutput()));
             }
             return new PublishProjectSourceResult($branch->name, $source['commit'], $this->git($staging, ['rev-parse', 'HEAD']), $filesChanged, !$branchExists, false);
         } finally {
@@ -123,8 +131,10 @@ class PublishProjectSourceAction implements ActionInterface
     /** @return array{string, string} */
     private function identity(string $root): array
     {
-        $name = trim($this->git($root, ['config', '--get', 'user.name']));
-        $email = trim($this->git($root, ['config', '--get', 'user.email']));
+        $nameProcess = $this->run($root, ['config', '--get', 'user.name'], false);
+        $emailProcess = $this->run($root, ['config', '--get', 'user.email'], false);
+        $name = trim($nameProcess->getOutput());
+        $email = trim($emailProcess->getOutput());
         if ($name === '' || $email === '') {
             throw new \RuntimeException('Git identity is not configured. Set user.name and user.email in the source repository before publishing.');
         }
@@ -144,6 +154,54 @@ class PublishProjectSourceAction implements ActionInterface
     private function git(string $cwd, array $args): string
     {
         return trim($this->mustRun($cwd, $args)->getOutput());
+    }
+
+    private function assertExpectedBranch(
+        string $staging,
+        ProjectReleaseBranch $branch,
+        ?ProjectSourceStatusResult $expected,
+        bool $currentExists,
+    ): void {
+        if ($expected === null) {
+            return;
+        }
+        if ($expected->branchExists !== $currentExists) {
+            throw new \RuntimeException("Drupal.org branch changed after source inspection.\n\nThe publication plan is stale.\nRun project:publish again to review the new remote changes.");
+        }
+        if (!$currentExists) {
+            return;
+        }
+        $this->mustRun($staging, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
+        $currentTree = $this->git($staging, ['rev-parse', 'FETCH_HEAD^{tree}']);
+        if ($expected->branchTreeSha === null || !hash_equals($expected->branchTreeSha, $currentTree)) {
+            throw new \RuntimeException("Drupal.org branch changed after source inspection.\n\nThe publication plan is stale.\nRun project:publish again to review the new remote changes.");
+        }
+    }
+
+    private function pushFailureMessage(string $error): string
+    {
+        return self::classifyPushFailure($error);
+    }
+
+    public static function classifyPushFailure(string $error): string
+    {
+        $lower = strtolower($error);
+        if (str_contains($lower, 'permission denied') || str_contains($lower, 'publickey')
+            || str_contains($lower, 'authentication') || str_contains($lower, 'could not read from remote repository')) {
+            return "Could not authenticate to Drupal.org Git.\n\nVerify SSH access with:\n  ssh -T git@git.drupal.org";
+        }
+        if (str_contains($lower, 'non-fast-forward') || str_contains($lower, 'fetch first')
+            || str_contains($lower, 'rejected') || str_contains($lower, 'stale info')) {
+            return "Drupal.org branch changed while publishing.\n\nRun project:publish again to inspect the current remote state.";
+        }
+        $safe = self::redactDiagnostic($error);
+        return 'Could not publish source to Drupal.org: ' . ($safe === null || $safe === '' ? 'unknown Git error' : $safe);
+    }
+
+    private static function redactDiagnostic(string $error): ?string
+    {
+        $safe = preg_replace('/(token|password|secret|authorization)\s*[:=]\s*\S+/i', '$1=[redacted]', trim($error));
+        return $safe === null ? null : preg_replace('#//[^/\s:@]+:[^/\s@]+@#', '//[redacted]@', $safe);
     }
 
     /** @param list<string> $args */

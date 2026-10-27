@@ -63,6 +63,22 @@ final class ProjectPublicationGitActionTest extends TestCase
         $this->removeDirectory($this->directory);
     }
 
+    public function testRepositoryFailureClassificationSeparatesMissingRepositoriesFromNetworkErrors(): void
+    {
+        self::assertSame('repository_not_ready', InspectProjectRepositoryAction::classifyFailure('fatal: repository not found'));
+        self::assertSame('repository_not_ready', InspectProjectRepositoryAction::classifyFailure('Project foo could not be found (HTTP 404)'));
+        self::assertSame('network_failure', InspectProjectRepositoryAction::classifyFailure('Could not resolve host: git.drupal.org'));
+        self::assertSame('network_failure', InspectProjectRepositoryAction::classifyFailure('SSL connection timeout'));
+    }
+
+    public function testPushFailureClassificationIsSafeAndActionable(): void
+    {
+        self::assertStringContainsString('ssh -T git@git.drupal.org', PublishProjectSourceAction::classifyPushFailure('Permission denied (publickey).'));
+        self::assertStringContainsString('Run project:publish again', PublishProjectSourceAction::classifyPushFailure('rejected (non-fast-forward)'));
+        self::assertStringNotContainsString('secret-value', PublishProjectSourceAction::classifyPushFailure('remote error token=secret-value'));
+        self::assertStringNotContainsString('secret-value', PublishProjectSourceAction::classifyPushFailure('remote https://user:secret-value@example.test/repository.git failed'));
+    }
+
     public function testPublishesOnlyCommittedModuleFilesAndTagsByTree(): void
     {
         $branch = ProjectReleaseBranch::fromString('1.x');
@@ -70,6 +86,10 @@ final class ProjectPublicationGitActionTest extends TestCase
         $empty = (new InspectProjectRepositoryAction($this->urls))('foo');
         self::assertTrue($empty->reachable);
         self::assertSame([], $empty->branches);
+        $emptyStatus = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $empty);
+        self::assertSame(3, $emptyStatus->filesAdded);
+        self::assertSame(0, $emptyStatus->filesModified);
+        self::assertSame(0, $emptyStatus->filesDeleted);
         $publisher = new PublishProjectSourceAction($this->urls);
         $published = $publisher($this->module, 'foo', $branch, $version);
         self::assertTrue($published->created);
@@ -91,6 +111,52 @@ final class ProjectPublicationGitActionTest extends TestCase
         $taggedRepository = (new InspectProjectRepositoryAction($this->urls))('foo');
         $taggedStatus = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $taggedRepository);
         self::assertTrue($taggedStatus->tagMatchesSource);
+        self::assertSame(
+            $this->git($this->directory, ['--git-dir=' . $this->remote, 'rev-parse', 'refs/tags/1.0.0']),
+            $tag->commitSha,
+        );
+    }
+
+    public function testPublishingFailsWhenBranchChangesAfterInspection(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', $branch, $version);
+        $repository = (new InspectProjectRepositoryAction($this->urls))('foo');
+        $status = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $repository);
+
+        $updater = $this->cloneBranch('race-updater', $branch);
+        file_put_contents($updater . '/remote-change.txt', 'remote');
+        $this->git($updater, ['add', '.']);
+        $this->git($updater, ['commit', '-m', 'Remote change']);
+        $this->git($updater, ['push', 'origin', 'HEAD:refs/heads/1.x']);
+
+        try {
+            $publisher($this->module, 'foo', $branch, $version, $status);
+            self::fail('Expected stale publication plan failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                "Drupal.org branch changed after source inspection.\n\nThe publication plan is stale.\nRun project:publish again to review the new remote changes.",
+                $exception->getMessage(),
+            );
+        }
+        self::assertContains('remote-change.txt', $this->treeNames($this->remote, 'refs/heads/1.x'));
+    }
+
+    public function testPublishingFailsWhenBranchAppearsAfterInspection(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $repository = (new InspectProjectRepositoryAction($this->urls))('foo');
+        $status = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $repository);
+        self::assertFalse($status->branchExists);
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', $branch, $version);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('The publication plan is stale.');
+        $publisher($this->module, 'foo', $branch, $version, $status);
     }
 
     public function testBranchCanAdvanceAfterMatchingTag(): void
@@ -158,6 +224,7 @@ final class ProjectPublicationGitActionTest extends TestCase
             new ModuleInfo('Foo', 'module', '^11', []),
         );
         $urls = new ProjectRepositoryUrls($remote, $remote);
+        file_put_contents($root . '/UNRELATED-DIRTY.txt', 'not part of the module');
         (new PublishProjectSourceAction($urls))($module, 'foo', ProjectReleaseBranch::fromString('1.x'), ProjectReleaseVersion::fromString('1.0.0'));
 
         self::assertSame(['foo.info.yml', 'foo.module', 'src'], $this->treeNames($remote, 'refs/heads/1.x'));
@@ -167,9 +234,88 @@ final class ProjectPublicationGitActionTest extends TestCase
         self::assertNotContains('web', $names);
     }
 
+    public function testMissingGitIdentityIsReportedBeforeMutation(): void
+    {
+        $this->git($this->source, ['config', '--unset', 'user.name']);
+        $this->git($this->source, ['config', '--unset', 'user.email']);
+        $home = $this->directory . '/empty-home';
+        mkdir($home, 0700);
+        $oldHome = $_ENV['HOME'] ?? null;
+        $oldServerHome = $_SERVER['HOME'] ?? null;
+        $oldGlobal = $_ENV['GIT_CONFIG_GLOBAL'] ?? null;
+        $oldServerGlobal = $_SERVER['GIT_CONFIG_GLOBAL'] ?? null;
+        $_ENV['HOME'] = $_SERVER['HOME'] = $home;
+        $_ENV['GIT_CONFIG_GLOBAL'] = $_SERVER['GIT_CONFIG_GLOBAL'] = '/dev/null';
+        try {
+            $this->expectException(\RuntimeException::class);
+            $this->expectExceptionMessage('Git identity is not configured');
+            (new PublishProjectSourceAction($this->urls))(
+                $this->module,
+                'foo',
+                ProjectReleaseBranch::fromString('1.x'),
+                ProjectReleaseVersion::fromString('1.0.0'),
+            );
+        } finally {
+            $this->restoreEnv('HOME', $oldHome, $oldServerHome);
+            $this->restoreEnv('GIT_CONFIG_GLOBAL', $oldGlobal, $oldServerGlobal);
+        }
+        self::assertSame('', $this->git($this->remote, ['show-ref']));
+    }
+
+    public function testTagAppearingAfterInspectionWithSameTreeIsIdempotent(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', $branch, $version);
+        $repository = (new InspectProjectRepositoryAction($this->urls))('foo');
+        $status = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $repository);
+        $creator = new CreateProjectTagAction($this->urls);
+        $creator('foo', $branch, $version, $status);
+        $result = $creator('foo', $branch, $version, $status);
+
+        self::assertFalse($result->created);
+        self::assertSame($this->git($this->remote, ['rev-parse', 'refs/tags/1.0.0']), $result->commitSha);
+    }
+
+    public function testTagAppearingAfterInspectionWithDifferentTreeFails(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', $branch, $version);
+        $repository = (new InspectProjectRepositoryAction($this->urls))('foo');
+        $status = (new InspectProjectSourceAction($this->urls))($this->module, $branch, $version, $repository);
+
+        $updater = $this->cloneBranch('tag-race-updater', $branch);
+        file_put_contents($updater . '/different.txt', 'different');
+        $this->git($updater, ['add', '.']);
+        $this->git($updater, ['commit', '-m', 'Different tag source']);
+        $this->git($updater, ['tag', $version->value]);
+        $this->git($updater, ['push', 'origin', 'refs/tags/' . $version->value]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Release tags are immutable');
+        (new CreateProjectTagAction($this->urls))('foo', $branch, $version, $status);
+    }
+
     public function testDirtyModuleIsBlockedBeforeRemoteMutation(): void
     {
         file_put_contents($this->source . '/foo.module', "<?php\n// uncommitted\n");
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('uncommitted changes');
+        (new PublishProjectSourceAction($this->urls))(
+            $this->module,
+            'foo',
+            ProjectReleaseBranch::fromString('1.x'),
+            ProjectReleaseVersion::fromString('1.0.0'),
+        );
+        self::assertSame('', $this->git($this->remote, ['show-ref']));
+    }
+
+    public function testUntrackedModuleFileIsBlockedBeforeRemoteMutation(): void
+    {
+        file_put_contents($this->source . '/untracked.txt', 'not committed');
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('uncommitted changes');
         (new PublishProjectSourceAction($this->urls))(
@@ -219,6 +365,29 @@ final class ProjectPublicationGitActionTest extends TestCase
     {
         $output = $this->git($this->directory, ['--git-dir=' . $repository, 'ls-tree', '--name-only', $ref]);
         return array_values(array_filter(explode("\n", trim($output))));
+    }
+
+    private function cloneBranch(string $name, ProjectReleaseBranch $branch): string
+    {
+        $clone = $this->directory . '/' . $name;
+        $this->git($this->directory, ['clone', '--branch', $branch->name, $this->remote, $clone]);
+        $this->git($clone, ['config', 'user.name', 'Updater']);
+        $this->git($clone, ['config', 'user.email', 'updater@example.test']);
+        return $clone;
+    }
+
+    private function restoreEnv(string $key, ?string $env, ?string $server): void
+    {
+        if ($env === null) {
+            unset($_ENV[$key]);
+        } else {
+            $_ENV[$key] = $env;
+        }
+        if ($server === null) {
+            unset($_SERVER[$key]);
+        } else {
+            $_SERVER[$key] = $server;
+        }
     }
 
     /** @param list<string> $args */
