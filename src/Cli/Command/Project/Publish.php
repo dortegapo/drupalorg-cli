@@ -7,6 +7,7 @@ namespace mglaman\DrupalOrgCli\Command\Project;
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleasesAction;
+use mglaman\DrupalOrg\Action\Project\BootstrapProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
@@ -36,6 +37,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
+use Symfony\Component\Console\Question\Question;
 
 class Publish extends Command
 {
@@ -62,6 +64,7 @@ class Publish extends Command
         private readonly ?GetProjectReleasesAction $releasesAction = null,
         private readonly ?ProjectRepositoryUrls $repositoryUrls = null,
         private readonly ?\Closure $sleeper = null,
+        private readonly ?BootstrapProjectSourceAction $bootstrapSourceAction = null,
     ) {
         parent::__construct();
     }
@@ -91,6 +94,7 @@ class Publish extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $modulePath = (string) $input->getArgument('module');
+        $isDryRun = (bool) $input->getOption('dry-run');
         $progress = new ProjectPublishProgressRenderer($output);
         $progress->register([
             ProjectPublishProgressRenderer::PREPARING_MODULE => 'Preparing module',
@@ -116,12 +120,51 @@ class Publish extends Command
         $progress->start(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
         try {
             $localSource = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+            if ($localSource->bootstrapRequired) {
+                if ($isDryRun) {
+                    $progress->complete(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+                    $this->writeBootstrapDryRun($output, $module, $localSource);
+                    if ($localSource->stagedChangesOutsideModule) {
+                        $output->writeln('The Git index already contains staged changes outside the module.');
+                    }
+                    return self::SUCCESS;
+                }
+                if ($localSource->stagedChangesOutsideModule) {
+                    $progress->fail(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+                    $this->stdErr->writeln('<error>The Git index already contains staged changes outside the module.</error>');
+                    $this->stdErr->writeln('Commit or unstage them before project:publish creates the initial module commit.');
+                    return self::FAILURE;
+                }
+                if (!$input->isInteractive()) {
+                    $progress->fail(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+                    $this->stdErr->writeln('<error>Module source requires an initial Git commit.</error>');
+                    $this->stdErr->writeln('Run project:publish interactively or initialize and commit the module first.');
+                    return self::FAILURE;
+                }
+                $this->writeBootstrapPlan($output, $module, $localSource);
+                if (!$this->askConfirmation($input, $output, $this->bootstrapQuestion($module, $localSource), true)) {
+                    $progress->complete(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+                    $output->writeln('Publication cancelled before making remote changes.');
+                    return self::SUCCESS;
+                }
+                [$userName, $userEmail] = $this->bootstrapIdentity($input, $output, $localSource);
+                $localSource = ($this->bootstrapSourceAction ?? new BootstrapProjectSourceAction())(
+                    $module,
+                    $localSource,
+                    $userName,
+                    $userEmail,
+                );
+            }
+            InspectLocalProjectSourceAction::assertPublishable($localSource);
         } catch (\RuntimeException $exception) {
             $progress->fail(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
             $this->stdErr->writeln('<error>' . $exception->getMessage() . '</error>');
             return self::FAILURE;
         }
         $progress->complete(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+        if (!$localSource->bootstrapRequired) {
+            $this->writeLocalSourceStatus($output, $localSource);
+        }
 
         $progress->start(ProjectPublishProgressRenderer::CHECKING_PROJECT);
         try {
@@ -198,7 +241,6 @@ class Publish extends Command
             return self::FAILURE;
         }
 
-        $isDryRun = (bool) $input->getOption('dry-run');
         $progress->register([ProjectPublishProgressRenderer::CHECKING_REPOSITORY => 'Checking Git repository']);
         $progress->start(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
         $repository = $isDryRun
@@ -534,7 +576,11 @@ class Publish extends Command
 
     private function assertCurrentLocalSource(ModuleContext $module, ProjectSourceStatusResult $expected): void
     {
-        $local = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        try {
+            $local = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        } catch (\RuntimeException $exception) {
+            throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.", 0, $exception);
+        }
         if ($local->sourceCommitSha !== $expected->localSourceCommitSha || $local->sourceTreeSha !== $expected->localTreeSha) {
             throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
         }
@@ -723,6 +769,97 @@ class Publish extends Command
         $this->stdOut->writeln(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL);
         $this->stdOut->writeln('');
         $this->stdOut->writeln('Machine name: ' . $machineName);
+    }
+
+    private function writeBootstrapPlan(
+        OutputInterface $output,
+        ModuleContext $module,
+        ProjectLocalSourceResult $source,
+    ): void {
+        $output->writeln('');
+        $output->writeln('<comment>INITIAL GIT COMMIT</comment>');
+        $output->writeln('');
+        if (!$source->repositoryExists) {
+            $output->writeln('The module is not tracked by Git yet.');
+        } elseif (!$source->repositoryHasHead) {
+            $output->writeln('The Git repository has no commits yet.');
+        } else {
+            $output->writeln('Module ' . $module->location->machineName . ' has not been committed yet.');
+        }
+        $output->writeln('');
+        $output->writeln('Repository:');
+        $output->writeln('  ' . ($source->repositoryExists ? $source->gitRoot : $module->location->resolvedPath));
+        $output->writeln('Module:');
+        $output->writeln('  ' . ($source->modulePrefix === '' ? '.' : rtrim($source->modulePrefix, '/')));
+        if (count($source->candidateFiles) > 20 && !$output->isVerbose()) {
+            $output->writeln('Files: ' . count($source->candidateFiles));
+        } else {
+            $output->writeln('Files:');
+            foreach ($source->candidateFiles as $file) {
+                $relative = $source->modulePrefix !== '' && str_starts_with($file, $source->modulePrefix)
+                    ? ltrim(substr($file, strlen($source->modulePrefix)), '/')
+                    : $file;
+                $output->writeln('  ' . $relative);
+            }
+        }
+        $output->writeln('Only files inside the module will be staged.');
+        $output->writeln('');
+    }
+
+    private function writeLocalSourceStatus(OutputInterface $output, ProjectLocalSourceResult $source): void
+    {
+        $output->writeln('Local Git repository ............. ' . ($source->repositoryExists ? '✓' : 'not initialized'));
+        $output->writeln('Committed module source .......... ' . ($source->moduleExistsInHead && $source->repositoryHasHead ? '✓' : '□'));
+        $output->writeln('Local mutation ................... ' . ($source->moduleClean ? 'none' : 'uncommitted changes'));
+    }
+
+    private function writeBootstrapDryRun(
+        OutputInterface $output,
+        ModuleContext $module,
+        ProjectLocalSourceResult $source,
+    ): void {
+        $output->writeln('<fg=cyan;options=bold>DRY RUN</>');
+        $output->writeln('');
+        $output->writeln('Local Git repository ............. ' . ($source->repositoryExists ? 'initialized' : 'not initialized'));
+        $output->writeln('Initial module commit ............ required');
+        $output->writeln('');
+        $output->writeln('<comment>Plan</comment>');
+        $output->writeln('1. Initialize Git in ' . ($source->repositoryExists ? $source->gitRoot : $module->location->resolvedPath));
+        $output->writeln('2. Stage ' . count($source->candidateFiles) . ' module files');
+        $output->writeln('3. Create initial ' . $module->location->machineName . ' implementation commit');
+        $output->writeln('No changes were made.');
+    }
+
+    private function bootstrapQuestion(ModuleContext $module, ProjectLocalSourceResult $source): string
+    {
+        if (!$source->repositoryExists) {
+            return 'Initialize a Git repository for this module and create its initial commit? [Y/n] ';
+        }
+        if (!$source->repositoryHasHead) {
+            return 'Create the initial commit containing module ' . $module->location->machineName . '? [Y/n] ';
+        }
+
+        return 'Module ' . $module->location->machineName . ' has not been committed yet. Create its initial module commit? [Y/n] ';
+    }
+
+    /** @return array{?string, ?string} */
+    private function bootstrapIdentity(
+        InputInterface $input,
+        OutputInterface $output,
+        ProjectLocalSourceResult $source,
+    ): array {
+        $name = $source->gitUserName;
+        $email = $source->gitUserEmail;
+        if ($name === null || $name === '') {
+            $name = (string) $this->questionHelper()->ask($input, $output, new Question('Git user name: '));
+        }
+        if ($email === null || $email === '') {
+            $email = (string) $this->questionHelper()->ask($input, $output, new Question('Git email: '));
+        }
+        $name = trim($name);
+        $email = trim($email);
+
+        return [$name !== '' ? $name : null, $email !== '' ? $email : null];
     }
 
     private function askConfirmation(

@@ -43,6 +43,8 @@ class PublishTest extends TestCase
 
     private bool $useRealLocalSourceInspector = false;
 
+    private ?InspectProjectRepositoryAction $overrideRepositoryInspector = null;
+
     protected function setUp(): void
     {
         $this->originalCwd = (string) getcwd();
@@ -450,7 +452,94 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->metadataCalls);
         self::assertSame(0, $command->browserCalls);
         self::assertCount(0, $this->history);
-        self::assertStringContainsString('Module source has no Git commit yet', $tester->getDisplay());
+        self::assertStringContainsString('Module source requires an initial Git commit', $tester->getDisplay());
+    }
+
+    public function testDryRunDescribesBootstrapWithoutMutatingOrCallingDrupalOrg(): void
+    {
+        $modulePath = $this->createValidModule();
+        chdir($this->workDir);
+        $this->useRealLocalSourceInspector = true;
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(0, $tester->execute(['module' => 'my_module', '--dry-run' => true], ['interactive' => false]));
+        self::assertStringContainsString('Local Git repository', $tester->getDisplay());
+        self::assertStringContainsString('Initial module commit', $tester->getDisplay());
+        self::assertStringContainsString('No changes were made.', $tester->getDisplay());
+        self::assertFileDoesNotExist($modulePath . '/.git');
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertCount(0, $this->history);
+    }
+
+    public function testDirtyCommittedModuleStopsBeforeDrupalOrgAndAiWorkflow(): void
+    {
+        $modulePath = $this->createValidModule();
+        $this->runGit(['init', $this->workDir], $this->workDir);
+        $this->runGit(['config', 'user.name', 'Test User'], $this->workDir);
+        $this->runGit(['config', 'user.email', 'test@example.test'], $this->workDir);
+        $this->runGit(['add', '--', 'web/modules/custom/my_module'], $this->workDir);
+        $this->runGit(['commit', '-m', 'Initial module'], $this->workDir);
+        file_put_contents($modulePath . '/my_module.info.yml', "name: Changed\ntype: module\ncore_version_requirement: ^11\n");
+        chdir($this->workDir);
+        $this->useRealLocalSourceInspector = true;
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(1, $tester->execute(['module' => 'my_module'], ['interactive' => false]));
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+        self::assertSame(0, $command->metadataCalls);
+        self::assertSame(0, $command->browserCalls);
+        self::assertCount(0, $this->history);
+        self::assertStringContainsString('Module source contains uncommitted changes', $tester->getDisplay());
+    }
+
+    public function testInteractiveBootstrapCommitsThenContinuesWorkflow(): void
+    {
+        $modulePath = $this->createValidModule();
+        chdir($this->workDir);
+        $this->useRealLocalSourceInspector = true;
+        $this->overrideRepositoryInspector = $this->createMock(InspectProjectRepositoryAction::class);
+        $this->overrideRepositoryInspector->method('__invoke')->willReturn(
+            new ProjectRepositoryResult('read', false, failure: 'network_failure'),
+        );
+        [$tester] = $this->commandTesterWithReview(
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+        $tester->setInputs(['y', 'Test User', 'test@example.test']);
+
+        self::assertSame(1, $tester->execute([
+            'module' => 'my_module',
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]));
+        self::assertFileExists($modulePath . '/.git');
+        self::assertStringContainsString('Initial my_module implementation', $this->runGit(
+            ['log', '-1', '--pretty=%s'],
+            $modulePath,
+        ));
+        self::assertStringContainsString('Could not inspect Drupal.org repository', $tester->getDisplay());
+        self::assertStringNotContainsString('ambiguous argument', $tester->getDisplay());
+        self::assertFileDoesNotExist($modulePath . '/unrelated.txt');
     }
 
     public function testInvalidYamlFails(): void
@@ -496,6 +585,16 @@ class PublishTest extends TestCase
         file_put_contents($this->workDir . '/composer.json', '{}');
 
         return $modulePath;
+    }
+
+    /** @param list<string> $args */
+    private function runGit(array $args, string $cwd): string
+    {
+        $process = new Process(array_merge(['git'], $args), $cwd);
+        $process->setTimeout(30);
+        $process->mustRun();
+
+        return trim($process->getOutput());
     }
 
     private function commandTester(Response ...$responses): CommandTester
@@ -697,6 +796,7 @@ class PublishTest extends TestCase
         $localSourceInspector = $this->useRealLocalSourceInspector
             ? new InspectLocalProjectSourceAction()
             : $this->localSourceInspector();
+        $repositoryInspector ??= $this->overrideRepositoryInspector;
         return new class(
             $client,
             $reviewWorkflow,

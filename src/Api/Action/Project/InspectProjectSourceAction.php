@@ -31,8 +31,8 @@ class InspectProjectSourceAction implements ActionInterface
         ?ProjectLocalSourceResult $localSource = null,
     ): ProjectSourceStatusResult {
         $localSource ??= ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        InspectLocalProjectSourceAction::assertPublishable($localSource);
         $root = $localSource->gitRoot;
-        $prefix = $localSource->modulePrefix;
         $commit = $localSource->sourceCommitSha;
         $tree = $localSource->sourceTreeSha;
         $branchCommit = null;
@@ -52,7 +52,7 @@ class InspectProjectSourceAction implements ActionInterface
                     $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/heads/' . $branch->name]);
                     $branchCommit = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{commit}']);
                     $branchTree = $this->git($directory, ['rev-parse', 'FETCH_HEAD^{tree}']);
-                    [$added, $modified, $deleted] = $this->changeSummary($root, $prefix, $directory);
+                    [$added, $modified, $deleted] = $this->changeSummary($root, $tree, $directory);
                 }
                 if ($repository->tagSha($version->value) !== null) {
                     $this->run($directory, ['fetch', '--no-tags', 'read', 'refs/tags/' . $version->value]);
@@ -64,8 +64,7 @@ class InspectProjectSourceAction implements ActionInterface
             }
         }
         if ($branchCommit === null) {
-            $localTree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
-            $added = count($this->treeEntries($root, $localTree));
+            $added = count($this->treeEntries($root, $tree));
         }
 
         return new ProjectSourceStatusResult(
@@ -111,9 +110,8 @@ class InspectProjectSourceAction implements ActionInterface
     }
 
     /** @return array{int, int, int} */
-    private function changeSummary(string $root, string $prefix, string $repository): array
+    private function changeSummary(string $root, string $localTree, string $repository): array
     {
-        $localTree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
         $localFiles = $this->treeEntries($root, $localTree);
         $remoteFiles = $this->treeEntries($repository, 'FETCH_HEAD');
         $added = count(array_diff_key($localFiles, $remoteFiles));

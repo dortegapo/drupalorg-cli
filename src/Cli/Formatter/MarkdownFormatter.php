@@ -559,11 +559,17 @@ class MarkdownFormatter extends AbstractFormatter
     protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
     {
         return sprintf(
-            "# Local project source\n\n- **Git root:** %s\n- **Module prefix:** %s\n- **Commit:** %s\n- **Tree:** %s",
+            "# Local project source\n\n- **Repository exists:** %s\n- **Git root:** %s\n- **Module prefix:** %s\n- **Repository has HEAD:** %s\n- **Module in HEAD:** %s\n- **Module clean:** %s\n- **Commit:** %s\n- **Tree:** %s\n- **Bootstrap required:** %s\n- **Bootstrap reason:** %s",
+            $result->repositoryExists ? 'yes' : 'no',
             $result->gitRoot,
             $result->modulePrefix,
+            $result->repositoryHasHead ? 'yes' : 'no',
+            $result->moduleExistsInHead ? 'yes' : 'no',
+            $result->moduleClean ? 'yes' : 'no',
             $result->sourceCommitSha,
             $result->sourceTreeSha,
+            $result->bootstrapRequired ? 'yes' : 'no',
+            $result->bootstrapReason ?? 'none',
         );
     }
 }

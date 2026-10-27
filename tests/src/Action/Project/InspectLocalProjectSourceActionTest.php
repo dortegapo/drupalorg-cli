@@ -28,7 +28,7 @@ final class InspectLocalProjectSourceActionTest extends TestCase
         $this->removeDirectory($this->directory);
     }
 
-    public function testUnbornHeadHasAnActionableError(): void
+    public function testUnbornHeadIsReportedWithoutRunningAnAmbiguousHeadCommand(): void
     {
         $source = $this->directory . '/source';
         mkdir($source);
@@ -37,16 +37,16 @@ final class InspectLocalProjectSourceActionTest extends TestCase
         file_put_contents($source . '/foo.info.yml', "name: Foo\ntype: module\ncore_version_requirement: ^11\n");
         file_put_contents($source . '/foo.module', "<?php\n");
 
-        try {
-            (new InspectLocalProjectSourceAction())($module);
-            self::fail('Expected unborn HEAD failure.');
-        } catch (\RuntimeException $exception) {
-            self::assertStringContainsString('Module source has no Git commit yet', $exception->getMessage());
-            self::assertStringNotContainsString('ambiguous argument', $exception->getMessage());
-        }
+        $result = (new InspectLocalProjectSourceAction())($module);
+
+        self::assertTrue($result->repositoryExists);
+        self::assertFalse($result->repositoryHasHead);
+        self::assertTrue($result->bootstrapRequired);
+        self::assertSame('repository_unborn', $result->bootstrapReason);
+        self::assertNull($result->sourceCommitSha);
     }
 
-    public function testModuleAbsentFromHeadIsRejected(): void
+    public function testModuleAbsentFromHeadRequiresBootstrap(): void
     {
         $source = $this->directory . '/source';
         mkdir($source);
@@ -60,29 +60,34 @@ final class InspectLocalProjectSourceActionTest extends TestCase
         $module = $this->module($source . '/web/modules/custom/foo', 'foo', $source, 'web');
         file_put_contents($source . '/web/modules/custom/foo/foo.info.yml', "name: Foo\ntype: module\ncore_version_requirement: ^11\n");
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Module source is not committed in HEAD');
-        (new InspectLocalProjectSourceAction())($module);
+        $result = (new InspectLocalProjectSourceAction())($module);
+
+        self::assertTrue($result->repositoryHasHead);
+        self::assertFalse($result->moduleExistsInHead);
+        self::assertTrue($result->bootstrapRequired);
+        self::assertSame('module_missing_from_head', $result->bootstrapReason);
     }
 
-    public function testDirtyModuleIsRejected(): void
+    public function testDirtyModuleIsReportedAsDirty(): void
     {
         $source = $this->committedSource();
         file_put_contents($source . '/foo.module', "<?php\nchanged\n");
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Module source contains uncommitted changes');
-        (new InspectLocalProjectSourceAction())($this->module($source, 'foo'));
+        $result = (new InspectLocalProjectSourceAction())($this->module($source, 'foo'));
+
+        self::assertFalse($result->moduleClean);
+        self::assertFalse($result->bootstrapRequired);
     }
 
-    public function testUntrackedModuleFileIsRejected(): void
+    public function testUntrackedModuleFileIsReportedAsDirty(): void
     {
         $source = $this->committedSource();
         file_put_contents($source . '/untracked.txt', 'untracked');
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Module source contains uncommitted changes');
-        (new InspectLocalProjectSourceAction())($this->module($source, 'foo'));
+        $result = (new InspectLocalProjectSourceAction())($this->module($source, 'foo'));
+
+        self::assertFalse($result->moduleClean);
+        self::assertFalse($result->bootstrapRequired);
     }
 
     public function testUnrelatedDirtyFileIsAllowed(): void
@@ -109,17 +114,21 @@ final class InspectLocalProjectSourceActionTest extends TestCase
         self::assertSame('web/modules/custom/foo/', $result->modulePrefix);
         self::assertNotSame('', $result->sourceCommitSha);
         self::assertNotSame('', $result->sourceTreeSha);
+        self::assertTrue($result->moduleClean);
+        self::assertFalse($result->bootstrapRequired);
     }
 
-    public function testNoGitRepositoryHasAnActionableError(): void
+    public function testNoGitRepositoryRequiresBootstrap(): void
     {
         $source = $this->directory . '/source';
         mkdir($source);
         $module = $this->module($source, 'foo');
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Module source is not inside a Git repository');
-        (new InspectLocalProjectSourceAction())($module);
+        $result = (new InspectLocalProjectSourceAction())($module);
+
+        self::assertFalse($result->repositoryExists);
+        self::assertTrue($result->bootstrapRequired);
+        self::assertSame('repository_missing', $result->bootstrapReason);
     }
 
     private function committedSource(): string

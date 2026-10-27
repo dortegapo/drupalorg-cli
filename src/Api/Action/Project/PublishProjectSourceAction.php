@@ -31,6 +31,7 @@ class PublishProjectSourceAction implements ActionInterface
         ?ProjectSourceStatusResult $expectedSource = null,
     ): PublishProjectSourceResult {
         $source = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        InspectLocalProjectSourceAction::assertPublishable($source);
         $this->assertExpectedLocalSource($source, $expectedSource);
         $staging = $this->temporaryDirectory('drupalorg-publish-');
         try {
@@ -48,15 +49,17 @@ class PublishProjectSourceAction implements ActionInterface
                 $this->mustRun($staging, ['checkout', '-B', $branch->name, 'FETCH_HEAD']);
                 $this->mustRun($staging, ['rm', '-r', '--ignore-unmatch', '.']);
             }
-            $this->archive($source->gitRoot, $source->modulePrefix, $staging);
+            $this->archive($source->gitRoot, $source->modulePrefix, $source->sourceCommitSha, $staging);
             $this->mustRun($staging, ['add', '-A']);
             $diff = $this->run($staging, ['diff', '--cached', '--quiet'], false);
             if ($diff->getExitCode() === 0 && $branchExists) {
+                $this->assertCurrentLocalSource($module, $source);
                 return new PublishProjectSourceResult($branch->name, $source->sourceCommitSha, $this->git($staging, ['rev-parse', 'HEAD']), 0, false, true);
             }
             if ($diff->getExitCode() !== 1) {
                 throw new \RuntimeException('Could not inspect staged Drupal.org source changes.');
             }
+            $this->assertCurrentLocalSource($module, $source);
             [$name, $email] = $this->identity($source->gitRoot);
             $filesChanged = count(array_filter(explode("\n", trim($this->git($staging, ['diff', '--cached', '--name-only'])))));
             $this->mustRun($staging, [
@@ -81,7 +84,8 @@ class PublishProjectSourceAction implements ActionInterface
         ?ProjectSourceStatusResult $expected,
     ): void {
         if ($expected !== null
-            && ($expected->localSourceCommitSha !== $source->sourceCommitSha || $expected->localTreeSha !== $source->sourceTreeSha)) {
+            && ($source->sourceCommitSha === null || $source->sourceTreeSha === null
+                || $expected->localSourceCommitSha !== $source->sourceCommitSha || $expected->localTreeSha !== $source->sourceTreeSha)) {
             throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
         }
     }
@@ -99,13 +103,30 @@ class PublishProjectSourceAction implements ActionInterface
         return [$name, $email];
     }
 
-    private function archive(string $root, string $prefix, string $staging): void
+    private function archive(string $root, string $prefix, string $commit, string $staging): void
     {
         $archive = $staging . DIRECTORY_SEPARATOR . 'module.tar';
-        $tree = $prefix === '' ? 'HEAD' : 'HEAD:' . rtrim($prefix, '/');
+        $tree = $prefix === '' ? $commit : $commit . ':' . rtrim($prefix, '/');
         $this->mustRun($root, ['archive', '--format=tar', '--output=' . $archive, $tree]);
         (new \PharData($archive))->extractTo($staging, null, true);
         unlink($archive);
+    }
+
+    private function assertCurrentLocalSource(ModuleContext $module, ProjectLocalSourceResult $expected): void
+    {
+        try {
+            $current = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        } catch (\RuntimeException $exception) {
+            throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.", 0, $exception);
+        }
+        if (!$current->repositoryExists
+            || !$current->repositoryHasHead
+            || !$current->moduleExistsInHead
+            || !$current->moduleClean
+            || $current->sourceCommitSha !== $expected->sourceCommitSha
+            || $current->sourceTreeSha !== $expected->sourceTreeSha) {
+            throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
+        }
     }
 
     /** @param list<string> $args */

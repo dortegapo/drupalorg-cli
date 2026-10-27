@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace mglaman\DrupalOrg\Tests\Action\Project;
 
 use mglaman\DrupalOrg\Action\Project\CreateProjectTagAction;
+use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\PublishProjectSourceAction;
@@ -14,6 +15,7 @@ use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Project\ResolvedModule;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
@@ -185,6 +187,46 @@ final class ProjectPublicationGitActionTest extends TestCase
         self::assertSame($validatedRemoteCommit, $this->git($this->remote, ['rev-parse', 'refs/heads/1.x']));
     }
 
+    public function testPublicationStopsWhenSourceChangesDuringStaging(): void
+    {
+        $branch = ProjectReleaseBranch::fromString('1.x');
+        $version = ProjectReleaseVersion::fromString('1.0.0');
+        $status = (new InspectProjectSourceAction($this->urls))(
+            $this->module,
+            $branch,
+            $version,
+            (new InspectProjectRepositoryAction($this->urls))('foo'),
+        );
+        $realInspector = new InspectLocalProjectSourceAction();
+        $calls = 0;
+        $inspector = $this->createMock(InspectLocalProjectSourceAction::class);
+        $inspector->expects(self::exactly(2))->method('__invoke')->willReturnCallback(
+            function (ModuleContext $module) use (&$calls, $realInspector): ProjectLocalSourceResult {
+                ++$calls;
+                $result = $realInspector($module);
+                if ($calls === 2) {
+                    file_put_contents($this->source . '/foo.module', "<?php\nchanged during staging\n");
+                    $this->git($this->source, ['add', '--', 'foo.module']);
+                    $this->git($this->source, ['commit', '-m', 'Changed during staging']);
+                    return $realInspector($module);
+                }
+
+                return $result;
+            },
+        );
+
+        try {
+            (new PublishProjectSourceAction($this->urls, $inspector))($this->module, 'foo', $branch, $version, $status);
+            self::fail('Expected source change failure during staging.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                "Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.",
+                $exception->getMessage(),
+            );
+        }
+        self::assertSame('', $this->git($this->remote, ['for-each-ref']));
+    }
+
     public function testBranchCanAdvanceAfterMatchingTag(): void
     {
         $branch = ProjectReleaseBranch::fromString('1.x');
@@ -286,6 +328,35 @@ final class ProjectPublicationGitActionTest extends TestCase
             $this->restoreEnv('GIT_CONFIG_GLOBAL', $oldGlobal, $oldServerGlobal);
         }
         self::assertSame('', $this->git($this->remote, ['show-ref']));
+    }
+
+    public function testMissingGitIdentityDoesNotBlockAnAlreadyPublishedRerun(): void
+    {
+        $publisher = new PublishProjectSourceAction($this->urls);
+        $publisher($this->module, 'foo', ProjectReleaseBranch::fromString('1.x'), ProjectReleaseVersion::fromString('1.0.0'));
+        $this->git($this->source, ['config', '--unset', 'user.name']);
+        $this->git($this->source, ['config', '--unset', 'user.email']);
+        $home = $this->directory . '/empty-home-rerun';
+        mkdir($home, 0700);
+        $oldHome = $_ENV['HOME'] ?? null;
+        $oldServerHome = $_SERVER['HOME'] ?? null;
+        $oldGlobal = $_ENV['GIT_CONFIG_GLOBAL'] ?? null;
+        $oldServerGlobal = $_SERVER['GIT_CONFIG_GLOBAL'] ?? null;
+        $_ENV['HOME'] = $_SERVER['HOME'] = $home;
+        $_ENV['GIT_CONFIG_GLOBAL'] = $_SERVER['GIT_CONFIG_GLOBAL'] = '/dev/null';
+        try {
+            $result = $publisher(
+                $this->module,
+                'foo',
+                ProjectReleaseBranch::fromString('1.x'),
+                ProjectReleaseVersion::fromString('1.0.0'),
+            );
+        } finally {
+            $this->restoreEnv('HOME', $oldHome, $oldServerHome);
+            $this->restoreEnv('GIT_CONFIG_GLOBAL', $oldGlobal, $oldServerGlobal);
+        }
+
+        self::assertTrue($result->alreadyUpToDate);
     }
 
     public function testTagAppearingAfterInspectionWithSameTreeIsIdempotent(): void
