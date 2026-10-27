@@ -46,6 +46,6 @@ final class ProjectReleaseVersion
 
     public function suggestedBranch(): ProjectReleaseBranch
     {
-        return ProjectReleaseBranch::fromString($this->major . '.x');
+        return ProjectReleaseBranch::fromString($this->major . '.' . $this->minor . '.x');
     }
 }

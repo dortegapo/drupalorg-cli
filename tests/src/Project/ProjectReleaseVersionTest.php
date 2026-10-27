@@ -25,11 +25,11 @@ final class ProjectReleaseVersionTest extends TestCase
     public static function validVersions(): array
     {
         return [
-            'stable' => ['1.0.0', true, '1.x'],
-            'patch' => ['1.2.3', true, '1.x'],
-            'alpha' => ['1.0.0-alpha1', false, '1.x'],
-            'beta' => ['1.0.0-beta2', false, '1.x'],
-            'rc' => ['2.0.0-rc3', false, '2.x'],
+            'stable' => ['1.0.0', true, '1.0.x'],
+            'patch' => ['1.2.3', true, '1.2.x'],
+            'alpha' => ['1.0.0-alpha1', false, '1.0.x'],
+            'beta' => ['1.0.0-beta2', false, '1.0.x'],
+            'rc' => ['2.0.0-rc3', false, '2.0.x'],
         ];
     }
 

@@ -94,7 +94,7 @@ class Publish extends Command
                 'Do not open the Drupal.org project creation page automatically.'
             )
             ->addOption('release-version', null, InputOption::VALUE_REQUIRED, 'Release version, for example 1.0.0.')
-            ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'Release branch, for example 1.x.')
+            ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'Release branch, for example 1.0.x.')
             ->setDescription('Publishes a project');
     }
 
@@ -318,7 +318,7 @@ class Publish extends Command
         $versionValue = $input->getOption('release-version');
         $branchValue = $input->getOption('branch');
         if ((!is_string($versionValue) || $versionValue === '') && !$input->isInteractive()) {
-            throw new \InvalidArgumentException('Git/release publication requires --release-version and --branch in non-interactive mode. Example: --release-version=1.0.0 --branch=1.x');
+            throw new \InvalidArgumentException('Git/release publication requires --release-version and --branch in non-interactive mode. Example: --release-version=1.0.0 --branch=1.0.x');
         }
         if (!is_string($versionValue) || $versionValue === '') {
             $question = new \Symfony\Component\Console\Question\Question('Release version [1.0.0]: ', '1.0.0');

@@ -17,7 +17,7 @@ final class ProjectReleaseBranch
     {
         if (preg_match(self::PATTERN, $name) !== 1) {
             throw new \InvalidArgumentException(sprintf(
-                'Invalid Drupal.org release branch "%s". Use 1.x or 1.2.x.',
+                'Invalid Drupal.org release branch "%s". Use 1.0.x or 1.2.x.',
                 $name,
             ));
         }
