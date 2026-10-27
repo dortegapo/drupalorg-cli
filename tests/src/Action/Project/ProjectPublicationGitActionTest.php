@@ -75,7 +75,15 @@ final class ProjectPublicationGitActionTest extends TestCase
 
     public function testPushFailureClassificationIsSafeAndActionable(): void
     {
+        self::assertSame('authentication_missing', PublishProjectSourceAction::classifyPushFailureType('Permission denied (publickey).'));
+        self::assertSame('authorization_failure', PublishProjectSourceAction::classifyPushFailureType('You are not allowed to push to this repository.'));
+        self::assertSame('concurrent_change', PublishProjectSourceAction::classifyPushFailureType('rejected (non-fast-forward)'));
+        self::assertSame('repository_unavailable', PublishProjectSourceAction::classifyPushFailureType('fatal: could not read from remote repository'));
+        self::assertSame('network_failure', PublishProjectSourceAction::classifyPushFailureType('Could not resolve hostname git.drupal.org'));
+        self::assertSame('generic', PublishProjectSourceAction::classifyPushFailureType('remote hook failed'));
         self::assertStringContainsString('ssh -T git@git.drupal.org', PublishProjectSourceAction::classifyPushFailure('Permission denied (publickey).'));
+        self::assertStringContainsString('maintainer access', PublishProjectSourceAction::classifyPushFailure('You are not allowed to push to this repository.'));
+        self::assertStringNotContainsString('authenticate', PublishProjectSourceAction::classifyPushFailure('fatal: could not read from remote repository'));
         self::assertStringContainsString('Run project:publish again', PublishProjectSourceAction::classifyPushFailure('rejected (non-fast-forward)'));
         self::assertStringNotContainsString('secret-value', PublishProjectSourceAction::classifyPushFailure('remote error token=secret-value'));
         self::assertStringNotContainsString('secret-value', PublishProjectSourceAction::classifyPushFailure('remote https://user:secret-value@example.test/repository.git failed'));

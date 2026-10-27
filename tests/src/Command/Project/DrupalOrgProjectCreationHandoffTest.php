@@ -76,10 +76,10 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertStringContainsString(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $output->fetch());
     }
 
-    public function testReturnsCancelledWithoutARequest(): void
+    public function testWaitsForProjectAfterOpeningCreationPage(): void
     {
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (): void {
             },
         );
@@ -88,7 +88,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("cancel\n"));
+        $input->setStream($this->inputStream(''));
 
         $result = $handoff->run(
             $input,
@@ -101,13 +101,13 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             '^11',
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
     }
 
     public function testVerboseOutputIncludesProjectContext(): void
     {
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (): void {
             },
         );
@@ -117,7 +117,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         );
         $output = new BufferedOutput(OutputInterface::VERBOSITY_VERBOSE);
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("cancel\n"));
+        $input->setStream($this->inputStream(''));
 
         $handoff->run(
             $input,
@@ -179,23 +179,35 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
     {
         $output = new BufferedOutput();
         $progress = new ProjectPublishProgressRenderer($output);
+        $delays = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(new Response(
-                200,
-                ['Content-Type' => 'application/json'],
-                json_encode(['list' => []], JSON_THROW_ON_ERROR),
-            )),
+            $this->client([
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['list' => []], JSON_THROW_ON_ERROR),
+                ),
+                new Response(
+                    200,
+                    ['Content-Type' => 'application/json'],
+                    json_encode(['list' => []], JSON_THROW_ON_ERROR),
+                ),
+                $this->projectResponse(),
+            ]),
             null,
             null,
             null,
             $progress,
+            sleeper: static function (int $seconds) use (&$delays): void {
+                $delays[] = $seconds;
+            },
         );
         $input = new ArrayInput(
             ['--no-browser' => true],
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("\ncancel\n"));
+        $input->setStream($this->inputStream("\n"));
 
         $result = $handoff->run(
             $input,
@@ -208,11 +220,13 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             '^11',
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
         $display = $output->fetch();
-        self::assertStringContainsString('Project not found yet.', $display);
+        self::assertStringContainsString('Waiting for Drupal.org to create "example"...', $display);
+        self::assertStringContainsString('This command will continue automatically when the project is available.', $display);
         self::assertStringContainsString('✓ Verifying Drupal.org project', $display);
         self::assertStringNotContainsString('✗ Verifying Drupal.org project', $display);
+        self::assertSame([2, 3], $delays);
     }
 
     public function testPrefillsFormWithMetadataAndDefaultStatuses(): void
@@ -290,7 +304,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             ['title' => 'Documentation', 'url' => 'https://example.org/docs'],
         ], $payload['documentation']);
         $display = $output->fetch();
-        self::assertStringContainsString('Review the prefilled form in your browser and press Save.', $display);
+        self::assertStringContainsString('Complete the project form in your browser and press Save.', $display);
         self::assertStringContainsString('✓ Preparing Drupal.org project form', $display);
         self::assertStringContainsString('Maintenance status', $display);
         self::assertStringContainsString('Development status', $display);
@@ -369,7 +383,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
     {
         $opened = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
@@ -383,7 +397,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("n\ncancel\n"));
+        $input->setStream($this->inputStream("n\n"));
 
         $result = $handoff->run(
             $input,
@@ -397,7 +411,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             $this->metadata(),
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
         self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
     }
 
@@ -405,7 +419,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
     {
         $opened = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
@@ -419,7 +433,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\nopen\ncancel\n"));
+        $input->setStream($this->inputStream("y\n"));
 
         $result = $handoff->run(
             $input,
@@ -433,16 +447,15 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             $this->metadata(),
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
-        self::assertCount(2, $opened);
-        self::assertSame($opened[0], $opened[1]);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+        self::assertCount(1, $opened);
     }
 
     public function testNoBrowserSkipsPrefillQuestions(): void
     {
         $opened = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
@@ -456,7 +469,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("cancel\n"));
+        $input->setStream($this->inputStream(''));
         $output = new BufferedOutput();
 
         $result = $handoff->run(
@@ -471,7 +484,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             $this->metadata(),
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
         self::assertSame([], $opened);
         $display = $output->fetch();
         self::assertStringContainsString(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $display);
@@ -490,7 +503,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             static fn(array $command): bool => true,
         );
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             null,
             null,
             null,
@@ -503,7 +516,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\ncancel\n"));
+        $input->setStream($this->inputStream("y\n"));
         $output = new BufferedOutput();
 
         $handoff->run(
@@ -528,7 +541,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
     {
         $opened = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             static function (string $url) use (&$opened): void {
                 $opened[] = $url;
             },
@@ -542,7 +555,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\ncancel\n"));
+        $input->setStream($this->inputStream("y\n"));
         $output = new BufferedOutput();
 
         $result = $handoff->run(
@@ -557,7 +570,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             $this->metadata(str_repeat('description ', 500)),
         );
 
-        self::assertSame(ProjectCreationHandoffResult::CANCELLED, $result->status);
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
         self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
         self::assertStringContainsString('Browser prefill is unavailable because the generated metadata is too large.', $output->fetch());
     }
@@ -575,7 +588,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             },
         );
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             null,
             null,
             null,
@@ -588,7 +601,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\ncancel\n"));
+        $input->setStream($this->inputStream("y\n"));
         $output = new BufferedOutput(OutputInterface::VERBOSITY_DEBUG);
         $errorOutput = new BufferedOutput();
 
@@ -631,7 +644,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             },
         );
         $handoff = new DrupalOrgProjectCreationHandoff(
-            $this->client(),
+            $this->client($this->projectResponse()),
             null,
             null,
             null,
@@ -644,7 +657,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\ncancel\n"));
+        $input->setStream($this->inputStream("y\n"));
         $output = new BufferedOutput();
         $errorOutput = new BufferedOutput();
 
@@ -702,9 +715,25 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertStringContainsString('Could not check Drupal.org project:', $errorOutput->fetch());
     }
 
-    private function client(?Response $response = null): Client
+    /** @param Response|list<Response>|null $response */
+    private function client(Response|array|null $response = null): Client
     {
-        return new Client(false, HandlerStack::create(new MockHandler($response === null ? [] : [$response])));
+        $responses = $response === null ? [] : (is_array($response) ? $response : [$response]);
+
+        return new Client(false, HandlerStack::create(new MockHandler($responses)));
+    }
+
+    private function projectResponse(): Response
+    {
+        return new Response(
+            200,
+            ['Content-Type' => 'application/json'],
+            json_encode(['list' => [[
+                'nid' => '1',
+                'title' => 'Example',
+                'field_project_machine_name' => 'example',
+            ]]], JSON_THROW_ON_ERROR),
+        );
     }
 
     /** @return resource */

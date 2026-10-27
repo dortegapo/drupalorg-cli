@@ -8,6 +8,7 @@ use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleasesAction;
 use mglaman\DrupalOrg\Action\Project\BootstrapProjectSourceAction;
+use mglaman\DrupalOrg\Action\Project\InspectDrupalOrgGitAccessAction;
 use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
@@ -27,10 +28,12 @@ use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Command;
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -41,6 +44,8 @@ use Symfony\Component\Console\Question\Question;
 
 class Publish extends Command
 {
+    private ?DrupalOrgGitAccessResult $verifiedGitAccess = null;
+
     /**
      * @param ModuleReviewWorkflow|null $reviewWorkflow
      * @param GenerateProjectMetadataAction|null $metadataAction
@@ -65,6 +70,8 @@ class Publish extends Command
         private readonly ?ProjectRepositoryUrls $repositoryUrls = null,
         private readonly ?\Closure $sleeper = null,
         private readonly ?BootstrapProjectSourceAction $bootstrapSourceAction = null,
+        private readonly ?InspectDrupalOrgGitAccessAction $gitAccessInspector = null,
+        private readonly ?BrowserLauncher $gitAccessBrowserLauncher = null,
     ) {
         parent::__construct();
     }
@@ -93,6 +100,7 @@ class Publish extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $this->verifiedGitAccess = null;
         $modulePath = (string) $input->getArgument('module');
         $isDryRun = (bool) $input->getOption('dry-run');
         $progress = new ProjectPublishProgressRenderer($output);
@@ -243,8 +251,8 @@ class Publish extends Command
 
         $progress->register([ProjectPublishProgressRenderer::CHECKING_REPOSITORY => 'Checking Git repository']);
         $progress->start(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
-        $repository = $isDryRun
-            ? ($this->repositoryInspector ?? new InspectProjectRepositoryAction($this->repositoryUrls))($module->location->machineName)
+        $repository = $this->repositoryInspector !== null
+            ? ($this->repositoryInspector)($module->location->machineName)
             : $this->inspectRepositoryWithRetry($module->location->machineName);
         $progress->complete(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
         if (!$repository->reachable && $repository->failure !== 'repository_not_ready') {
@@ -422,6 +430,10 @@ class Publish extends Command
             ));
             return self::FAILURE;
         }
+        if (in_array($plan->nextStep, [ProjectPublishStep::PUBLISH_SOURCE, ProjectPublishStep::CREATE_TAG], true)
+            && !$this->ensureGitAccess($input, $output, $progress, $module->location->machineName)) {
+            return self::FAILURE;
+        }
         try {
             if ($plan->nextStep === ProjectPublishStep::PUBLISH_SOURCE) {
                 $publisher = $this->sourcePublisher ?? new PublishProjectSourceAction($this->repositoryUrls);
@@ -584,6 +596,123 @@ class Publish extends Command
         if ($local->sourceCommitSha !== $expected->localSourceCommitSha || $local->sourceTreeSha !== $expected->localTreeSha) {
             throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
         }
+    }
+
+    private function ensureGitAccess(
+        InputInterface $input,
+        OutputInterface $output,
+        ProjectPublishProgressRenderer $progress,
+        string $machineName,
+    ): bool {
+        if ($this->verifiedGitAccess?->authenticated()) {
+            return true;
+        }
+        $progress->register([
+            ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS => 'Checking Drupal.org Git access',
+        ]);
+        $progress->start(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+        $inspector = $this->gitAccessInspector ?? new InspectDrupalOrgGitAccessAction();
+        $result = $inspector();
+        if ($result->authenticated()) {
+            $this->verifiedGitAccess = $result;
+            $progress->complete(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+            return true;
+        }
+        if ($result->status !== DrupalOrgGitAccessResult::AUTHENTICATION_MISSING || !$input->isInteractive()) {
+            $progress->fail(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+            $this->writeGitAccessFailure($output, $result, $machineName);
+            return false;
+        }
+
+        $progress->suspend();
+        $output->writeln('');
+        $output->writeln('<fg=cyan;options=bold>DRUPAL.ORG GIT ACCESS</>');
+        $output->writeln('');
+        $output->writeln('Publishing source requires authenticated Git access.');
+        $output->writeln('');
+        $output->writeln('Test:');
+        $output->writeln('  ssh -T git@git.drupal.org');
+        $output->writeln('');
+        $output->writeln('Add your SSH public key:');
+        $output->writeln('  ' . InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL);
+        $output->writeln('');
+        if (!(bool) $input->getOption('no-browser')
+            && $this->askConfirmation($input, $output, 'Open Drupal.org SSH key settings? [Y/n] ', true)) {
+            $opened = ($this->gitAccessBrowserLauncher ?? new BrowserLauncher())->openDefault(
+                InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL,
+            );
+            if (!$opened) {
+                $output->writeln('Could not open a browser automatically.');
+                $output->writeln(InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL);
+            }
+        }
+        $output->writeln('');
+        $output->writeln('Add your SSH public key in the browser.');
+        $output->writeln('');
+        $output->writeln('Waiting for Drupal.org Git authentication...');
+        $output->writeln('Press Ctrl+C to stop.');
+
+        $delays = [2, 3, 5, 5, 10];
+        foreach ($delays as $delay) {
+            ($this->sleeper ?? static function (int $seconds): void {
+                sleep($seconds);
+            })($delay);
+            $result = $inspector();
+            if ($result->authenticated()) {
+                $this->verifiedGitAccess = $result;
+                $progress->complete(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+                $output->writeln('✓ Drupal.org Git authentication');
+                return true;
+            }
+            if ($result->status !== DrupalOrgGitAccessResult::AUTHENTICATION_MISSING) {
+                $progress->fail(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+                $this->writeGitAccessFailure($output, $result, $machineName);
+                return false;
+            }
+        }
+
+        // Keep the interactive setup alive after the initial fast checks.
+        while (true) {
+            ($this->sleeper ?? static function (int $seconds): void {
+                sleep($seconds);
+            })(10);
+            $result = $inspector();
+            if ($result->authenticated()) {
+                $this->verifiedGitAccess = $result;
+                $progress->complete(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+                $output->writeln('✓ Drupal.org Git authentication');
+                return true;
+            }
+            if ($result->status !== DrupalOrgGitAccessResult::AUTHENTICATION_MISSING) {
+                $progress->fail(ProjectPublishProgressRenderer::CHECKING_GIT_ACCESS);
+                $this->writeGitAccessFailure($output, $result, $machineName);
+                return false;
+            }
+        }
+    }
+
+    private function writeGitAccessFailure(
+        OutputInterface $output,
+        DrupalOrgGitAccessResult $result,
+        string $machineName,
+    ): void {
+        match ($result->status) {
+            DrupalOrgGitAccessResult::AUTHENTICATION_MISSING => $output->writeln(
+                "<error>Drupal.org Git authentication is not configured.\n\nTest the connection with:\n  ssh -T git@git.drupal.org\n\nAdd an SSH public key to Drupal.org:\n  " . InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL . '</error>',
+            ),
+            DrupalOrgGitAccessResult::HOST_KEY_FAILURE => $output->writeln(
+                '<error>Drupal.org Git host key verification failed. Verify your SSH known_hosts configuration; it was not changed.</error>',
+            ),
+            DrupalOrgGitAccessResult::NETWORK_FAILURE => $output->writeln(
+                '<error>Could not reach Drupal.org Git over the network.</error>',
+            ),
+            DrupalOrgGitAccessResult::SSH_UNAVAILABLE => $output->writeln(
+                '<error>The ssh executable is unavailable. Install OpenSSH and rerun project:publish.</error>',
+            ),
+            default => $output->writeln(
+                '<error>Could not inspect Drupal.org Git access for ' . $machineName . '.</error>',
+            ),
+        };
     }
 
     private function withComposerVisible(ProjectPublishState $state): ProjectPublishState

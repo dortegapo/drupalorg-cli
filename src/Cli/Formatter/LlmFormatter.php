@@ -29,6 +29,7 @@ use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -643,6 +644,11 @@ XML;
     protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
     {
         return '<local_project_source>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</local_project_source>';
+    }
+
+    protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string
+    {
+        return '<drupal_org_git_access>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</drupal_org_git_access>';
     }
 
     private function toIso8601(int $timestamp): string

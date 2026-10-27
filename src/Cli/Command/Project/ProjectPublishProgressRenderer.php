@@ -18,6 +18,8 @@ final class ProjectPublishProgressRenderer
 
     public const CHECKING_REPOSITORY = 'checking_repository';
 
+    public const CHECKING_GIT_ACCESS = 'checking_git_access';
+
     public const PUBLISHING_SOURCE = 'publishing_source';
 
     public const CREATING_TAG = 'creating_tag';

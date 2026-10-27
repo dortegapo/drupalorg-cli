@@ -29,6 +29,7 @@ use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -570,6 +571,15 @@ class MarkdownFormatter extends AbstractFormatter
             $result->sourceTreeSha,
             $result->bootstrapRequired ? 'yes' : 'no',
             $result->bootstrapReason ?? 'none',
+        );
+    }
+
+    protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string
+    {
+        return sprintf(
+            "# Drupal.org Git access\n\n- **Status:** %s\n- **Username:** %s",
+            $result->status,
+            $result->username ?? 'unknown',
         );
     }
 }

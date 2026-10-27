@@ -97,6 +97,15 @@ class ClientTest extends TestCase
         );
     }
 
+    public function testFreshProjectLookupSendsNoCacheHeaders(): void
+    {
+        $this->clientResponding(['list' => []])->getProject('token', true);
+
+        $request = $this->sentRequest();
+        self::assertSame('no-cache, no-store, max-age=0', $request->getHeaderLine('Cache-Control'));
+        self::assertSame('no-cache', $request->getHeaderLine('Pragma'));
+    }
+
     public function testGetProjectReturnsProjectFromList(): void
     {
         $project = $this->clientResponding([

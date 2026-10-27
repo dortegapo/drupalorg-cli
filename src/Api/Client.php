@@ -46,8 +46,7 @@ class Client
             'Accept-Encoding' => '*',
         ];
         if ($noCache) {
-            $headers['Cache-Control'] = 'no-cache, no-store, max-age=0';
-            $headers['Pragma'] = 'no-cache';
+            $headers += self::noCacheHeaders();
         }
         $this->client = new \GuzzleHttp\Client(
             [
@@ -67,9 +66,9 @@ class Client
     /**
      * @throws \Exception
      */
-    private function request(Request $request): \stdClass
+    private function request(Request $request, bool $fresh = false): \stdClass
     {
-        $res = $this->client->request('GET', $request->getUrl());
+        $res = $this->client->request('GET', $request->getUrl(), $fresh ? ['headers' => self::noCacheHeaders()] : []);
         if ($res->getStatusCode() === 200) {
             return \json_decode($res->getBody()->getContents(), false, 512, JSON_THROW_ON_ERROR);
         }
@@ -120,7 +119,7 @@ class Client
         return File::fromStdClass($this->request(new Request('file/' . $fid)));
     }
 
-    public function getProject(string $machineName): ?Project
+    public function getProject(string $machineName, bool $fresh = false): ?Project
     {
         try {
             $data = $this->request(
@@ -129,7 +128,8 @@ class Client
                     [
                         'field_project_machine_name' => $machineName,
                     ]
-                )
+                ),
+                $fresh,
             );
         } catch (RequestException $exception) {
             if ($exception->getResponse()?->getStatusCode() === 404) {
@@ -143,6 +143,15 @@ class Client
             return null;
         }
         return Project::fromStdClass($list[0]);
+    }
+
+    /** @return array<string, string> */
+    private static function noCacheHeaders(): array
+    {
+        return [
+            'Cache-Control' => 'no-cache, no-store, max-age=0',
+            'Pragma' => 'no-cache',
+        ];
     }
 
     /**

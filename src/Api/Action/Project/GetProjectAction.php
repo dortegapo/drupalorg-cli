@@ -16,8 +16,8 @@ final class GetProjectAction implements ActionInterface
     ) {
     }
 
-    public function __invoke(string $machineName): GetProjectResult
+    public function __invoke(string $machineName, bool $fresh = false): GetProjectResult
     {
-        return new GetProjectResult($machineName, $this->client->getProject($machineName));
+        return new GetProjectResult($machineName, $this->client->getProject($machineName, $fresh));
     }
 }

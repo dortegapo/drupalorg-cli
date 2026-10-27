@@ -162,19 +162,48 @@ class PublishProjectSourceAction implements ActionInterface
         return self::classifyPushFailure($error);
     }
 
-    public static function classifyPushFailure(string $error): string
+    public static function classifyPushFailure(string $error, string $operation = 'source'): string
+    {
+        return match (self::classifyPushFailureType($error)) {
+            'authentication_missing' => "Could not authenticate to Drupal.org Git.\n\nVerify SSH access with:\n  ssh -T git@git.drupal.org",
+            'authorization_failure' => 'Authenticated with Drupal.org Git, but this account cannot push to the project.\n\nVerify that your Drupal.org account has maintainer access to the project.',
+            'concurrent_change' => "Drupal.org branch changed while publishing.\n\nRun project:publish again to inspect the current remote state.",
+            'repository_unavailable' => "The Drupal.org Git repository is not available yet.\n\nRun project:publish again after the repository has been provisioned.",
+            'network_failure' => 'Could not reach Drupal.org Git over the network.',
+            default => self::genericPushFailureMessage($error, $operation),
+        };
+    }
+
+    public static function classifyPushFailureType(string $error): string
     {
         $lower = strtolower($error);
-        if (str_contains($lower, 'permission denied') || str_contains($lower, 'publickey')
-            || str_contains($lower, 'authentication') || str_contains($lower, 'could not read from remote repository')) {
-            return "Could not authenticate to Drupal.org Git.\n\nVerify SSH access with:\n  ssh -T git@git.drupal.org";
-        }
         if (str_contains($lower, 'non-fast-forward') || str_contains($lower, 'fetch first')
             || str_contains($lower, 'rejected') || str_contains($lower, 'stale info')) {
-            return "Drupal.org branch changed while publishing.\n\nRun project:publish again to inspect the current remote state.";
+            return 'concurrent_change';
         }
+        if (str_contains($lower, 'not allowed to push') || str_contains($lower, 'not allowed to upload')
+            || str_contains($lower, 'access denied') || str_contains($lower, '403')) {
+            return 'authorization_failure';
+        }
+        if (str_contains($lower, 'permission denied (publickey)') || str_contains($lower, 'publickey')
+            || str_contains($lower, 'authentication') || str_contains($lower, 'no supported authentication methods')) {
+            return 'authentication_missing';
+        }
+        if (preg_match('/repository\b.*\bnot found|does not exist|could not read from remote repository/i', $lower) === 1) {
+            return 'repository_unavailable';
+        }
+        if (preg_match('/could not resolve hostname|connection timed out|connection refused|network is unreachable|no route to host/i', $lower) === 1) {
+            return 'network_failure';
+        }
+
+        return 'generic';
+    }
+
+    private static function genericPushFailureMessage(string $error, string $operation): string
+    {
         $safe = self::redactDiagnostic($error);
-        return 'Could not publish source to Drupal.org: ' . ($safe === null || $safe === '' ? 'unknown Git error' : $safe);
+        return 'Could not publish ' . ($operation === 'tag' ? 'release tag' : 'source')
+            . ' to Drupal.org: ' . ($safe === null || $safe === '' ? 'unknown Git error' : $safe);
     }
 
     private static function redactDiagnostic(string $error): ?string

@@ -107,23 +107,7 @@ class CreateProjectTagAction implements ActionInterface
 
     private function pushFailureMessage(string $error): string
     {
-        $lower = strtolower($error);
-        if (str_contains($lower, 'permission denied') || str_contains($lower, 'publickey')
-            || str_contains($lower, 'authentication') || str_contains($lower, 'could not read from remote repository')) {
-            return "Could not authenticate to Drupal.org Git.\n\nVerify SSH access with:\n  ssh -T git@git.drupal.org";
-        }
-        if (str_contains($lower, 'non-fast-forward') || str_contains($lower, 'fetch first')
-            || str_contains($lower, 'rejected') || str_contains($lower, 'stale info')) {
-            return "Drupal.org tag changed while publishing.\n\nRun project:publish again to inspect the current remote state.";
-        }
-        $safe = self::redactDiagnostic($error);
-        return 'Could not publish release tag to Drupal.org: ' . ($safe === null || $safe === '' ? 'unknown Git error' : $safe);
-    }
-
-    private static function redactDiagnostic(string $error): ?string
-    {
-        $safe = preg_replace('/(token|password|secret|authorization)\s*[:=]\s*\S+/i', '$1=[redacted]', trim($error));
-        return $safe === null ? null : preg_replace('#//[^/\s:@]+:[^/\s@]+@#', '//[redacted]@', $safe);
+        return PublishProjectSourceAction::classifyPushFailure($error, 'tag');
     }
 
     /** @param list<string> $args */

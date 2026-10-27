@@ -24,7 +24,6 @@ use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
-use Symfony\Component\Console\Question\Question;
 
 final class DrupalOrgProjectCreationHandoff
 {
@@ -44,6 +43,7 @@ final class DrupalOrgProjectCreationHandoff
         private readonly ?BrowserPlatformDetector $browserPlatformDetector = null,
         private readonly ?BrowserCompanionSetupInteractor $browserCompanionSetupInteractor = null,
         private readonly ?GetProjectAction $projectLookupAction = null,
+        private readonly ?\Closure $sleeper = null,
     ) {
     }
 
@@ -97,68 +97,8 @@ final class DrupalOrgProjectCreationHandoff
             $this->writeManualPrefillFallback($output);
         }
         $output->writeln('');
-        if ($prefillUrl !== null) {
-            $output->writeln('Review the prefilled form in your browser and press Save.');
-            $output->writeln('After saving:');
-        } else {
-            $output->writeln('After creating the project:');
-        }
-        $action = $this->askProjectCreationAction(
-            $input,
-            $output,
-            $helper,
-            'Press Enter to verify · type "open" to reopen · "cancel" to stop: ',
-        );
-
-        while ($action !== 'cancel') {
-            if ($action === 'open') {
-                $opened = $this->openProjectCreationPage($input, $output, $errorOutput, $prefillUrl);
-                if ($prefillUrl !== null && !$opened) {
-                    $prefillUrl = null;
-                    $this->writeManualPrefillFallback($output);
-                }
-            } else {
-                try {
-                    $this->progress?->register([
-                        ProjectPublishProgressRenderer::VERIFYING_PROJECT => 'Verifying Drupal.org project',
-                    ]);
-                    $this->progress?->start(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
-                    $projectResult = ($this->projectLookupAction ?? new GetProjectAction($this->client))($machineName);
-                    $project = $projectResult->project;
-                } catch (\Exception $exception) {
-                    $this->progress?->fail(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
-                    $errorOutput->writeln(sprintf(
-                        '<error>Could not check Drupal.org project: %s</error>',
-                        $exception->getMessage(),
-                    ));
-
-                    return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FAILED);
-                }
-
-                if ($project !== null) {
-                    $this->progress?->complete(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
-                    $this->progress?->suspend();
-                    $this->writeFoundProject($output, $project);
-
-                    return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FOUND, $project);
-                }
-
-                $this->progress?->complete(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
-                $this->progress?->suspend();
-                $output->writeln('Project not found yet.');
-            }
-
-            $action = $this->askProjectCreationAction(
-                $input,
-                $output,
-                $helper,
-                'Press Enter to check again · type "open" to reopen · "cancel" to stop: ',
-            );
-        }
-
-        $output->writeln('Project publishing cancelled.');
-
-        return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::CANCELLED);
+        $this->writeWaitingForProject($output, $machineName);
+        return $this->waitForProject($output, $errorOutput, $machineName);
     }
 
     private function openProjectCreationPage(
@@ -335,26 +275,54 @@ final class DrupalOrgProjectCreationHandoff
         $output->writeln('<comment>Continuing with manual Drupal.org project creation.</comment>');
     }
 
-    private function askProjectCreationAction(
-        InputInterface $input,
+    private function writeWaitingForProject(OutputInterface $output, string $machineName): void
+    {
+        $output->writeln('Complete the project form in your browser and press Save.');
+        $output->writeln('');
+        $output->writeln('Waiting for Drupal.org to create "' . $machineName . '"...');
+        $output->writeln('This command will continue automatically when the project is available.');
+        $output->writeln('');
+        $output->writeln('Press Ctrl+C to stop.');
+    }
+
+    private function waitForProject(
         OutputInterface $output,
-        QuestionHelper $helper,
-        string $questionText,
-    ): string {
-        $question = new Question(
-            '<fg=yellow;options=bold>' . $questionText . '</>',
-            '',
-        );
-        $question->setValidator(static function (mixed $value): string {
-            $value = strtolower(trim((string) $value));
-            if ($value !== '' && !in_array($value, ['open', 'cancel'], true)) {
-                throw new \InvalidArgumentException('Type "open", "cancel", or press Enter to continue.');
+        OutputInterface $errorOutput,
+        string $machineName,
+    ): ProjectCreationHandoffResult {
+        $this->progress?->register([
+            ProjectPublishProgressRenderer::VERIFYING_PROJECT => 'Verifying Drupal.org project',
+        ]);
+        $this->progress?->start(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
+        $delays = [2, 3, 5, 5, 10];
+        $attempt = 0;
+        while (true) {
+            try {
+                $projectResult = ($this->projectLookupAction ?? new GetProjectAction($this->client))($machineName, true);
+                $project = $projectResult->project;
+            } catch (\Exception $exception) {
+                $this->progress?->fail(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
+                $errorOutput->writeln(sprintf(
+                    '<error>Could not check Drupal.org project: %s</error>',
+                    $exception->getMessage(),
+                ));
+
+                return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FAILED);
+            }
+            if ($project !== null) {
+                $this->progress?->complete(ProjectPublishProgressRenderer::VERIFYING_PROJECT);
+                $this->progress?->suspend();
+                $this->writeFoundProject($output, $project);
+
+                return new ProjectCreationHandoffResult(ProjectCreationHandoffResult::FOUND, $project);
             }
 
-            return $value;
-        });
-
-        return (string) $helper->ask($input, $output, $question);
+            $delay = $delays[min($attempt, count($delays) - 1)];
+            ++$attempt;
+            ($this->sleeper ?? static function (int $seconds): void {
+                sleep($seconds);
+            })($delay);
+        }
     }
 
     private function writeFoundProject(OutputInterface $output, Project $project): void

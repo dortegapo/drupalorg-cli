@@ -7,15 +7,19 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
+use mglaman\DrupalOrg\Action\Project\InspectDrupalOrgGitAccessAction;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\PreparedModuleSource;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
+use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrgCli\Application;
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
 use mglaman\DrupalOrgCli\Command\Project\Publish;
@@ -204,6 +208,76 @@ class PublishTest extends TestCase
         self::assertSame(0, $command->pdfCalls);
     }
 
+    public function testInteractiveGitAuthenticationPollsAndOpensSettingsOnce(): void
+    {
+        $this->createValidModule();
+        chdir($this->workDir);
+        $repositoryInspector = $this->createMock(InspectProjectRepositoryAction::class);
+        $repositoryInspector->method('__invoke')->willReturn(new ProjectRepositoryResult('read', true));
+        $sourceInspector = $this->createMock(InspectProjectSourceAction::class);
+        $sourceInspector->method('__invoke')->willReturn(new ProjectSourceStatusResult(
+            'commit',
+            'tree',
+            false,
+            null,
+            false,
+            false,
+            null,
+            false,
+            1,
+        ));
+        $counter = $this->workDir . '/ssh-checks';
+        file_put_contents($counter, '0');
+        $ssh = $this->workDir . '/fake-ssh';
+        file_put_contents($ssh, "#!/bin/sh\ncount=\$(cat '" . $counter . "')\ncount=\$((count + 1))\nprintf '%s' \"\$count\" > '" . $counter . "'\nif [ \"\$count\" -lt 3 ]; then echo 'Permission denied (publickey).' >&2; else echo 'Welcome to GitLab, @tester!' >&2; fi\nexit 1\n");
+        chmod($ssh, 0700);
+        $opened = [];
+        $launcher = new BrowserLauncher(
+            new \mglaman\DrupalOrg\Browser\BrowserPlatformDetector('Linux', [], ''),
+            static fn(array $command): bool => true,
+            static function (array $command) use (&$opened): bool {
+                $opened[] = $command;
+
+                return true;
+            },
+        );
+        $delays = [];
+        $client = $this->clientForResponses(
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
+            self::jsonResponse(['list' => []]),
+        );
+        $command = $this->publishCommand(
+            $client,
+            repositoryInspector: $repositoryInspector,
+            sourceInspector: $sourceInspector,
+            gitAccessInspector: new InspectDrupalOrgGitAccessAction(sshBinary: $ssh),
+            gitAccessBrowserLauncher: $launcher,
+            sleeper: static function (int $seconds) use (&$delays): void {
+                $delays[] = $seconds;
+            },
+        );
+        $tester = new CommandTester($command);
+        $tester->setInputs(['y', 'n']);
+
+        $exitCode = $tester->execute([
+            'module' => 'my_module',
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]);
+        self::assertSame(0, $exitCode);
+        self::assertCount(1, $opened);
+        self::assertSame([2, 3], $delays);
+        self::assertSame(3, (int) file_get_contents($counter));
+        self::assertStringContainsString('Checking Drupal.org Git access', $tester->getDisplay());
+        self::assertStringContainsString('Waiting for Drupal.org Git authentication...', $tester->getDisplay());
+    }
+
     public function testMetadataCanBeGeneratedAfterAcceptedReview(): void
     {
         $this->createDiscoverableModule();
@@ -214,10 +288,25 @@ class PublishTest extends TestCase
             self::runtime(),
             self::availableAiContext(),
             self::characterizedReviewResult(),
+            null,
+            null,
+            null,
+            null,
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
         );
         $tester->setInputs(['y', 'y', 'y', 'n', 'cancel']);
 
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module',
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]));
         self::assertSame(1, $command->metadataCalls);
         self::assertStringContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
@@ -237,10 +326,25 @@ class PublishTest extends TestCase
             self::runtime(),
             self::availableAiContext(),
             self::characterizedReviewResult(),
+            null,
+            null,
+            null,
+            null,
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
         );
         $tester->setInputs(['y', 'y', 'n', 'cancel']);
 
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module',
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]));
         self::assertSame(0, $command->metadataCalls);
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
@@ -259,10 +363,21 @@ class PublishTest extends TestCase
             null,
             null,
             new \RuntimeException('metadata failed'),
+            self::jsonResponse([
+                'list' => [[
+                    'nid' => '123',
+                    'title' => 'My Module',
+                    'field_project_machine_name' => 'my_module',
+                ]],
+            ]),
         );
         $tester->setInputs(['y', 'y', 'y', 'cancel']);
 
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module',
+            '--release-version' => '1.0.0',
+            '--branch' => '1.x',
+        ]));
         self::assertSame(1, $command->metadataCalls);
         self::assertStringContainsString(
             'Could not generate Drupal.org project metadata automatically.',
@@ -792,6 +907,10 @@ class PublishTest extends TestCase
         ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
         ?InspectLocalProjectSourceAction $localSourceInspector = null,
         ?InspectProjectRepositoryAction $repositoryInspector = null,
+        ?InspectProjectSourceAction $sourceInspector = null,
+        ?InspectDrupalOrgGitAccessAction $gitAccessInspector = null,
+        ?BrowserLauncher $gitAccessBrowserLauncher = null,
+        ?\Closure $sleeper = null,
     ): Publish {
         $localSourceInspector = $this->useRealLocalSourceInspector
             ? new InspectLocalProjectSourceAction()
@@ -804,6 +923,10 @@ class PublishTest extends TestCase
             $projectCreationHandoff,
             $localSourceInspector,
             $repositoryInspector,
+            $sourceInspector,
+            $gitAccessInspector,
+            $gitAccessBrowserLauncher,
+            $sleeper,
         ) extends Publish {
             public function __construct(
                 private readonly Client $testClient,
@@ -812,6 +935,10 @@ class PublishTest extends TestCase
                 ?DrupalOrgProjectCreationHandoff $projectCreationHandoff,
                 ?InspectLocalProjectSourceAction $localSourceInspector,
                 ?InspectProjectRepositoryAction $repositoryInspector,
+                ?InspectProjectSourceAction $sourceInspector,
+                ?InspectDrupalOrgGitAccessAction $gitAccessInspector,
+                ?BrowserLauncher $gitAccessBrowserLauncher,
+                ?\Closure $sleeper,
             ) {
                 parent::__construct(
                     $reviewWorkflow,
@@ -821,6 +948,10 @@ class PublishTest extends TestCase
                     repositoryInspector: $repositoryInspector ?? new InspectProjectRepositoryAction(
                         new ProjectRepositoryUrls('/definitely/not/a/repository', '/definitely/not/a/repository'),
                     ),
+                    sourceInspector: $sourceInspector,
+                    sleeper: $sleeper,
+                    gitAccessInspector: $gitAccessInspector,
+                    gitAccessBrowserLauncher: $gitAccessBrowserLauncher,
                 );
             }
 
@@ -837,6 +968,13 @@ class PublishTest extends TestCase
         $inspector = $this->createMock(InspectLocalProjectSourceAction::class);
         $inspector->method('__invoke')->willReturn(new ProjectLocalSourceResult('/tmp', '', 'commit', 'tree'));
         return $inspector;
+    }
+
+    private function clientForResponses(Response ...$responses): Client
+    {
+        $stack = HandlerStack::create(new MockHandler($responses));
+
+        return new Client(false, $stack);
     }
 
     /**
