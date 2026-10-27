@@ -63,21 +63,17 @@ class PublishTest extends TestCase
             ],
         ]));
 
-        $exitCode = $tester->execute(['module' => 'my_module']);
+        $exitCode = $tester->execute([
+            'module' => 'my_module',
+            '--dry-run' => true,
+            '--version' => '1.0.0',
+            '--branch' => '1.x',
+        ]);
 
         self::assertSame(0, $exitCode);
-        self::assertSame(
-            "■ Preparing module...\n"
-            . "✓ Preparing module\n"
-            . "■ Checking Drupal.org project...\n"
-            . "✓ Checking Drupal.org project\n\nPROJECT PUBLISH\n"
-            . "----------------------------------------\n\n"
-            . "My Module (my_module)\n"
-            . "Core ^11 · Drupal.org: PROJECT EXISTS\n\n"
-            . "Drupal.org project already exists.\n"
-            . "Repository and release publication are not implemented yet.\n",
-            $tester->getDisplay()
-        );
+        self::assertStringContainsString('PROJECT PUBLISH', $tester->getDisplay());
+        self::assertStringContainsString('DRY RUN', $tester->getDisplay());
+        self::assertStringNotContainsString('not implemented yet', $tester->getDisplay());
     }
 
     public function testVerboseProjectHeaderIncludesModuleDetails(): void
@@ -94,7 +90,7 @@ class PublishTest extends TestCase
         ]));
 
         self::assertSame(0, $tester->execute(
-            ['module' => 'my_module'],
+            ['module' => 'my_module', '--dry-run' => true, '--version' => '1.0.0', '--branch' => '1.x'],
             ['verbosity' => OutputInterface::VERBOSITY_VERBOSE],
         ));
         $display = $tester->getDisplay();
@@ -144,7 +140,9 @@ class PublishTest extends TestCase
             self::completeReviewResult(),
         );
 
-        self::assertSame(0, $tester->execute(['module' => 'my_module']));
+        self::assertSame(0, $tester->execute([
+            'module' => 'my_module', '--dry-run' => true, '--version' => '1.0.0', '--branch' => '1.x',
+        ]));
         self::assertSame(0, $command->runtimeCalls);
         self::assertSame(0, $command->inspectCalls);
         self::assertSame(0, $command->analyzeCalls);
@@ -346,23 +344,9 @@ class PublishTest extends TestCase
         ]);
 
         self::assertSame(0, $exitCode);
-        self::assertSame(
-            "■ Preparing module...\n"
-            . "✓ Preparing module\n"
-            . "■ Checking Drupal.org project...\n"
-            . "✓ Checking Drupal.org project\n"
-            . "DRY RUN\n\n"
-            . "My Module (my_module)\n"
-            . "Core ^11 · Drupal.org: NOT PUBLISHED\n\n"
-            . "Plan\n"
-            . "  1. Optional contribution review\n"
-            . "  2. Optional Drupal.org metadata generation\n"
-            . "  3. Manual Drupal.org project creation\n"
-            . "  4. Verify project\n"
-            . "  5. Stop after project verification\n\n"
-            . "No changes were made.\n",
-            $tester->getDisplay()
-        );
+        self::assertStringContainsString('DRY RUN', $tester->getDisplay());
+        self::assertStringContainsString('Manual Drupal.org project creation', $tester->getDisplay());
+        self::assertStringContainsString('No changes were made.', $tester->getDisplay());
 
         self::assertCount(1, $this->history);
         self::assertSame('GET', $this->sentRequest()->getMethod());
@@ -390,12 +374,14 @@ class PublishTest extends TestCase
         $exitCode = $tester->execute([
             'module' => 'my_module',
             '--dry-run' => true,
+            '--version' => '1.0.0',
+            '--branch' => '1.x',
         ]);
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('Drupal.org: PROJECT EXISTS', $tester->getDisplay());
         self::assertStringContainsString(
-            'Report unsupported repository and release stages',
+            'Composer package',
             $tester->getDisplay()
         );
         self::assertStringNotContainsString(

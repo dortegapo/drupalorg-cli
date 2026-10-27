@@ -22,6 +22,10 @@ use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\Project\GetProjectResult;
 use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
@@ -40,6 +44,10 @@ abstract class AbstractFormatter implements FormatterInterface
             $result instanceof ProjectReleasesResult => $this->formatProjectReleases($result),
             $result instanceof ProjectContainsResult => $this->formatProjectContains($result),
             $result instanceof ResolveModuleResult => $this->formatResolveModule($result),
+            $result instanceof ProjectRepositoryResult => $this->formatProjectRepository($result),
+            $result instanceof PublishProjectSourceResult => $this->formatPublishProjectSource($result),
+            $result instanceof CreateProjectTagResult => $this->formatCreateProjectTag($result),
+            $result instanceof ComposerPackageResult => $this->formatComposerPackage($result),
             $result instanceof MergeRequestListResult => $this->formatMergeRequestList($result),
             $result instanceof MergeRequestStatusResult => $this->formatMergeRequestStatus($result),
             $result instanceof MergeRequestResult => $this->formatMergeRequest($result),
@@ -67,6 +75,10 @@ abstract class AbstractFormatter implements FormatterInterface
     abstract protected function formatProjectReleases(ProjectReleasesResult $result): string;
     abstract protected function formatProjectContains(ProjectContainsResult $result): string;
     abstract protected function formatResolveModule(ResolveModuleResult $result): string;
+    abstract protected function formatProjectRepository(ProjectRepositoryResult $result): string;
+    abstract protected function formatPublishProjectSource(PublishProjectSourceResult $result): string;
+    abstract protected function formatCreateProjectTag(CreateProjectTagResult $result): string;
+    abstract protected function formatComposerPackage(ComposerPackageResult $result): string;
     abstract protected function formatMergeRequestList(MergeRequestListResult $result): string;
     abstract protected function formatMergeRequestStatus(MergeRequestStatusResult $result): string;
     abstract protected function formatMergeRequest(MergeRequestResult $result): string;

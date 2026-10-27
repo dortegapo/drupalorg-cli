@@ -14,6 +14,16 @@ final class ProjectPublishProgressRenderer
 
     public const CHECKING_PROJECT = 'checking_project';
 
+    public const CHECKING_REPOSITORY = 'checking_repository';
+
+    public const PUBLISHING_SOURCE = 'publishing_source';
+
+    public const CREATING_TAG = 'creating_tag';
+
+    public const PREPARING_RELEASE = 'preparing_release';
+
+    public const VERIFYING_COMPOSER = 'verifying_composer';
+
     public const PREPARING_SOURCE = 'preparing_module_source';
 
     public const ANALYZING_MODULE = 'analyzing_module';

@@ -23,6 +23,10 @@ use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\Project\GetProjectResult;
 use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -607,6 +611,26 @@ XML;
             $items .= "    </skill>\n";
         }
         return "<skills>\n  <usage>drupalorg skill:get &lt;name&gt;</usage>\n  <items>\n{$items}  </items>\n</skills>";
+    }
+
+    protected function formatProjectRepository(ProjectRepositoryResult $result): string
+    {
+        return '<project_repository>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_repository>';
+    }
+
+    protected function formatPublishProjectSource(PublishProjectSourceResult $result): string
+    {
+        return '<source_publication>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</source_publication>';
+    }
+
+    protected function formatCreateProjectTag(CreateProjectTagResult $result): string
+    {
+        return '<release_tag>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</release_tag>';
+    }
+
+    protected function formatComposerPackage(ComposerPackageResult $result): string
+    {
+        return '<composer_package>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</composer_package>';
     }
 
     private function toIso8601(int $timestamp): string

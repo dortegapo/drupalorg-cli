@@ -23,6 +23,10 @@ use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\Project\GetProjectResult;
 use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -519,5 +523,25 @@ class MarkdownFormatter extends AbstractFormatter
         $lines[] = '';
         $lines[] = 'Run `drupalorg skill:get <name>` to read a skill.';
         return implode("\n", $lines);
+    }
+
+    protected function formatProjectRepository(ProjectRepositoryResult $result): string
+    {
+        return sprintf("# Project repository\n\n- **Reachable:** %s\n- **URL:** %s", $result->reachable ? 'yes' : 'no', $result->url);
+    }
+
+    protected function formatPublishProjectSource(PublishProjectSourceResult $result): string
+    {
+        return sprintf("# Source publication\n\n- **Branch:** %s\n- **Commit:** %s\n- **Files changed:** %d", $result->branch, $result->commitSha, $result->filesChanged);
+    }
+
+    protected function formatCreateProjectTag(CreateProjectTagResult $result): string
+    {
+        return sprintf("# Release tag\n\n- **Tag:** %s\n- **Commit:** %s", $result->tag, $result->commitSha);
+    }
+
+    protected function formatComposerPackage(ComposerPackageResult $result): string
+    {
+        return sprintf("# Composer package\n\n- **Package:** %s\n- **Version:** %s\n- **Available:** %s", $result->package, $result->version, $result->available ? 'yes' : 'no');
     }
 }

@@ -82,27 +82,40 @@ Use the 'list' command to see available commands.
 drupalorg list
 ```
 
-## Project publication preparation
+## Project publication
 
-`project:publish <module>` prepares a Drupal module for a manual Drupal.org
-project creation workflow. It accepts either an explicit module directory or a
-machine name resolvable from the current Drupal/Composer project.
+`project:publish <module>` publishes a committed Drupal module subtree through
+the Drupal.org project, Git, release, and Composer workflow. It accepts either
+an explicit module directory or a machine name resolvable from the current
+Drupal/Composer project.
 
 ```bash
 drupalorg project:publish ./web/modules/custom/example_module
 drupalorg project:publish example_module
+drupalorg project:publish example_module --version=1.0.0 --branch=1.x
 ```
 
-The command currently performs module discovery, `.info.yml` validation,
-read-only Drupal.org lookup, optional AI-assisted contribution review, optional
-metadata generation, and a manual Drupal.org project-creation handoff. It does
-not create a Git repository, push code, create releases, or verify Composer
-packages.
+For a missing project it retains the optional review, metadata, and manual
+project-creation handoff. Once the Drupal.org project exists it resumes at the
+first unfinished publication stage: repository availability, source push,
+release tag, manual release form, release verification, or Composer metadata.
 
-- `--dry-run` shows only the capabilities available today; it does not claim
-  that Git or release stages are implemented.
+- `--version` and `--branch` select the release tag and release branch. They
+  are required in non-interactive publication runs; interactive mode suggests
+  `1.0.0` and `1.x` but always asks for confirmation through the prompt.
+- `--dry-run` inspects project and Git refs without mutating anything and
+  prints the resumable plan.
 - `--no-browser` prints the normal Drupal.org creation URL instead of opening a
-  browser and never asks to configure the companion.
+  browser, including the manual Drupal.org release form.
+- Git publishing needs existing SSH access to `git@git.drupal.org`. The CLI
+  never stores credentials, alters `origin`, force-pushes, or moves a tag.
+- Source must be committed. Only the module subtree is exported with `git
+  archive`; untracked files are excluded and obvious sensitive tracked files
+  block publication.
+- The Drupal.org release form is always reviewed and saved by a human in the
+  browser. Composer verification uses a temporary directory and
+  `https://packages.drupal.org/8`, never the user's project files. Packaging
+  can propagate later, so rerun the same command to resume verification.
 - When Drupal AI is available, the optional review asks before sending selected
   module source to the configured provider. Source selection has a budget, and
   local redaction is best effort rather than a guarantee that every secret is
@@ -166,7 +179,7 @@ Available commands:
   mr:status                 Show the pipeline status for a merge request.
  project
   project:contains          Lists the branches and tags that contain a commit.
-  project:publish             Prepare a module for manual Drupal.org project creation.
+  project:publish             Publish a module to Drupal.org.
   project:issues      [pi]  Lists issues for a project.
   project:kanban            Opens project kanban
   project:link              Opens project page
