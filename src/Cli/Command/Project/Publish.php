@@ -340,7 +340,7 @@ class Publish extends Command
 
     private function releaseExists(\mglaman\DrupalOrg\Entity\Project $project, ProjectReleaseVersion $version): bool
     {
-        foreach (($this->releasesAction ?? new GetProjectReleasesAction($this->client))($project)->releases as $release) {
+        foreach (($this->releasesAction ?? new GetProjectReleasesAction($this->client))($project, true, true)->releases as $release) {
             if ($release->fieldReleaseVersion === $version->value) {
                 return true;
             }

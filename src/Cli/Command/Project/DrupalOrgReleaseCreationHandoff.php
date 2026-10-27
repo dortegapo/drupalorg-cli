@@ -66,7 +66,7 @@ final class DrupalOrgReleaseCreationHandoff
         $attempt = 0;
         while (true) {
             try {
-                $releases = ($this->releaseLookupAction ?? new GetProjectReleasesAction($this->client))($project, true)->releases;
+                $releases = ($this->releaseLookupAction ?? new GetProjectReleasesAction($this->client))($project, true, true)->releases;
             } catch (\Exception $exception) {
                 $errorOutput->writeln(sprintf(
                     '<error>Could not check Drupal.org release: %s</error>',

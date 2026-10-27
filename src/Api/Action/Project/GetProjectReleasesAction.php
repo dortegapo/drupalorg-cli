@@ -13,9 +13,12 @@ class GetProjectReleasesAction implements ActionInterface
     {
     }
 
-    public function __invoke(Project $project, bool $fresh = false): ProjectReleasesResult
-    {
-        $options = [
+    public function __invoke(
+        Project $project,
+        bool $fresh = false,
+        bool $includeAllStatuses = false,
+    ): ProjectReleasesResult {
+        $options = $includeAllStatuses ? [] : [
             'field_release_update_status' => 0,
         ];
         $releases = $fresh

@@ -84,4 +84,18 @@ class GetProjectReleasesActionTest extends TestCase
 
         self::assertSame([], $result->releases);
     }
+
+    public function testInvokeCanIncludeAllReleaseStatuses(): void
+    {
+        $project = Project::fromStdClass(self::projectFixture());
+        $client = $this->createMock(Client::class);
+        $client->expects(self::once())
+            ->method('getProjectReleases')
+            ->with('2421989', [], true)
+            ->willReturn([]);
+
+        $result = (new GetProjectReleasesAction($client))($project, true, true);
+
+        self::assertSame([], $result->releases);
+    }
 }
