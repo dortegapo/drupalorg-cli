@@ -506,7 +506,10 @@ class Publish extends Command
                 }
                 $progress->register([ProjectPublishProgressRenderer::PREPARING_RELEASE => 'Preparing Drupal.org release']);
                 $progress->start(ProjectPublishProgressRenderer::PREPARING_RELEASE);
-                $found = ($this->releaseHandoff ?? new DrupalOrgReleaseCreationHandoff($this->client))->run(
+                $found = ($this->releaseHandoff ?? new DrupalOrgReleaseCreationHandoff(
+                    $this->client,
+                    progress: $progress,
+                ))->run(
                     $input,
                     $output,
                     $this->stdErr,

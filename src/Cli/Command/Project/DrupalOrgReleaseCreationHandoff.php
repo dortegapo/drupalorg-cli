@@ -12,13 +12,17 @@ use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\Question;
 
 /** Human-only handoff for Drupal.org's official release form. */
 final class DrupalOrgReleaseCreationHandoff
 {
-    public function __construct(private readonly Client $client, private readonly ?BrowserLauncher $browserLauncher = null)
-    {
+    public function __construct(
+        private readonly Client $client,
+        private readonly ?BrowserLauncher $browserLauncher = null,
+        private readonly ?GetProjectReleasesAction $releaseLookupAction = null,
+        private readonly ?\Closure $sleeper = null,
+        private readonly ?ProjectPublishProgressRenderer $progress = null,
+    ) {
     }
 
     public function run(
@@ -29,6 +33,7 @@ final class DrupalOrgReleaseCreationHandoff
         Project $project,
         ProjectReleaseVersion $version,
     ): bool {
+        $this->progress?->suspend();
         $url = 'https://www.drupal.org/node/add/project-release/' . $project->nid;
         $output->writeln('');
         $output->writeln('<fg=cyan;options=bold>CREATE DRUPAL.ORG RELEASE</>');
@@ -40,26 +45,51 @@ final class DrupalOrgReleaseCreationHandoff
             $errorOutput->writeln('<error>Could not open a browser automatically.</error>');
             $output->writeln($url);
         }
+        $output->writeln('');
+        $output->writeln('Complete the release form in your browser and press Save.');
+        $output->writeln('');
+        $output->writeln('Waiting for Drupal.org to create release "' . $version->value . '"...');
+        $output->writeln('This command will continue automatically when the release is available.');
+        $output->writeln('');
+        $output->writeln('Press Ctrl+C to stop.');
 
+        return $this->waitForRelease($output, $errorOutput, $project, $version);
+    }
+
+    private function waitForRelease(
+        OutputInterface $output,
+        OutputInterface $errorOutput,
+        Project $project,
+        ProjectReleaseVersion $version,
+    ): bool {
+        $delays = [2, 3, 5, 5, 10];
+        $attempt = 0;
         while (true) {
-            $prompt = (bool) $input->getOption('no-browser')
-                ? 'Press Enter to verify · type "cancel" to stop: '
-                : 'Press Enter to verify · type "open" to reopen · "cancel" to stop: ';
-            $answer = (string) $helper->ask($input, $output, new Question($prompt, ''));
-            if ($answer === 'cancel') {
+            try {
+                $releases = ($this->releaseLookupAction ?? new GetProjectReleasesAction($this->client))($project, true)->releases;
+            } catch (\Exception $exception) {
+                $errorOutput->writeln(sprintf(
+                    '<error>Could not check Drupal.org release: %s</error>',
+                    $exception->getMessage(),
+                ));
+
                 return false;
             }
-            if ($answer === 'open' && !(bool) $input->getOption('no-browser')) {
-                ($this->browserLauncher ?? new BrowserLauncher())->openDefault($url);
-                continue;
-            }
-            $releases = (new GetProjectReleasesAction($this->client))($project)->releases;
             foreach ($releases as $release) {
                 if ($release->fieldReleaseVersion === $version->value) {
+                    $this->progress?->complete(ProjectPublishProgressRenderer::PREPARING_RELEASE);
+                    $this->progress?->suspend();
+                    $output->writeln('');
+                    $output->writeln('<fg=green;options=bold>FOUND</> Drupal.org release: ' . $version->value);
                     return true;
                 }
             }
-            $output->writeln('Release has not propagated yet. Save it on Drupal.org and verify again, or cancel to resume later.');
+
+            $delay = $delays[min($attempt, count($delays) - 1)];
+            ++$attempt;
+            ($this->sleeper ?? static function (int $seconds): void {
+                sleep($seconds);
+            })($delay);
         }
     }
 }

@@ -160,7 +160,8 @@ class Client
      */
     public function getProjectReleases(
         string $projectNid,
-        array $options = []
+        array $options = [],
+        bool $fresh = false,
     ): array {
         $options += [
             'field_release_project' => $projectNid,
@@ -172,7 +173,7 @@ class Client
             'limit' => 20,
         ];
 
-        $data = $this->request(new Request('node.json', $options));
+        $data = $this->request(new Request('node.json', $options), $fresh);
         return array_map(
             static fn(\stdClass $release) => Release::fromStdClass($release),
             (array) ($data->list ?? [])

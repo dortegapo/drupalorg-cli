@@ -70,4 +70,18 @@ class GetProjectReleasesActionTest extends TestCase
         self::assertSame('address', $decoded['project_name']);
         self::assertSame('10.6.3', $decoded['releases'][0]['field_release_version']);
     }
+
+    public function testInvokeCanRequestFreshData(): void
+    {
+        $project = Project::fromStdClass(self::projectFixture());
+        $client = $this->createMock(Client::class);
+        $client->expects(self::once())
+            ->method('getProjectReleases')
+            ->with('2421989', ['field_release_update_status' => 0], true)
+            ->willReturn([]);
+
+        $result = (new GetProjectReleasesAction($client))($project, true);
+
+        self::assertSame([], $result->releases);
+    }
 }

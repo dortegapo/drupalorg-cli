@@ -13,11 +13,14 @@ class GetProjectReleasesAction implements ActionInterface
     {
     }
 
-    public function __invoke(Project $project): ProjectReleasesResult
+    public function __invoke(Project $project, bool $fresh = false): ProjectReleasesResult
     {
-        $releases = $this->client->getProjectReleases($project->nid, [
+        $options = [
             'field_release_update_status' => 0,
-        ]);
+        ];
+        $releases = $fresh
+            ? $this->client->getProjectReleases($project->nid, $options, true)
+            : $this->client->getProjectReleases($project->nid, $options);
         return new ProjectReleasesResult(
             projectTitle: $project->title,
             projectName: $project->machineName,
