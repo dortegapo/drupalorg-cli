@@ -14,6 +14,8 @@ final class ProjectPublishProgressRenderer
 
     public const CHECKING_PROJECT = 'checking_project';
 
+    public const CHECKING_LOCAL_SOURCE = 'checking_local_source';
+
     public const CHECKING_REPOSITORY = 'checking_repository';
 
     public const PUBLISHING_SOURCE = 'publishing_source';

@@ -9,6 +9,7 @@ use mglaman\DrupalOrg\Project\ModuleContext;
 use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use Symfony\Component\Process\Process;
@@ -16,8 +17,10 @@ use Symfony\Component\Process\Process;
 /** Compares committed local module content with remote branch/tag trees. */
 class InspectProjectSourceAction implements ActionInterface
 {
-    public function __construct(private readonly ?ProjectRepositoryUrls $urls = null)
-    {
+    public function __construct(
+        private readonly ?ProjectRepositoryUrls $urls = null,
+        private readonly ?InspectLocalProjectSourceAction $localSourceInspector = null,
+    ) {
     }
 
     public function __invoke(
@@ -25,11 +28,13 @@ class InspectProjectSourceAction implements ActionInterface
         ProjectReleaseBranch $branch,
         ProjectReleaseVersion $version,
         ProjectRepositoryResult $repository,
+        ?ProjectLocalSourceResult $localSource = null,
     ): ProjectSourceStatusResult {
-        $root = $this->git($module->location->resolvedPath, ['rev-parse', '--show-toplevel']);
-        $prefix = trim($this->git($module->location->resolvedPath, ['rev-parse', '--show-prefix']));
-        $commit = $this->git($root, ['rev-parse', 'HEAD']);
-        $tree = $this->git($root, ['rev-parse', $prefix === '' ? 'HEAD^{tree}' : 'HEAD:' . rtrim($prefix, '/')]);
+        $localSource ??= ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        $root = $localSource->gitRoot;
+        $prefix = $localSource->modulePrefix;
+        $commit = $localSource->sourceCommitSha;
+        $tree = $localSource->sourceTreeSha;
         $branchCommit = null;
         $branchTree = null;
         $tagCommit = null;

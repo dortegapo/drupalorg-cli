@@ -159,7 +159,7 @@ final class ProjectPublicationGitActionTest extends TestCase
         $publisher($this->module, 'foo', $branch, $version, $status);
     }
 
-    public function testPublicationCommitUsesTheValidatedRemoteBranchSnapshot(): void
+    public function testPublicationStopsWhenLocalSourceChangesAfterInspection(): void
     {
         $branch = ProjectReleaseBranch::fromString('1.x');
         $version = ProjectReleaseVersion::fromString('1.0.0');
@@ -173,12 +173,16 @@ final class ProjectPublicationGitActionTest extends TestCase
         file_put_contents($this->source . '/foo.module', "<?php\nlocal change\n");
         $this->git($this->source, ['add', 'foo.module']);
         $this->git($this->source, ['commit', '-m', 'Local publication change']);
-        $published = $publisher($this->module, 'foo', $branch, $version, $status);
-
-        self::assertSame(
-            $validatedRemoteCommit,
-            $this->git($this->remote, ['rev-parse', $published->commitSha . '^']),
-        );
+        try {
+            $publisher($this->module, 'foo', $branch, $version, $status);
+            self::fail('Expected local source change failure.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame(
+                "Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.",
+                $exception->getMessage(),
+            );
+        }
+        self::assertSame($validatedRemoteCommit, $this->git($this->remote, ['rev-parse', 'refs/heads/1.x']));
     }
 
     public function testBranchCanAdvanceAfterMatchingTag(): void

@@ -10,14 +10,17 @@ use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use Symfony\Component\Process\Process;
 
 /** Publishes only the committed module subtree through an isolated repository. */
 class PublishProjectSourceAction implements ActionInterface
 {
-    public function __construct(private readonly ?ProjectRepositoryUrls $urls = null)
-    {
+    public function __construct(
+        private readonly ?ProjectRepositoryUrls $urls = null,
+        private readonly ?InspectLocalProjectSourceAction $localSourceInspector = null,
+    ) {
     }
 
     public function __invoke(
@@ -27,11 +30,8 @@ class PublishProjectSourceAction implements ActionInterface
         ProjectReleaseVersion $version,
         ?ProjectSourceStatusResult $expectedSource = null,
     ): PublishProjectSourceResult {
-        $source = $this->sourceContext($module);
-        $this->assertCleanModule($source['root'], $source['prefix']);
-        $this->assertSafeFiles($source['root'], $source['prefix']);
-        $this->assertComposer($module, $machineName);
-        [$name, $email] = $this->identity($source['root']);
+        $source = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        $this->assertExpectedLocalSource($source, $expectedSource);
         $staging = $this->temporaryDirectory('drupalorg-publish-');
         try {
             $urls = $this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName);
@@ -48,15 +48,16 @@ class PublishProjectSourceAction implements ActionInterface
                 $this->mustRun($staging, ['checkout', '-B', $branch->name, 'FETCH_HEAD']);
                 $this->mustRun($staging, ['rm', '-r', '--ignore-unmatch', '.']);
             }
-            $this->archive($source['root'], $source['prefix'], $staging);
+            $this->archive($source->gitRoot, $source->modulePrefix, $staging);
             $this->mustRun($staging, ['add', '-A']);
             $diff = $this->run($staging, ['diff', '--cached', '--quiet'], false);
             if ($diff->getExitCode() === 0 && $branchExists) {
-                return new PublishProjectSourceResult($branch->name, $source['commit'], $this->git($staging, ['rev-parse', 'HEAD']), 0, false, true);
+                return new PublishProjectSourceResult($branch->name, $source->sourceCommitSha, $this->git($staging, ['rev-parse', 'HEAD']), 0, false, true);
             }
             if ($diff->getExitCode() !== 1) {
                 throw new \RuntimeException('Could not inspect staged Drupal.org source changes.');
             }
+            [$name, $email] = $this->identity($source->gitRoot);
             $filesChanged = count(array_filter(explode("\n", trim($this->git($staging, ['diff', '--cached', '--name-only'])))));
             $this->mustRun($staging, [
                 '-c', 'core.hooksPath=/dev/null', '-c', 'user.name=' . $name, '-c', 'user.email=' . $email,
@@ -69,61 +70,19 @@ class PublishProjectSourceAction implements ActionInterface
             if (!$push->isSuccessful()) {
                 throw new \RuntimeException($this->pushFailureMessage($push->getErrorOutput()));
             }
-            return new PublishProjectSourceResult($branch->name, $source['commit'], $this->git($staging, ['rev-parse', 'HEAD']), $filesChanged, !$branchExists, false);
+            return new PublishProjectSourceResult($branch->name, $source->sourceCommitSha, $this->git($staging, ['rev-parse', 'HEAD']), $filesChanged, !$branchExists, false);
         } finally {
             $this->removeDirectory($staging, 'drupalorg-publish-');
         }
     }
 
-    /** @return array{root: string, prefix: string, commit: string} */
-    private function sourceContext(ModuleContext $module): array
-    {
-        $root = $this->git($module->location->resolvedPath, ['rev-parse', '--show-toplevel']);
-        return [
-            'root' => $root,
-            'prefix' => trim($this->git($module->location->resolvedPath, ['rev-parse', '--show-prefix'])),
-            'commit' => $this->git($root, ['rev-parse', 'HEAD']),
-        ];
-    }
-
-    private function assertCleanModule(string $root, string $prefix): void
-    {
-        $path = $prefix === '' ? '.' : $prefix;
-        $status = $this->git($root, ['status', '--porcelain', '--', $path]);
-        if ($status !== '') {
-            throw new \RuntimeException("Module source contains uncommitted changes.\n\nCommit or discard them before publishing.\n" . $status);
-        }
-    }
-
-    private function assertSafeFiles(string $root, string $prefix): void
-    {
-        $path = $prefix === '' ? '.' : $prefix;
-        $files = array_filter(explode("\0", $this->git($root, ['ls-files', '-z', '--', $path])));
-        foreach ($files as $file) {
-            $name = basename($file);
-            if (preg_match('/^(?:\.env(?:\..*)?|auth\.json|id_rsa|id_ed25519|credentials.*|secrets.*|.*\.(?:pem|key))$/i', $name) === 1) {
-                throw new \RuntimeException("Potentially sensitive tracked file:\n  " . $file . "\n\nRemove it from the module repository before publishing.");
-            }
-            $contents = @file_get_contents($root . DIRECTORY_SEPARATOR . $file);
-            if ($contents !== false && preg_match('/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/', $contents) === 1) {
-                throw new \RuntimeException("Potential private key content in tracked file:\n  " . $file . "\n\nRemove it from the module repository before publishing.");
-            }
-        }
-    }
-
-    private function assertComposer(ModuleContext $module, string $machineName): void
-    {
-        $path = $module->location->resolvedPath . DIRECTORY_SEPARATOR . 'composer.json';
-        if (!is_file($path)) {
-            return;
-        }
-        try {
-            $composer = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException $exception) {
-            throw new \RuntimeException('Module composer.json is not valid JSON.', 0, $exception);
-        }
-        if (($composer['name'] ?? null) !== 'drupal/' . $machineName || ($composer['type'] ?? null) !== 'drupal-module') {
-            throw new \RuntimeException(sprintf('Module composer.json must declare name "drupal/%s" and type "drupal-module" before publishing.', $machineName));
+    private function assertExpectedLocalSource(
+        ProjectLocalSourceResult $source,
+        ?ProjectSourceStatusResult $expected,
+    ): void {
+        if ($expected !== null
+            && ($expected->localSourceCommitSha !== $source->sourceCommitSha || $expected->localTreeSha !== $source->sourceTreeSha)) {
+            throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
         }
     }
 

@@ -7,6 +7,7 @@ namespace mglaman\DrupalOrgCli\Command\Project;
 use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleasesAction;
+use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\PublishProjectSourceAction;
@@ -24,6 +25,7 @@ use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
@@ -50,6 +52,7 @@ class Publish extends Command
         private readonly ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
         private readonly ?ResolveModuleAction $moduleResolver = null,
         private readonly ?GetProjectAction $projectLookupAction = null,
+        private readonly ?InspectLocalProjectSourceAction $localSourceInspector = null,
         private readonly ?InspectProjectRepositoryAction $repositoryInspector = null,
         private readonly ?InspectProjectSourceAction $sourceInspector = null,
         private readonly ?PublishProjectSourceAction $sourcePublisher = null,
@@ -91,6 +94,7 @@ class Publish extends Command
         $progress = new ProjectPublishProgressRenderer($output);
         $progress->register([
             ProjectPublishProgressRenderer::PREPARING_MODULE => 'Preparing module',
+            ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE => 'Checking local Git source',
             ProjectPublishProgressRenderer::CHECKING_PROJECT => 'Checking Drupal.org project',
         ]);
         $progress->start(ProjectPublishProgressRenderer::PREPARING_MODULE);
@@ -108,6 +112,16 @@ class Publish extends Command
             return self::FAILURE;
         }
         $progress->complete(ProjectPublishProgressRenderer::PREPARING_MODULE);
+
+        $progress->start(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+        try {
+            $localSource = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        } catch (\RuntimeException $exception) {
+            $progress->fail(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
+            $this->stdErr->writeln('<error>' . $exception->getMessage() . '</error>');
+            return self::FAILURE;
+        }
+        $progress->complete(ProjectPublishProgressRenderer::CHECKING_LOCAL_SOURCE);
 
         $progress->start(ProjectPublishProgressRenderer::CHECKING_PROJECT);
         try {
@@ -198,7 +212,7 @@ class Publish extends Command
         $sourceStatus = null;
         if ($repository->reachable) {
             try {
-                $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $branch, $version, $repository);
+                $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $branch, $version, $repository, $localSource);
             } catch (\Throwable $exception) {
                 $message = $exception->getMessage();
                 $label = preg_match('/not a git repository|does not have a commit checked out/i', $message) === 1
@@ -396,6 +410,8 @@ class Publish extends Command
                 return $this->runPublication($input, $output, $progress, $module, $project, $state);
             }
             if ($plan->nextStep === ProjectPublishStep::CREATE_TAG) {
+                $expectedSource = $this->sourceStatusFromState($state);
+                $this->assertCurrentLocalSource($module, $expectedSource);
                 if ($input->isInteractive() && !$this->askConfirmation(
                     $input,
                     $output,
@@ -416,7 +432,7 @@ class Publish extends Command
                 }
                 $progress->register([ProjectPublishProgressRenderer::CREATING_TAG => 'Creating release tag']);
                 $progress->start(ProjectPublishProgressRenderer::CREATING_TAG);
-                $tag = ($this->tagCreator ?? new CreateProjectTagAction($this->repositoryUrls))($module->location->machineName, $state->branch, $state->version, $this->sourceStatusFromState($state));
+                $tag = ($this->tagCreator ?? new CreateProjectTagAction($this->repositoryUrls))($module->location->machineName, $state->branch, $state->version, $expectedSource);
                 $progress->complete(ProjectPublishProgressRenderer::CREATING_TAG);
                 $output->writeln('Tag ' . $tag->tag . ($tag->created ? ' published.' : ' already exists.'));
                 $repository = $this->inspectRepositoryAfterMutation($module->location->machineName);
@@ -514,6 +530,14 @@ class Publish extends Command
             $state->branchCommitSha,
             $state->tagCommitSha,
         );
+    }
+
+    private function assertCurrentLocalSource(ModuleContext $module, ProjectSourceStatusResult $expected): void
+    {
+        $local = ($this->localSourceInspector ?? new InspectLocalProjectSourceAction())($module);
+        if ($local->sourceCommitSha !== $expected->localSourceCommitSha || $local->sourceTreeSha !== $expected->localTreeSha) {
+            throw new \RuntimeException("Module source changed during publication.\n\nRun project:publish again to review and publish the current committed source.");
+        }
     }
 
     private function withComposerVisible(ProjectPublishState $state): ProjectPublishState

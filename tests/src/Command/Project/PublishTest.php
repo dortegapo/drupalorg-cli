@@ -11,8 +11,10 @@ use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\ModuleReviewAnalyzerFactory;
 use mglaman\DrupalOrg\Project\PreparedModuleSource;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
+use mglaman\DrupalOrg\Action\Project\InspectLocalProjectSourceAction;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use mglaman\DrupalOrgCli\Application;
 use mglaman\DrupalOrgCli\Command\Project\DrupalOrgProjectCreationHandoff;
 use mglaman\DrupalOrgCli\Command\Project\ModuleReviewWorkflow;
@@ -25,6 +27,7 @@ use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\Process\Process;
 
 #[CoversClass(Publish::class)]
 class PublishTest extends TestCase
@@ -37,6 +40,8 @@ class PublishTest extends TestCase
     private string $originalCwd;
 
     private string $workDir;
+
+    private bool $useRealLocalSourceInspector = false;
 
     protected function setUp(): void
     {
@@ -424,6 +429,30 @@ class PublishTest extends TestCase
         self::assertStringContainsString('network_failure', $tester->getDisplay());
     }
 
+    public function testLocalUnbornHeadStopsBeforeDrupalOrgAndAiWorkflow(): void
+    {
+        $this->createValidModule();
+        $process = new Process(['git', 'init', $this->workDir]);
+        $process->mustRun();
+        chdir($this->workDir);
+        $this->useRealLocalSourceInspector = true;
+        [$tester, $command] = $this->commandTesterWithReview(
+            self::jsonResponse(['list' => []]),
+            self::runtime(),
+            self::availableAiContext(),
+            self::completeReviewResult(),
+        );
+
+        self::assertSame(1, $tester->execute(['module' => 'my_module'], ['interactive' => false]));
+        self::assertSame(0, $command->runtimeCalls);
+        self::assertSame(0, $command->inspectCalls);
+        self::assertSame(0, $command->analyzeCalls);
+        self::assertSame(0, $command->metadataCalls);
+        self::assertSame(0, $command->browserCalls);
+        self::assertCount(0, $this->history);
+        self::assertStringContainsString('Module source has no Git commit yet', $tester->getDisplay());
+    }
+
     public function testInvalidYamlFails(): void
     {
         $modulePath = $this->workDir . '/my_module';
@@ -662,13 +691,18 @@ class PublishTest extends TestCase
         ?ModuleReviewWorkflow $reviewWorkflow = null,
         ?GenerateProjectMetadataAction $metadataAction = null,
         ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
+        ?InspectLocalProjectSourceAction $localSourceInspector = null,
         ?InspectProjectRepositoryAction $repositoryInspector = null,
     ): Publish {
+        $localSourceInspector = $this->useRealLocalSourceInspector
+            ? new InspectLocalProjectSourceAction()
+            : $this->localSourceInspector();
         return new class(
             $client,
             $reviewWorkflow,
             $metadataAction,
             $projectCreationHandoff,
+            $localSourceInspector,
             $repositoryInspector,
         ) extends Publish {
             public function __construct(
@@ -676,12 +710,14 @@ class PublishTest extends TestCase
                 ?ModuleReviewWorkflow $reviewWorkflow,
                 ?GenerateProjectMetadataAction $metadataAction,
                 ?DrupalOrgProjectCreationHandoff $projectCreationHandoff,
+                ?InspectLocalProjectSourceAction $localSourceInspector,
                 ?InspectProjectRepositoryAction $repositoryInspector,
             ) {
                 parent::__construct(
                     $reviewWorkflow,
                     $metadataAction,
                     $projectCreationHandoff,
+                    localSourceInspector: $localSourceInspector,
                     repositoryInspector: $repositoryInspector ?? new InspectProjectRepositoryAction(
                         new ProjectRepositoryUrls('/definitely/not/a/repository', '/definitely/not/a/repository'),
                     ),
@@ -694,6 +730,13 @@ class PublishTest extends TestCase
                 $this->client = $this->testClient;
             }
         };
+    }
+
+    private function localSourceInspector(): InspectLocalProjectSourceAction
+    {
+        $inspector = $this->createMock(InspectLocalProjectSourceAction::class);
+        $inspector->method('__invoke')->willReturn(new ProjectLocalSourceResult('/tmp', '', 'commit', 'tree'));
+        return $inspector;
     }
 
     /**

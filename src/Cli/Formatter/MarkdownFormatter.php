@@ -28,6 +28,7 @@ use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
 use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -552,6 +553,17 @@ class MarkdownFormatter extends AbstractFormatter
             "# Project source status\n\n- **Branch matches source:** %s\n- **Tag matches source:** %s",
             $result->branchMatchesSource ? 'yes' : 'no',
             $result->tagMatchesSource ? 'yes' : 'no',
+        );
+    }
+
+    protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
+    {
+        return sprintf(
+            "# Local project source\n\n- **Git root:** %s\n- **Module prefix:** %s\n- **Commit:** %s\n- **Tree:** %s",
+            $result->gitRoot,
+            $result->modulePrefix,
+            $result->sourceCommitSha,
+            $result->sourceTreeSha,
         );
     }
 }
