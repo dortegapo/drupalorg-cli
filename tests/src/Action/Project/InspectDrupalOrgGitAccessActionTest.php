@@ -26,6 +26,20 @@ final class InspectDrupalOrgGitAccessActionTest extends TestCase
         self::assertSame('alice', $result->username);
     }
 
+    public function testUsesConfiguredPrivateIdentityWithoutAnAuthenticationAgent(): void
+    {
+        $identity = sys_get_temp_dir() . '/drupalorg-private-key-' . bin2hex(random_bytes(4));
+        file_put_contents($identity, 'not a real key');
+        $this->scripts[] = $identity;
+        $result = (new InspectDrupalOrgGitAccessAction(
+            sshBinary: $this->script("if printf '%s\\n' \"\$@\" | grep -Fq -- '" . $identity . "'; then printf '%s\\n' 'Welcome to GitLab, @identity-user!'; else printf '%s\\n' 'Permission denied (publickey).' >&2; fi; exit 1"),
+            configuredIdentityFiles: [$identity],
+        ))();
+
+        self::assertSame(DrupalOrgGitAccessResult::AUTHENTICATED, $result->status);
+        self::assertSame('identity-user', $result->username);
+    }
+
     public function testPublicKeyFailureIsAuthenticationMissing(): void
     {
         $result = (new InspectDrupalOrgGitAccessAction(

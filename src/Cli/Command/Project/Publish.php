@@ -629,6 +629,7 @@ class Publish extends Command
         $output->writeln('<fg=cyan;options=bold>DRUPAL.ORG GIT ACCESS</>');
         $output->writeln('');
         $output->writeln('Publishing source requires authenticated Git access.');
+        $output->writeln('The command will try local SSH identities automatically; ssh-agent is not required.');
         $output->writeln('');
         $output->writeln('Test:');
         $output->writeln('  ssh -T git@git.drupal.org');
@@ -698,7 +699,7 @@ class Publish extends Command
     ): void {
         match ($result->status) {
             DrupalOrgGitAccessResult::AUTHENTICATION_MISSING => $output->writeln(
-                "<error>Drupal.org Git authentication is not configured.\n\nTest the connection with:\n  ssh -T git@git.drupal.org\n\nAdd an SSH public key to Drupal.org:\n  " . InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL . '</error>',
+                "<error>Drupal.org Git authentication is not configured, or the uploaded key does not match a local private key.\n\nTest the connection with:\n  ssh -T git@git.drupal.org\n\nAdd the matching SSH public key to Drupal.org:\n  " . InspectDrupalOrgGitAccessAction::SSH_KEY_SETTINGS_URL . '</error>',
             ),
             DrupalOrgGitAccessResult::HOST_KEY_FAILURE => $output->writeln(
                 '<error>Drupal.org Git host key verification failed. Verify your SSH known_hosts configuration; it was not changed.</error>',

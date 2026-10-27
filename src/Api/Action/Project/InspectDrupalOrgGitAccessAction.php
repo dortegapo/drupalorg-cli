@@ -17,21 +17,33 @@ final class InspectDrupalOrgGitAccessAction implements ActionInterface
         private readonly string $host = 'git.drupal.org',
         private readonly string $sshBinary = 'ssh',
         private readonly float $timeout = 10.0,
+        /** @var list<string>|null $configuredIdentityFiles */
+        private readonly ?array $configuredIdentityFiles = null,
     ) {
     }
 
     public function __invoke(): DrupalOrgGitAccessResult
     {
         try {
-            $process = new Process([
+            $command = [
                 $this->sshBinary,
                 '-T',
                 '-o',
                 'BatchMode=yes',
-                '-o',
-                'ConnectTimeout=' . (string) max(1, (int) $this->timeout),
-                'git@' . $this->host,
-            ]);
+            ];
+            $identityFiles = $this->identityFiles();
+            if ($identityFiles !== []) {
+                $command[] = '-o';
+                $command[] = 'IdentitiesOnly=yes';
+                foreach ($identityFiles as $identityFile) {
+                    $command[] = '-i';
+                    $command[] = $identityFile;
+                }
+            }
+            $command[] = '-o';
+            $command[] = 'ConnectTimeout=' . (string) max(1, (int) $this->timeout);
+            $command[] = 'git@' . $this->host;
+            $process = new Process($command);
             $process->setTimeout($this->timeout);
             $process->setEnv(array_merge($_ENV, $_SERVER, ['GIT_TERMINAL_PROMPT' => '0']));
             $process->run();
@@ -62,6 +74,33 @@ final class InspectDrupalOrgGitAccessAction implements ActionInterface
         }
 
         return new DrupalOrgGitAccessResult(DrupalOrgGitAccessResult::UNKNOWN_FAILURE, diagnostic: $output);
+    }
+
+    /** @return list<string> */
+    private function identityFiles(): array
+    {
+        if ($this->configuredIdentityFiles !== null) {
+            return array_values(array_filter(
+                $this->configuredIdentityFiles,
+                static fn(string $identityFile): bool => is_file($identityFile) && is_readable($identityFile),
+            ));
+        }
+
+        $home = $_SERVER['HOME'] ?? getenv('HOME');
+        if (!is_string($home) || $home === '') {
+            return [];
+        }
+        $files = glob($home . DIRECTORY_SEPARATOR . '.ssh' . DIRECTORY_SEPARATOR . 'id_*');
+        if ($files === false) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $files,
+            static fn(string $file): bool => is_file($file)
+                && is_readable($file)
+                && !str_ends_with($file, '.pub'),
+        ));
     }
 
     private function username(string $output): ?string
