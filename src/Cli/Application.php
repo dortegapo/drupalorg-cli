@@ -28,16 +28,6 @@ class Application extends ParentApplication
     protected function getDefaultInputDefinition(): InputDefinition
     {
         $definition = parent::getDefaultInputDefinition();
-        // `project:publish` owns --version for a Drupal.org release version.
-        // Symfony's global --version flag would otherwise make that option
-        // impossible to expose on the command.
-        if ($definition->hasOption('version')) {
-            $options = array_filter(
-                $definition->getOptions(),
-                static fn(InputOption $option): bool => $option->getName() !== 'version',
-            );
-            $definition = new InputDefinition(array_merge($definition->getArguments(), $options));
-        }
         $definition->addOption(new InputOption(
             'no-cache',
             null,

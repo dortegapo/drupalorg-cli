@@ -66,7 +66,7 @@ class PublishTest extends TestCase
         $exitCode = $tester->execute([
             'module' => 'my_module',
             '--dry-run' => true,
-            '--version' => '1.0.0',
+            '--release-version' => '1.0.0',
             '--branch' => '1.x',
         ]);
 
@@ -90,7 +90,7 @@ class PublishTest extends TestCase
         ]));
 
         self::assertSame(0, $tester->execute(
-            ['module' => 'my_module', '--dry-run' => true, '--version' => '1.0.0', '--branch' => '1.x'],
+            ['module' => 'my_module', '--dry-run' => true, '--release-version' => '1.0.0', '--branch' => '1.x'],
             ['verbosity' => OutputInterface::VERBOSITY_VERBOSE],
         ));
         $display = $tester->getDisplay();
@@ -141,7 +141,7 @@ class PublishTest extends TestCase
         );
 
         self::assertSame(0, $tester->execute([
-            'module' => 'my_module', '--dry-run' => true, '--version' => '1.0.0', '--branch' => '1.x',
+            'module' => 'my_module', '--dry-run' => true, '--release-version' => '1.0.0', '--branch' => '1.x',
         ]));
         self::assertSame(0, $command->runtimeCalls);
         self::assertSame(0, $command->inspectCalls);
@@ -345,7 +345,7 @@ class PublishTest extends TestCase
 
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('DRY RUN', $tester->getDisplay());
-        self::assertStringContainsString('Manual Drupal.org project creation', $tester->getDisplay());
+        self::assertStringContainsString('Project creation is required first.', $tester->getDisplay());
         self::assertStringContainsString('No changes were made.', $tester->getDisplay());
 
         self::assertCount(1, $this->history);
@@ -374,7 +374,7 @@ class PublishTest extends TestCase
         $exitCode = $tester->execute([
             'module' => 'my_module',
             '--dry-run' => true,
-            '--version' => '1.0.0',
+            '--release-version' => '1.0.0',
             '--branch' => '1.x',
         ]);
 

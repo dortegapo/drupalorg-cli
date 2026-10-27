@@ -16,7 +16,10 @@ final class ProjectPublishPlan
         if (!$state->repositoryReachable) {
             return new self(ProjectPublishStep::WAIT_FOR_REPOSITORY);
         }
-        if (!$state->sourcePublished) {
+        if ($state->tagExists && !$state->tagMatchesSource) {
+            return new self(ProjectPublishStep::TAG_CONFLICT);
+        }
+        if (!$state->tagExists && !$state->branchMatchesSource) {
             return new self(ProjectPublishStep::PUBLISH_SOURCE);
         }
         if (!$state->tagExists) {

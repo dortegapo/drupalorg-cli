@@ -24,4 +24,14 @@ final class ProjectReleaseBranch
 
         return new self($name);
     }
+
+    public function supports(ProjectReleaseVersion $version): bool
+    {
+        $parts = explode('.', $this->name);
+        if (count($parts) === 2) {
+            return (int) $parts[0] === $version->major;
+        }
+
+        return (int) $parts[0] === $version->major && (int) $parts[1] === $version->minor;
+    }
 }

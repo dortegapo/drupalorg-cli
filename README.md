@@ -92,7 +92,7 @@ Drupal/Composer project.
 ```bash
 drupalorg project:publish ./web/modules/custom/example_module
 drupalorg project:publish example_module
-drupalorg project:publish example_module --version=1.0.0 --branch=1.x
+drupalorg project:publish example_module --release-version=1.0.0 --branch=1.x
 ```
 
 For a missing project it retains the optional review, metadata, and manual
@@ -100,7 +100,7 @@ project-creation handoff. Once the Drupal.org project exists it resumes at the
 first unfinished publication stage: repository availability, source push,
 release tag, manual release form, release verification, or Composer metadata.
 
-- `--version` and `--branch` select the release tag and release branch. They
+- `--release-version` and `--branch` select the release tag and release branch. They
   are required in non-interactive publication runs; interactive mode suggests
   `1.0.0` and `1.x` but always asks for confirmation through the prompt.
 - `--dry-run` inspects project and Git refs without mutating anything and

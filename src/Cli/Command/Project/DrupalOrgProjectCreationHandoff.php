@@ -362,7 +362,7 @@ final class DrupalOrgProjectCreationHandoff
         $output->writeln('');
         $output->writeln($this->status('FOUND', 'green') . ' Drupal.org project: ' . $project->machineName);
         $output->writeln('  https://www.drupal.org/project/' . $project->machineName);
-        $output->writeln('Repository setup is not implemented yet.');
+        $output->writeln('Resuming project publication workflow.');
     }
 
     private function status(string $value, string $color): string

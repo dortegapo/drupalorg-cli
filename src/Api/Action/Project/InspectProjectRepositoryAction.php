@@ -6,17 +6,27 @@ namespace mglaman\DrupalOrg\Action\Project;
 
 use mglaman\DrupalOrg\Action\ActionInterface;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
 use Symfony\Component\Process\Process;
 
 /** Inspects public Drupal.org refs without cloning a project repository. */
-final class InspectProjectRepositoryAction implements ActionInterface
+class InspectProjectRepositoryAction implements ActionInterface
 {
+    public function __construct(private readonly ?ProjectRepositoryUrls $urls = null)
+    {
+    }
+
     public function __invoke(string $machineName): ProjectRepositoryResult
     {
-        $url = 'https://git.drupalcode.org/project/' . $machineName . '.git';
-        $process = new Process(['git', 'ls-remote', '--heads', '--tags', $url]);
-        $process->setTimeout(20);
-        $process->run();
+        $url = ($this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName))->readUrl;
+        try {
+            $process = new Process(['git', 'ls-remote', '--heads', '--tags', $url]);
+            $process->setTimeout(20);
+            $process->setEnv(array_merge($_ENV, $_SERVER, ['GIT_TERMINAL_PROMPT' => '0']));
+            $process->run();
+        } catch (\Throwable $exception) {
+            return new ProjectRepositoryResult($url, false, failure: 'git_not_available');
+        }
         if (!$process->isSuccessful()) {
             return new ProjectRepositoryResult($url, false, failure: $this->failure($process->getErrorOutput()));
         }
@@ -51,7 +61,10 @@ final class InspectProjectRepositoryAction implements ActionInterface
         if (str_contains($error, 'authentication') || str_contains($error, 'permission denied')) {
             return 'authentication_failed';
         }
-        if (str_contains($error, 'not found') || str_contains($error, 'does not appear')) {
+        if (str_contains($error, 'git:') && str_contains($error, 'not found')) {
+            return 'git_not_available';
+        }
+        if (str_contains($error, 'repository not found') || str_contains($error, 'does not appear')) {
             return 'repository_not_ready';
         }
         return 'network_failure';

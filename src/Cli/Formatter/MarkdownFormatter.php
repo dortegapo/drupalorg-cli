@@ -27,6 +27,7 @@ use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
 use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -542,6 +543,15 @@ class MarkdownFormatter extends AbstractFormatter
 
     protected function formatComposerPackage(ComposerPackageResult $result): string
     {
-        return sprintf("# Composer package\n\n- **Package:** %s\n- **Version:** %s\n- **Available:** %s", $result->package, $result->version, $result->available ? 'yes' : 'no');
+        return sprintf("# Composer package\n\n- **Package:** %s\n- **Version:** %s\n- **Status:** %s", $result->package, $result->version, $result->status);
+    }
+
+    protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string
+    {
+        return sprintf(
+            "# Project source status\n\n- **Branch matches source:** %s\n- **Tag matches source:** %s",
+            $result->branchMatchesSource ? 'yes' : 'no',
+            $result->tagMatchesSource ? 'yes' : 'no',
+        );
     }
 }

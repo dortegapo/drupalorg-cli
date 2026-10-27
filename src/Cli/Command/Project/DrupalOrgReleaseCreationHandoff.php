@@ -42,11 +42,14 @@ final class DrupalOrgReleaseCreationHandoff
         }
 
         while (true) {
-            $answer = (string) $helper->ask($input, $output, new Question('Press Enter to verify · type "open" to reopen · "cancel" to stop: ', ''));
+            $prompt = (bool) $input->getOption('no-browser')
+                ? 'Press Enter to verify · type "cancel" to stop: '
+                : 'Press Enter to verify · type "open" to reopen · "cancel" to stop: ';
+            $answer = (string) $helper->ask($input, $output, new Question($prompt, ''));
             if ($answer === 'cancel') {
                 return false;
             }
-            if ($answer === 'open') {
+            if ($answer === 'open' && !(bool) $input->getOption('no-browser')) {
                 ($this->browserLauncher ?? new BrowserLauncher())->openDefault($url);
                 continue;
             }

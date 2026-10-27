@@ -27,6 +27,7 @@ use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
 use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
 use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -631,6 +632,11 @@ XML;
     protected function formatComposerPackage(ComposerPackageResult $result): string
     {
         return '<composer_package>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</composer_package>';
+    }
+
+    protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string
+    {
+        return '<project_source_status>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_source_status>';
     }
 
     private function toIso8601(int $timestamp): string

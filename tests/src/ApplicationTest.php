@@ -21,4 +21,13 @@ class ApplicationTest extends TestCase
         self::assertFalse($application->has('auth:status'));
         self::assertFalse($application->has('auth:logout'));
     }
+
+    public function testKeepsGlobalVersionOption(): void
+    {
+        $application = new Application();
+
+        self::assertTrue($application->getDefinition()->hasOption('version'));
+        self::assertTrue($application->find('project:publish')->getDefinition()->hasOption('release-version'));
+        self::assertFalse($application->find('project:publish')->getDefinition()->hasOption('version'));
+    }
 }

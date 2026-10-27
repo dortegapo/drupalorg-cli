@@ -8,6 +8,7 @@ use mglaman\DrupalOrg\Action\Project\GenerateProjectMetadataAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleasesAction;
 use mglaman\DrupalOrg\Action\Project\InspectProjectRepositoryAction;
+use mglaman\DrupalOrg\Action\Project\InspectProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\PublishProjectSourceAction;
 use mglaman\DrupalOrg\Action\Project\CreateProjectTagAction;
 use mglaman\DrupalOrg\Action\Project\VerifyComposerPackageAction;
@@ -21,6 +22,10 @@ use mglaman\DrupalOrg\Project\ProjectPublishState;
 use mglaman\DrupalOrg\Project\ProjectPublishStep;
 use mglaman\DrupalOrg\Project\ProjectReleaseBranch;
 use mglaman\DrupalOrg\Project\ProjectReleaseVersion;
+use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
 use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Command;
 use Symfony\Component\Console\Helper\QuestionHelper;
@@ -45,6 +50,15 @@ class Publish extends Command
         private readonly ?DrupalOrgProjectCreationHandoff $projectCreationHandoff = null,
         private readonly ?ResolveModuleAction $moduleResolver = null,
         private readonly ?GetProjectAction $projectLookupAction = null,
+        private readonly ?InspectProjectRepositoryAction $repositoryInspector = null,
+        private readonly ?InspectProjectSourceAction $sourceInspector = null,
+        private readonly ?PublishProjectSourceAction $sourcePublisher = null,
+        private readonly ?CreateProjectTagAction $tagCreator = null,
+        private readonly ?VerifyComposerPackageAction $composerVerifier = null,
+        private readonly ?DrupalOrgReleaseCreationHandoff $releaseHandoff = null,
+        private readonly ?GetProjectReleasesAction $releasesAction = null,
+        private readonly ?ProjectRepositoryUrls $repositoryUrls = null,
+        private readonly ?\Closure $sleeper = null,
     ) {
         parent::__construct();
     }
@@ -66,7 +80,7 @@ class Publish extends Command
                 InputOption::VALUE_NONE,
                 'Do not open the Drupal.org project creation page automatically.'
             )
-            ->addOption('version', null, InputOption::VALUE_REQUIRED, 'Release version, for example 1.0.0.')
+            ->addOption('release-version', null, InputOption::VALUE_REQUIRED, 'Release version, for example 1.0.0.')
             ->addOption('branch', null, InputOption::VALUE_REQUIRED, 'Release branch, for example 1.x.')
             ->setDescription('Publishes a project');
     }
@@ -165,27 +179,27 @@ class Publish extends Command
             $this->stdErr->writeln('<error>' . $exception->getMessage() . '</error>');
             return self::FAILURE;
         }
+        if (!$branch->supports($version)) {
+            $this->stdErr->writeln(sprintf('<error>Release branch %s does not support version %s.</error>', $branch->name, $version->value));
+            return self::FAILURE;
+        }
 
         $progress->register([ProjectPublishProgressRenderer::CHECKING_REPOSITORY => 'Checking Git repository']);
         $progress->start(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
-        $repository = (new InspectProjectRepositoryAction())($module->location->machineName);
+        $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
         $progress->complete(ProjectPublishProgressRenderer::CHECKING_REPOSITORY);
+        $sourceStatus = $repository->reachable
+            ? ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $branch, $version, $repository)
+            : null;
         $releaseExists = $repository->reachable && $this->releaseExists($project, $version);
-        $state = new ProjectPublishState(
-            true,
-            true,
-            $repository->reachable,
-            $branch,
-            $version,
-            $repository->branchSha($branch->name),
-            $repository->tagSha($version->value),
-            $repository->branchSha($branch->name) !== null,
-            $repository->tagSha($version->value) !== null,
-            $releaseExists,
-        );
+        $state = $this->buildState($repository, $sourceStatus, $branch, $version, $releaseExists);
         if ((bool) $input->getOption('dry-run')) {
-            $this->writePublicationDryRun($output, $state);
+            $this->writePublicationDryRun($output, $module, $project, $state);
             return self::SUCCESS;
+        }
+        if (!$repository->reachable && $repository->failure !== 'repository_not_ready') {
+            $this->stdErr->writeln('<error>Could not inspect Drupal.org repository: ' . ($repository->failure ?? 'network_failure') . '.</error>');
+            return self::FAILURE;
         }
         return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
     }
@@ -205,41 +219,10 @@ class Publish extends Command
         }
         $output->writeln('');
         $output->writeln('<comment>Plan</comment>');
-
-        $detailedActions = $project === null
-            ? [
-                'Offer an optional AI-assisted contribution review and local PDF report.',
-                'Optionally generate Drupal.org project metadata from the AI module characterization.',
-                'Open the Drupal.org project creation page for manual project creation.',
-                'Verify that the Drupal.org project exists.',
-                'Stop after the project creation handoff and verification.',
-            ]
-            : [
-                sprintf('Use the existing Drupal.org project "%s".', $module->location->machineName),
-                'Report that repository and release publication are not implemented.',
-            ];
-
-        $plannedActions = $output->isVerbose()
-            ? $detailedActions
-            : ($project === null
-                ? [
-                    'Optional contribution review',
-                    'Optional Drupal.org metadata generation',
-                    'Manual Drupal.org project creation',
-                    'Verify project',
-                    'Stop after project verification',
-                ]
-                : [
-                    'Report unsupported repository and release stages',
-                ]);
-
-        foreach ($plannedActions as $index => $plannedAction) {
+        foreach ($project === null
+            ? ['Project creation is required first.', 'After the project exists, Git/release publication can resume.']
+            : ['Inspect repository and resume the first incomplete Git/release step.'] as $index => $plannedAction) {
             $output->writeln(sprintf('  %d. %s', $index + 1, $plannedAction));
-        }
-
-        $output->writeln('');
-        if ($output->isVerbose()) {
-            $output->writeln('Publication execution is not implemented yet.');
         }
         $output->writeln('No changes were made.');
     }
@@ -247,10 +230,10 @@ class Publish extends Command
     /** @return array{0: ProjectReleaseVersion, 1: ProjectReleaseBranch} */
     private function releaseSelection(InputInterface $input, OutputInterface $output): array
     {
-        $versionValue = $input->getOption('version');
+        $versionValue = $input->getOption('release-version');
         $branchValue = $input->getOption('branch');
         if ((!is_string($versionValue) || $versionValue === '') && !$input->isInteractive()) {
-            throw new \InvalidArgumentException('Git/release publication requires --version and --branch in non-interactive mode. Example: --version=1.0.0 --branch=1.x');
+            throw new \InvalidArgumentException('Git/release publication requires --release-version and --branch in non-interactive mode. Example: --release-version=1.0.0 --branch=1.x');
         }
         if (!is_string($versionValue) || $versionValue === '') {
             $question = new \Symfony\Component\Console\Question\Question('Release version [1.0.0]: ', '1.0.0');
@@ -272,12 +255,59 @@ class Publish extends Command
 
     private function releaseExists(\mglaman\DrupalOrg\Entity\Project $project, ProjectReleaseVersion $version): bool
     {
-        foreach ((new GetProjectReleasesAction($this->client))($project)->releases as $release) {
+        foreach (($this->releasesAction ?? new GetProjectReleasesAction($this->client))($project)->releases as $release) {
             if ($release->fieldReleaseVersion === $version->value) {
                 return true;
             }
         }
         return false;
+    }
+
+    private function inspectRepositoryWithRetry(string $machineName): ProjectRepositoryResult
+    {
+        $action = $this->repositoryInspector ?? new InspectProjectRepositoryAction($this->repositoryUrls);
+        $result = $action($machineName);
+        if ($result->failure !== 'repository_not_ready') {
+            return $result;
+        }
+        foreach ([2, 4, 8, 15] as $delay) {
+            ($this->sleeper ?? static function (int $seconds): void {
+                sleep($seconds);
+            })($delay);
+            $result = $action($machineName);
+            if ($result->reachable || $result->failure !== 'repository_not_ready') {
+                break;
+            }
+        }
+        return $result;
+    }
+
+    private function buildState(
+        ProjectRepositoryResult $repository,
+        ?ProjectSourceStatusResult $source,
+        ProjectReleaseBranch $branch,
+        ProjectReleaseVersion $version,
+        bool $releaseExists,
+    ): ProjectPublishState {
+        return new ProjectPublishState(
+            $repository->reachable,
+            $branch,
+            $version,
+            $source?->localSourceCommitSha,
+            $source?->localTreeSha,
+            $source?->branchExists ?? false,
+            $source?->branchTreeSha,
+            $source?->branchMatchesSource ?? false,
+            $source?->tagExists ?? false,
+            $source?->tagTreeSha,
+            $source?->tagMatchesSource ?? false,
+            $releaseExists,
+            false,
+            $repository->failure,
+            $source?->filesAdded ?? 0,
+            $source?->filesModified ?? 0,
+            $source?->filesDeleted ?? 0,
+        );
     }
 
     private function runPublication(
@@ -287,7 +317,7 @@ class Publish extends Command
         ModuleContext $module,
         \mglaman\DrupalOrg\Entity\Project $project,
         ProjectPublishState $state,
-        \mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult $repository,
+        ProjectRepositoryResult $repository,
     ): int {
         $plan = ProjectPublishPlan::fromState($state);
         $this->writePublicationState($output, $state, $plan);
@@ -296,26 +326,37 @@ class Publish extends Command
             $output->writeln('Run project:publish again to resume.');
             return self::SUCCESS;
         }
+        if ($plan->nextStep === ProjectPublishStep::TAG_CONFLICT) {
+            $this->stdErr->writeln(sprintf(
+                '<error>Release tag %s already exists for different source code. Release tags are immutable. Use a new release version or check out the source corresponding to %s.</error>',
+                $state->version?->value,
+                $state->version?->value,
+            ));
+            return self::FAILURE;
+        }
         try {
             if ($plan->nextStep === ProjectPublishStep::PUBLISH_SOURCE) {
+                $publisher = $this->sourcePublisher ?? new PublishProjectSourceAction($this->repositoryUrls);
+                if ($input->isInteractive()) {
+                    $output->writeln(sprintf(
+                        "Release branch: %s\n\nSource changes:\n  Added:     %d\n  Modified:  %d\n  Deleted:   %d\n",
+                        $state->branch?->name,
+                        $state->filesAdded,
+                        $state->filesModified,
+                        $state->filesDeleted,
+                    ));
+                    if (!$this->askConfirmation($input, $output, 'Publish these changes to Drupal.org? [Y/n] ', true)) {
+                        return self::SUCCESS;
+                    }
+                }
                 $progress->register([ProjectPublishProgressRenderer::PUBLISHING_SOURCE => 'Publishing source']);
                 $progress->start(ProjectPublishProgressRenderer::PUBLISHING_SOURCE);
-                $source = (new PublishProjectSourceAction())($module, $module->location->machineName, $state->branch, $state->version);
+                $source = $publisher($module, $module->location->machineName, $state->branch, $state->version);
                 $progress->complete(ProjectPublishProgressRenderer::PUBLISHING_SOURCE);
                 $output->writeln($source->alreadyUpToDate ? 'Source already published.' : 'Source published to ' . $source->branch . '.');
-                $repository = (new InspectProjectRepositoryAction())($module->location->machineName);
-                $state = new ProjectPublishState(
-                    true,
-                    true,
-                    true,
-                    $state->branch,
-                    $state->version,
-                    $repository->branchSha($state->branch->name),
-                    $repository->tagSha($state->version->value),
-                    true,
-                    $repository->tagSha($state->version->value) !== null,
-                    $state->releaseExists
-                );
+                $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
+                $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
+                $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
                 return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
             }
             if ($plan->nextStep === ProjectPublishStep::CREATE_TAG) {
@@ -323,12 +364,12 @@ class Publish extends Command
                     $input,
                     $output,
                     sprintf(
-                        'Release branch: %s%sVersion:        %s%sCommit:         %s%sCreate and push release tag %s? [Y/n] ',
+                        'Release branch: %s%sVersion:        %s%sTree:           %s%sCreate and push release tag %s? [Y/n] ',
                         $state->branch->name,
                         "\n",
                         $state->version->value,
                         "\n",
-                        substr((string) $state->remoteBranchSha, 0, 7),
+                        substr((string) $state->localTreeSha, 0, 7),
                         "\n",
                         $state->version->value
                     ),
@@ -339,22 +380,12 @@ class Publish extends Command
                 }
                 $progress->register([ProjectPublishProgressRenderer::CREATING_TAG => 'Creating release tag']);
                 $progress->start(ProjectPublishProgressRenderer::CREATING_TAG);
-                $tag = (new CreateProjectTagAction())($module->location->machineName, $state->branch, $state->version, $repository);
+                $tag = ($this->tagCreator ?? new CreateProjectTagAction($this->repositoryUrls))($module->location->machineName, $state->branch, $state->version, $this->sourceStatusFromState($state));
                 $progress->complete(ProjectPublishProgressRenderer::CREATING_TAG);
                 $output->writeln('Tag ' . $tag->tag . ($tag->created ? ' published.' : ' already exists.'));
-                $repository = (new InspectProjectRepositoryAction())($module->location->machineName);
-                $state = new ProjectPublishState(
-                    true,
-                    true,
-                    true,
-                    $state->branch,
-                    $state->version,
-                    $repository->branchSha($state->branch->name),
-                    $repository->tagSha($state->version->value),
-                    true,
-                    true,
-                    $state->releaseExists
-                );
+                $repository = $this->inspectRepositoryWithRetry($module->location->machineName);
+                $sourceStatus = ($this->sourceInspector ?? new InspectProjectSourceAction($this->repositoryUrls))($module, $state->branch, $state->version, $repository);
+                $state = $this->buildState($repository, $sourceStatus, $state->branch, $state->version, $state->releaseExists);
                 return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
             }
             if ($plan->nextStep === ProjectPublishStep::CREATE_RELEASE) {
@@ -365,7 +396,7 @@ class Publish extends Command
                 }
                 $progress->register([ProjectPublishProgressRenderer::PREPARING_RELEASE => 'Preparing Drupal.org release']);
                 $progress->start(ProjectPublishProgressRenderer::PREPARING_RELEASE);
-                $found = (new DrupalOrgReleaseCreationHandoff($this->client))->run(
+                $found = ($this->releaseHandoff ?? new DrupalOrgReleaseCreationHandoff($this->client))->run(
                     $input,
                     $output,
                     $this->stdErr,
@@ -379,44 +410,38 @@ class Publish extends Command
                     return self::SUCCESS;
                 }
                 $state = new ProjectPublishState(
-                    true,
-                    true,
-                    true,
+                    $state->repositoryReachable,
                     $state->branch,
                     $state->version,
-                    $state->remoteBranchSha,
-                    $state->remoteTagSha,
+                    $state->localSourceCommitSha,
+                    $state->localTreeSha,
+                    $state->branchExists,
+                    $state->branchTreeSha,
+                    $state->branchMatchesSource,
+                    $state->tagExists,
+                    $state->tagTreeSha,
+                    $state->tagMatchesSource,
                     true,
-                    true,
-                    true
+                    false,
+                    $state->repositoryFailure,
                 );
                 return $this->runPublication($input, $output, $progress, $module, $project, $state, $repository);
             }
             if ($plan->nextStep === ProjectPublishStep::VERIFY_COMPOSER) {
                 $progress->register([ProjectPublishProgressRenderer::VERIFYING_COMPOSER => 'Verifying Composer package']);
                 $progress->start(ProjectPublishProgressRenderer::VERIFYING_COMPOSER);
-                $composer = (new VerifyComposerPackageAction())($module->location->machineName, $state->version);
+                $composer = ($this->composerVerifier ?? new VerifyComposerPackageAction())($module->location->machineName, $state->version);
                 $progress->complete(ProjectPublishProgressRenderer::VERIFYING_COMPOSER);
-                if (!$composer->available) {
+                if ($composer->status === ComposerPackageResult::COMPOSER_UNAVAILABLE || $composer->status === ComposerPackageResult::NETWORK_OR_REPOSITORY_FAILURE) {
+                    throw new \RuntimeException('Could not verify Composer metadata: ' . $composer->status . '.');
+                }
+                if (!$composer->available()) {
                     $output->writeln('Composer metadata is still propagating. Run project:publish again to verify.');
                     return self::SUCCESS;
                 }
-                $state = new ProjectPublishState(
-                    true,
-                    true,
-                    true,
-                    $state->branch,
-                    $state->version,
-                    $state->remoteBranchSha,
-                    $state->remoteTagSha,
-                    true,
-                    true,
-                    true,
-                    null,
-                    true
-                );
+                $state = $this->withComposerVisible($state);
             }
-            $this->writeComplete($output, $module->location->machineName, $state->version);
+            $this->writeComplete($output, $module->location->machineName, $state->branch, $state->version);
             return self::SUCCESS;
         } catch (\RuntimeException $exception) {
             $progress->failActive();
@@ -425,18 +450,58 @@ class Publish extends Command
         }
     }
 
+    private function sourceStatusFromState(ProjectPublishState $state): ProjectSourceStatusResult
+    {
+        return new ProjectSourceStatusResult(
+            $state->localSourceCommitSha ?? '',
+            $state->localTreeSha ?? '',
+            $state->branchExists,
+            $state->branchTreeSha,
+            $state->branchMatchesSource,
+            $state->tagExists,
+            $state->tagTreeSha,
+            $state->tagMatchesSource,
+            $state->filesAdded,
+            $state->filesModified,
+            $state->filesDeleted,
+        );
+    }
+
+    private function withComposerVisible(ProjectPublishState $state): ProjectPublishState
+    {
+        return new ProjectPublishState(
+            $state->repositoryReachable,
+            $state->branch,
+            $state->version,
+            $state->localSourceCommitSha,
+            $state->localTreeSha,
+            $state->branchExists,
+            $state->branchTreeSha,
+            $state->branchMatchesSource,
+            $state->tagExists,
+            $state->tagTreeSha,
+            $state->tagMatchesSource,
+            $state->releaseExists,
+            true,
+            $state->repositoryFailure,
+            $state->filesAdded,
+            $state->filesModified,
+            $state->filesDeleted,
+        );
+    }
+
     private function writePublicationState(OutputInterface $output, ProjectPublishState $state, ProjectPublishPlan $plan): void
     {
         $output->writeln('Drupal.org project ............... ✓');
         $output->writeln('Repository available ............. ' . ($state->repositoryReachable ? '✓' : '□'));
-        $output->writeln('Release branch ' . $state->branch?->name . ' ............... ' . ($state->sourcePublished ? '✓' : '□'));
-        $output->writeln('Tag ' . $state->version?->value . ' ........................ ' . ($state->tagExists ? '✓' : '□'));
+        $output->writeln('Release branch ' . $state->branch?->name . ' ............... ' . ($state->branchMatchesSource ? '✓' : '□'));
+        $output->writeln('Tag ' . $state->version?->value . ' ........................ ' . ($state->tagMatchesSource ? '✓' : '□'));
         $output->writeln('Drupal.org release ............... ' . ($state->releaseExists ? '✓' : '□'));
         $output->writeln('Composer package ................. ' . ($state->composerPackageVisible ? '✓' : '□'));
         $output->writeln('Resuming from: ' . $plan->nextStep->value);
     }
 
-    private function writePublicationDryRun(OutputInterface $output, ProjectPublishState $state): void
+    private function writePublicationDryRun(OutputInterface $output, ModuleContext $module, ?\mglaman\DrupalOrg\Entity\Project $project, ProjectPublishState $state): void
     {
         $plan = ProjectPublishPlan::fromState($state);
         $output->writeln('<fg=cyan;options=bold>DRY RUN</>');
@@ -445,6 +510,7 @@ class Publish extends Command
         $output->writeln('<comment>Plan</comment>');
         $steps = match ($plan->nextStep) {
             ProjectPublishStep::WAIT_FOR_REPOSITORY => ['Wait for Drupal.org Git repository availability.'],
+            ProjectPublishStep::TAG_CONFLICT => ['Stop: the existing release tag points to different source content.'],
             ProjectPublishStep::PUBLISH_SOURCE => ['Publish module source to ' . $state->branch?->name, 'Create tag ' . $state->version?->value, 'Open Drupal.org release form', 'Verify Drupal.org release', 'Verify Composer package'],
             ProjectPublishStep::CREATE_TAG => ['Create tag ' . $state->version?->value, 'Open Drupal.org release form', 'Verify Drupal.org release', 'Verify Composer package'],
             ProjectPublishStep::CREATE_RELEASE => ['Open Drupal.org release form', 'Verify Drupal.org release', 'Verify Composer package'],
@@ -457,11 +523,11 @@ class Publish extends Command
         $output->writeln('No changes were made.');
     }
 
-    private function writeComplete(OutputInterface $output, string $machineName, ProjectReleaseVersion $version): void
+    private function writeComplete(OutputInterface $output, string $machineName, ProjectReleaseBranch $branch, ProjectReleaseVersion $version): void
     {
         $output->writeln('✓ Module validated');
         $output->writeln('✓ Drupal.org project exists');
-        $output->writeln('✓ Source published to ' . $version->suggestedBranch()->name);
+        $output->writeln('✓ Source published to ' . $branch->name);
         $output->writeln('✓ Tag ' . $version->value . ' published');
         $output->writeln('✓ Drupal.org release ' . $version->value . ' available');
         $output->writeln('✓ Composer package available');
