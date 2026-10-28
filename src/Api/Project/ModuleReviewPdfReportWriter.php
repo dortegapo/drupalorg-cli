@@ -61,7 +61,6 @@ final class ModuleReviewPdfReportWriter
         $html .= '<p class="subtitle">' . $machineName . '</p>';
         $html .= '<p class="notice">AI-assisted, advisory report</p>';
         $html .= $this->moduleSection($moduleInfo);
-        $html .= $this->coreSection($analysis);
         $html .= $this->assessmentSection($analysis);
 
         $review = is_array($analysis['review'] ?? null) ? $analysis['review'] : null;
@@ -96,24 +95,6 @@ final class ModuleReviewPdfReportWriter
             . $this->definition('Human-readable name', $moduleInfo['name'])
             . $this->definition('Type', $moduleInfo['type'])
             . $this->definition('Core version requirement', $moduleInfo['coreVersionRequirement'])
-            . '</dl></section>';
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
-     */
-    private function coreSection(array $analysis): string
-    {
-        $core = is_array($analysis['core'] ?? null) ? $analysis['core'] : [];
-        $version = is_string($core['runtimeVersion'] ?? null) ? $core['runtimeVersion'] : null;
-        $major = is_int($core['targetMajor'] ?? null) ? $core['targetMajor'] : null;
-        if ($version === null || $major === null) {
-            return '<section><h2>Target Drupal core</h2><p>Unknown</p></section>';
-        }
-
-        return '<section><h2>Target Drupal core</h2><dl>'
-            . $this->definition('Runtime', 'Drupal ' . $version)
-            . $this->definition('Target major', 'Drupal ' . $major)
             . '</dl></section>';
     }
 

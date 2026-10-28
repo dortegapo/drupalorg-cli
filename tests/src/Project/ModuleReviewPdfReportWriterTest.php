@@ -295,8 +295,9 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
 
         $html = $this->renderHtml($analysis);
 
-        self::assertStringContainsString('Runtime</dt><dd>Drupal 11.4.8', $html);
-        self::assertStringContainsString('Target major</dt><dd>Drupal 11', $html);
+        self::assertStringNotContainsString('Target Drupal core', $html);
+        self::assertStringNotContainsString('Runtime</dt><dd>Drupal 11.4.8', $html);
+        self::assertStringNotContainsString('Target major</dt><dd>Drupal 11', $html);
         self::assertStringContainsString('Outdated for Drupal 11', $html);
         self::assertStringContainsString('status-badge warning">Outdated for Drupal 11</span>', $html);
         self::assertStringContainsString('Latest verified core support:</strong> Drupal 10', $html);
