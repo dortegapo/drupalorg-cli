@@ -69,23 +69,15 @@ final class ModuleReviewPdfReportWriter
             $html .= $this->reviewSection($review);
         }
 
-        $html .= $this->discoverySection($analysis, $moduleInfo);
+        $html .= $this->discoverySection($analysis);
 
         $comparison = is_array($analysis['comparison'] ?? null) ? $analysis['comparison'] : null;
         if ($comparison !== null) {
             $html .= $this->comparisonSection($analysis, $comparison);
         }
 
-        $assessment = is_array($analysis['assessment'] ?? null) ? $analysis['assessment'] : null;
-        if ($assessment !== null) {
-            $html .= $this->assessmentSignalsSection($assessment);
-        }
-
         $html .= $this->sourceSection($analysis);
-        $html .= $this->deterministicChecksSection();
         $html .= $this->limitationsSection($analysis, $review);
-        $html .= $this->aiSection($analysis);
-        $html .= $this->methodologySection();
         $html .= '</body></html>';
 
         return $html;
@@ -254,9 +246,6 @@ final class ModuleReviewPdfReportWriter
     {
         $html = '<section><h2>Module review</h2>';
         $html .= '<h3>Module purpose</h3><p>' . $this->escape($this->stringValue($review['purpose'] ?? 'Unavailable')) . '</p>';
-        $html .= $this->textListSection('Capabilities', $review['capabilities'] ?? []);
-        $html .= $this->textListSection('Drupal concepts', $review['drupal_concepts'] ?? []);
-        $html .= $this->textListSection('Integrations', $review['integrations'] ?? []);
         $html .= $this->reusabilitySection($review['reusability'] ?? null);
         $html .= $this->contribReadinessSection($review['contrib_readiness'] ?? null);
         $html .= '</section>';
@@ -301,71 +290,19 @@ final class ModuleReviewPdfReportWriter
 
     /**
      * @param array<string, mixed> $analysis
-     * @param array{machineName: string, name: string, type: string, coreVersionRequirement: string} $moduleInfo
      */
-    private function discoverySection(array $analysis, array $moduleInfo): string
+    private function discoverySection(array $analysis): string
     {
-        $review = is_array($analysis['review'] ?? null) ? $analysis['review'] : [];
-        $html = '<section><h2>Drupal.org discovery</h2><h3>Search strategy</h3>'
-            . '<h4>Module-name search</h4>'
-            . '<p>The human-readable module name is searched as an additional discovery signal. '
-            . 'A matching project name does not imply that two modules are duplicates. It only helps ensure '
-            . 'potentially relevant projects are available to semantic comparison.</p>'
-            . '<p><strong>Human-readable name:</strong> ' . $this->escape($moduleInfo['name']) . '</p>'
-            . '<h4>Core capability terms</h4>'
-            . '<p>These terms describe the reusable problem or capability implemented by the module, independently of the current project or business domain.</p>'
-            . "<p>They receive higher weight during candidate discovery because they are expected to represent the module's core reusable purpose.</p>"
-            . $this->termList('', $review['primary_search_terms'] ?? [], true)
-            . '<h4>Functional search queries</h4>'
-            . '<p>These short multi-word queries describe the reusable interaction or problem more specifically than individual keywords.</p>'
-            . '<p>They improve recall for relevant projects whose names may not contain the same single-word terms as the local module.</p>'
-            . $this->queryList($review['functional_search_queries'] ?? [])
-            . '<h4>Domain-specific terms</h4>'
-            . '<p>These terms describe the domain in which the module currently appears to be used.</p>'
-            . '<p>They are searched with lower ranking weight because this domain may be specific to the current project rather than part of the reusable module purpose.</p>'
-            . '<p>A domain-specific term is not considered less relevant functionality. It is simply treated as weaker evidence when discovering reusable Drupal.org projects.</p>'
-            . $this->termList('', $review['secondary_search_terms'] ?? [], true)
-            . '<p>Drupal.org is searched independently for every term.<br>'
-            . 'Module-name, core capability, and functional-query searches have higher retrieval weight.<br>'
-            . 'Domain-specific searches have lower retrieval weight.<br>'
-            . 'The results from all searches are then deduplicated and combined into a single candidate list.<br>'
-            . 'Search matches and retrieval ranking are discovery signals only. Neither a module-name match, '
-            . 'a functional-query match, nor an RRF position determines duplicate status.</p>';
         $searches = is_array($analysis['searches'] ?? null) ? $analysis['searches'] : [];
         $candidates = is_array($analysis['candidates'] ?? null) ? $analysis['candidates'] : [];
-        $html .= '<p><strong>Searches:</strong> ' . count($searches)
-            . '<br>' . $this->discoveryCount($analysis, 'rawResultOccurrences', 0)
-            . ' result occurrences returned by Drupal.org.'
-            . '<br>' . $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates))
-            . ' unique candidate projects discovered.'
-            . '<br>' . $this->discoveryCount($analysis, 'multiQueryCandidates', 0)
-            . ' candidates were found by more than one search query.'
-            . '<br><strong>Top ' . min(10, $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates)))
-            . ' shown below.</strong> '
-            . $this->comparisonAvailabilityWording($analysis, $candidates) . '</p>';
+        $uniqueCandidates = $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates));
+        $comparedCandidates = $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates));
 
-        if ($candidates !== []) {
-            $html .= '<h3>Candidate discovery ranking</h3><p class="small">'
-                . 'Results from the individual Drupal.org searches are combined using Weighted Reciprocal Rank Fusion (RRF). '
-                . 'Projects that appear prominently across one or more searches are ranked higher. '
-                . 'Matches from core capability searches contribute more weight than matches from domain-specific searches.</p>'
-                . '<p class="small">This ranking is used only to organize candidates before semantic comparison. '
-                . 'It is not a duplicate probability, a contribution-readiness score, a quality score, or a percentage of similarity. '
-                . 'The final functional-overlap assessment is performed separately during the semantic comparison stage.</p>'
-                . '<table><thead><tr><th>Rank</th><th>Project</th><th>Title</th><th>Matched queries</th></tr></thead><tbody>';
-            foreach (array_slice($candidates, 0, 10) as $index => $candidate) {
-                if (!is_array($candidate)) {
-                    continue;
-                }
-                $html .= '<tr><td>' . ($index + 1) . '</td>'
-                    . '<td>' . $this->escape($this->stringValue($candidate['machineName'] ?? 'Unavailable')) . '</td>'
-                    . '<td>' . $this->escape($this->stringValue($candidate['title'] ?? 'Unavailable')) . '</td>'
-                    . '<td>' . $this->matchedQueries($candidate, $searches) . '</td></tr>';
-            }
-            $html .= '</tbody></table>';
-        }
-
-        return $html . '</section>';
+        return '<section><h2>Drupal.org discovery</h2><p>'
+            . '<strong>Searches performed:</strong> ' . count($searches)
+            . '<br><strong>Candidate projects found:</strong> ' . $uniqueCandidates
+            . '<br><strong>Projects compared:</strong> ' . $comparedCandidates
+            . '</p></section>';
     }
 
     /**
@@ -383,22 +320,6 @@ final class ModuleReviewPdfReportWriter
 
     /**
      * @param array<string, mixed> $analysis
-     * @param list<array<string, mixed>> $candidates
-     */
-    private function comparisonAvailabilityWording(array $analysis, array $candidates): string
-    {
-        $uniqueCandidates = $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates));
-        $candidatesSent = $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates));
-        if ($uniqueCandidates > $candidatesSent) {
-            return 'The top ' . $candidatesSent
-                . ' candidates after Weighted Reciprocal Rank Fusion were available to the semantic comparison stage.';
-        }
-
-        return 'All discovered candidates were available to the semantic comparison stage.';
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
      * @param array<string, mixed> $comparison
      */
     private function comparisonSection(array $analysis, array $comparison): string
@@ -408,9 +329,8 @@ final class ModuleReviewPdfReportWriter
             . '<br><strong>Confidence:</strong> ' . $this->formatConfidence($comparison['confidence'] ?? null)
             . '</p><p>' . $this->escape($this->stringValue($comparison['summary'] ?? 'Unavailable')) . '</p>'
             . '<aside class="evidence-scope"><strong>Evidence scope</strong><br>'
-            . 'Candidate comparison is based on Drupal.org project metadata supplied to the semantic comparison stage. '
-            . 'Remote candidate source code is not downloaded or compared.<br><br>'
-            . 'A missing capability in the public description is therefore treated as unverified, not as a confirmed difference.'
+            . 'Comparison uses public Drupal.org metadata; candidate source code was not downloaded. '
+            . 'Missing metadata is treated as unverified.'
             . '</aside>';
         $candidateMap = $this->candidateMap($analysis['candidates'] ?? []);
         $comparisonCandidates = is_array($comparison['candidates'] ?? null) ? $comparison['candidates'] : [];
@@ -451,28 +371,6 @@ final class ModuleReviewPdfReportWriter
     }
 
     /**
-     * @param array<string, mixed> $assessment
-     */
-    private function assessmentSignalsSection(array $assessment): string
-    {
-        $signals = is_array($assessment['signals'] ?? null) ? $assessment['signals'] : [];
-        if ($signals === []) {
-            return '';
-        }
-
-        $html = '<section><h2>Assessment signals</h2><p>The following validated review signals were combined deterministically to produce the advisory contribution assessment.</p><ul>';
-        foreach ($signals as $signal) {
-            if (!is_array($signal)) {
-                continue;
-            }
-            $html .= '<li>' . $this->escape($this->label($signal['code'] ?? 'unknown'))
-                . ' (' . $this->escape($this->signalSeverityLabel($signal['severity'] ?? 'unknown')) . ')</li>';
-        }
-
-        return $html . '</ul></section>';
-    }
-
-    /**
      * @param array<string, mixed> $analysis
      */
     private function sourceSection(array $analysis): string
@@ -488,41 +386,17 @@ final class ModuleReviewPdfReportWriter
         $selectedFiles = is_int($coverage['selectedFiles'] ?? null)
             ? $coverage['selectedFiles']
             : (is_int($source['files'] ?? null) ? $source['files'] : 0);
-        $eligibleBytes = is_int($coverage['eligibleBytes'] ?? null)
-            ? $coverage['eligibleBytes']
-            : (is_int($source['bytes'] ?? null) ? $source['bytes'] : 0);
-        $selectedBytes = is_int($coverage['selectedBytes'] ?? null)
-            ? $coverage['selectedBytes']
-            : (is_int($source['bytes'] ?? null) ? $source['bytes'] : 0);
-        $html = '<section><h2>Source coverage</h2><p>'
+        $html = '<section><h2>Analysis scope</h2><p>'
             . '<strong>Source coverage:</strong> ' . $mode
-            . '<br><strong>AI source mode:</strong> ' . ($mode === 'Full' ? 'Full module' : 'Relevance-selected subset')
-            . '<br><strong>Eligible files:</strong> ' . $eligibleFiles
-            . '<br><strong>Files analyzed by AI #1:</strong> ' . $selectedFiles
-            . '<br><strong>Eligible source:</strong> ' . $this->formatBytes($eligibleBytes)
-            . '<br><strong>Source sent to AI #1:</strong> ' . $this->formatBytes($selectedBytes)
-            . '<br><strong>Sanitized bytes sent to AI #1:</strong> ' . $selectedBytes
+            . '<br><strong>Files analyzed:</strong> ' . $selectedFiles
+            . ($mode === 'Partial' ? ' of ' . $eligibleFiles : '')
             . '<br><strong>Skipped files:</strong> ' . count($skipped)
             . '<br><strong>Redactions:</strong> ' . count($redactions) . '</p>';
         if ($mode === 'Partial') {
-            $budget = is_int($coverage['requestedBudgetBytes'] ?? null)
-                ? $coverage['requestedBudgetBytes']
-                : null;
             $omittedFiles = is_int($coverage['omittedFiles'] ?? null)
                 ? $coverage['omittedFiles']
                 : max(0, $eligibleFiles - $selectedFiles);
-            $html .= '<p><strong>Selected budget:</strong> ' . ($budget === null ? 'Unavailable' : $this->formatBytes($budget))
-                . '<br><strong>Files omitted due to source budget:</strong> ' . $omittedFiles . '</p>';
-            $breakdown = is_array($coverage['omittedBreakdown'] ?? null) ? $coverage['omittedBreakdown'] : [];
-            if ($breakdown !== []) {
-                $html .= '<h3>Omitted due to source budget</h3><ul>';
-                foreach ($breakdown as $category => $count) {
-                    if (is_int($count)) {
-                        $html .= '<li>' . $this->escape($this->sourceCategoryLabel((string) $category)) . ': ' . $count . '</li>';
-                    }
-                }
-                $html .= '</ul>';
-            }
+            $html .= '<p><strong>Files omitted due to source budget:</strong> ' . $omittedFiles . '</p>';
         }
         if ($skipped !== []) {
             $html .= '<h3>Skipped files</h3><ul>';
@@ -549,16 +423,6 @@ final class ModuleReviewPdfReportWriter
         return $html . '</section>';
     }
 
-    private function deterministicChecksSection(): string
-    {
-        return '<section><h2>Deterministic code-quality checks</h2><ul>'
-            . '<li>Drupal coding standards: Not verified</li>'
-            . '<li>Static analysis: Not verified</li>'
-            . '<li>Automated test suite: Not verified</li>'
-            . '<li>Automated security analysis: Not verified</li>'
-            . '</ul></section>';
-    }
-
     /**
      * @param array<string, mixed> $analysis
      * @param array<string, mixed>|null $review
@@ -583,123 +447,25 @@ final class ModuleReviewPdfReportWriter
 
         $coverage = is_array($analysis['source']['coverage'] ?? null) ? $analysis['source']['coverage'] : [];
         $partial = ($coverage['mode'] ?? 'full') === 'selected';
-        $html = '<section><h2>Analysis limitations</h2>'
-            . '<p>The review is based only on the selected source that was collected. '
-            . 'Skipped or unavailable files may limit the conclusions.</p>';
         if ($partial) {
-            $html .= '<p>The module exceeded the selected AI source budget. The review is based on a deterministically selected subset prioritizing module definition, runtime code, configuration, and functionally relevant files. Omitted files may contain additional evidence.</p>';
+            $limitations[] = 'Only a selected subset of the source was reviewed; omitted files may contain additional evidence.';
         }
-        if ($limitations !== []) {
-            $html .= '<ul>';
-            foreach (array_unique($limitations) as $limitation) {
-                $html .= '<li>' . $this->escape($limitation) . '</li>';
-            }
-            $html .= '</ul>';
+        $limitations = array_values(array_unique($limitations));
+        if ($limitations === []) {
+            return '';
         }
 
-        return $html . '</section>';
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
-     */
-    private function aiSection(array $analysis): string
-    {
-        $ai = is_array($analysis['ai'] ?? null) ? $analysis['ai'] : [];
-        $html = '<section><h2>AI execution information</h2><table><thead><tr>'
-            . '<th>Phase</th><th>Provider</th><th>Model</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th>'
-            . '</tr></thead><tbody>';
-        foreach (['review' => 'Module analysis', 'comparison' => 'Candidate comparison'] as $key => $label) {
-            $metadata = is_array($ai[$key] ?? null) ? $ai[$key] : [];
-            $usage = is_array($metadata['tokenUsage'] ?? null) ? $metadata['tokenUsage'] : [];
-            $html .= '<tr><td>' . $label . '</td>'
-                . '<td>' . $this->escape($this->stringValue($metadata['providerId'] ?? 'Unavailable')) . '</td>'
-                . '<td>' . $this->escape($this->stringValue($metadata['modelId'] ?? 'Unavailable')) . '</td>'
-                . '<td>' . $this->formatToken($usage['input'] ?? null) . '</td>'
-                . '<td>' . $this->formatToken($usage['output'] ?? null) . '</td>'
-                . '<td>' . $this->formatToken($usage['total'] ?? null) . '</td></tr>';
+        $html = '<section><h2>Analysis limitations</h2><ul>';
+        foreach ($limitations as $limitation) {
+            $html .= '<li>' . $this->escape($limitation) . '</li>';
         }
 
-        return $html . '</tbody></table></section>';
-    }
-
-    private function methodologySection(): string
-    {
-        return '<section><h2>Methodology</h2><ol>'
-            . '<li>Local source collection.</li>'
-            . '<li>Local best-effort sensitive-data sanitization.</li>'
-            . '<li>AI-assisted module characterization and retrieval-query generation.</li>'
-            . '<li>Direct Drupal.org searches using module-name, core-capability, functional-query, and domain-specific signals.</li>'
-            . '<li>Weighted Reciprocal Rank Fusion for candidate discovery ordering.</li>'
-            . '<li>AI-assisted semantic comparison of discovered candidates.</li>'
-            . '<li>Deterministic mapping of validated review signals into the advisory contribution assessment.</li>'
-            . '<li>Deterministic Drupal core compatibility enrichment for relevant candidates.</li>'
-            . '<li>Local PDF rendering.</li>'
-            . '</ol><p>AI does not invent the Drupal.org candidate catalog. '
-            . 'RRF does not determine duplicate status. Core compatibility is evaluated separately after the functional contribution '
-            . 'assessment and does not change the semantic duplicate verdict. '
-            . 'The final recommendation is advisory.</p></section>';
+        return $html . '</ul></section>';
     }
 
     private function definition(string $label, string $value): string
     {
         return '<dt>' . $this->escape($label) . '</dt><dd>' . $this->escape($value) . '</dd>';
-    }
-
-    private function textListSection(string $title, mixed $items): string
-    {
-        if (!is_array($items) || $items === []) {
-            return '';
-        }
-
-        $html = '<h3>' . $this->escape($title) . '</h3><ul>';
-        foreach ($items as $item) {
-            if (is_string($item)) {
-                $html .= '<li>' . $this->escape($item) . '</li>';
-            }
-        }
-
-        return $html . '</ul>';
-    }
-
-    private function termList(string $title, mixed $items, bool $includeReasons = false): string
-    {
-        if (!is_array($items) || $items === []) {
-            return '';
-        }
-
-        $html = $title === '' ? '<ul>' : '<h3>' . $this->escape($title) . '</h3><ul>';
-        foreach ($items as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-            $term = $this->stringValue($item['term'] ?? 'Unavailable');
-            $reason = $this->stringValue($item['reason'] ?? 'Unavailable');
-            $html .= '<li><strong>' . $this->escape($term) . '</strong>'
-                . ($includeReasons ? '<br>' . $this->escape($reason) : '') . '</li>';
-        }
-
-        return $html . '</ul>';
-    }
-
-    private function queryList(mixed $items): string
-    {
-        if (!is_array($items) || $items === []) {
-            return '';
-        }
-
-        $html = '<ul>';
-        foreach ($items as $item) {
-            if (!is_array($item)) {
-                continue;
-            }
-            $query = $this->stringValue($item['query'] ?? 'Unavailable');
-            $reason = $this->stringValue($item['reason'] ?? 'Unavailable');
-            $html .= '<li><strong>' . $this->escape($query) . '</strong><br>'
-                . $this->escape($reason) . '</li>';
-        }
-
-        return $html . '</ul>';
     }
 
     private function findingsList(mixed $findings, string $heading = 'Findings', string $semanticType = 'neutral'): string
@@ -751,62 +517,6 @@ final class ModuleReviewPdfReportWriter
             : 'Unavailable';
     }
 
-    private function formatBytes(int $bytes): string
-    {
-        $value = number_format($bytes / 1024, 1, '.', '');
-
-        return rtrim(rtrim($value, '0'), '.') . ' KiB';
-    }
-
-    private function sourceCategoryLabel(string $category): string
-    {
-        return match ($category) {
-            'module_definition' => 'Module definition/configuration',
-            'configuration' => 'Configuration/schema/install',
-            'runtime' => 'Production/runtime source',
-            'frontend' => 'Frontend behavior',
-            'documentation' => 'Documentation',
-            'tests' => 'Tests',
-            'styles' => 'Styles',
-            default => 'Other',
-        };
-    }
-
-    /**
-     * @param array<string, mixed> $candidate
-     */
-    private function matchedQueries(array $candidate, mixed $searches): string
-    {
-        $typeByTerm = [];
-        if (is_array($searches)) {
-            foreach ($searches as $search) {
-                if (!is_array($search) || !is_string($search['term'] ?? null)) {
-                    continue;
-                }
-                $term = preg_replace('/\s+/u', ' ', trim($search['term'])) ?? trim($search['term']);
-                $type = is_string($search['type'] ?? null) ? $search['type'] : 'core';
-                $typeByTerm[strtolower($term)] = $type;
-            }
-        }
-        $matches = [];
-        foreach (['primaryMatches' => 'core', 'secondaryMatches' => 'domain'] as $key => $fallback) {
-            $values = $candidate[$key] ?? [];
-            if (!is_array($values)) {
-                continue;
-            }
-            foreach ($values as $value) {
-                if (is_array($value) && is_string($value['term'] ?? null)) {
-                    $term = $value['term'];
-                    $type = $typeByTerm[strtolower($term)] ?? $fallback;
-                    $label = $type === 'name' ? 'module name' : $type;
-                    $matches[] = $this->escape($term) . ' (' . $label . ')';
-                }
-            }
-        }
-
-        return $matches === [] ? 'Unavailable' : implode('<br>', $matches);
-    }
-
     /**
      * @param array<string, mixed> $candidate
      * @param array<string, array<string, mixed>> $candidateMap
@@ -821,24 +531,25 @@ final class ModuleReviewPdfReportWriter
 
         $assessment = is_string($candidate['assessment'] ?? null) ? $candidate['assessment'] : 'unknown';
 
-        return '<article class="comparison-card"><h4>' . $this->escape($title) . ' '
+        $html = '<article class="comparison-card"><h4>' . $this->escape($title) . ' '
             . $this->statusBadge($this->label($assessment), $this->statusSemanticType($assessment)) . '</h4>'
-            . '<p><strong>Project:</strong> ' . $this->escape($machineName) . '<br>'
-            . '<strong>Drupal.org:</strong><br><span class="url">' . $this->escape($url) . '</span><br>'
-            . '<strong>Assessment:</strong> ' . $this->statusBadge($this->label($assessment), $this->statusSemanticType($assessment)) . '</p>'
-            . '<h4>Overlap</h4>' . $this->listBlock($candidate['overlap'] ?? [])
-            . '<h4>Confirmed differences</h4>' . $this->listBlock(
-                $candidate['confirmed_differences'] ?? [],
-                'None established from the supplied candidate metadata.',
-            )
-            . '<h4>Unverified details</h4>' . $this->listBlock(
-                $candidate['unverified_details'] ?? [],
-                'None.',
-                'unverified',
-            )
-            . '<h4>Reason</h4><p>' . $this->escape($this->stringValue($candidate['reason'] ?? 'Unavailable')) . '</p>'
-            . $this->compatibilityBlock($candidate, $analysis)
-            . '</article>';
+            . '<p><strong>Project:</strong> ' . $this->escape($machineName)
+            . '<br><span class="url">' . $this->escape($url) . '</span></p>';
+        if (is_array($candidate['overlap'] ?? null) && $candidate['overlap'] !== []) {
+            $html .= '<h4>Overlap</h4>' . $this->listBlock($candidate['overlap']);
+        }
+        if (is_array($candidate['confirmed_differences'] ?? null) && $candidate['confirmed_differences'] !== []) {
+            $html .= '<h4>Confirmed differences</h4>' . $this->listBlock($candidate['confirmed_differences']);
+        }
+        if (is_array($candidate['unverified_details'] ?? null) && $candidate['unverified_details'] !== []) {
+            $html .= '<h4>Unverified details</h4>' . $this->listBlock($candidate['unverified_details'], 'Unavailable', 'unverified');
+        }
+        $reason = $this->stringValue($candidate['reason'] ?? '');
+        if ($reason !== '') {
+            $html .= '<p><strong>Reason:</strong> ' . $this->escape($reason) . '</p>';
+        }
+
+        return $html . $this->compatibilityBlock($candidate, $analysis) . '</article>';
     }
 
     /**
@@ -876,11 +587,7 @@ final class ModuleReviewPdfReportWriter
                 $html .= '<p><strong>Latest verified core support:</strong> Drupal '
                     . max($supported) . '</p>';
             }
-            $html .= '<h4>Contribution consideration</h4><p>This project appears to solve substantially the same reusable problem, '
-                . 'but no compatible release for the target Drupal core version was verified. Before creating a new Drupal.org project, '
-                . 'consider whether contributing target core compatibility to the existing project is viable.</p>';
-        } elseif ($status === 'compatible') {
-            $html .= '<p>A functionally similar project with verified target-core compatibility exists.</p>';
+            $html .= '<p>Consider contributing core compatibility before creating a new project.</p>';
         }
 
         return $html;
@@ -900,18 +607,6 @@ final class ModuleReviewPdfReportWriter
         }
 
         return $html . '</ul>';
-    }
-
-    private function signalSeverityLabel(mixed $value): string
-    {
-        if ($value === 'blocking') {
-            return 'Strong negative signal';
-        }
-        if ($value === 'warning') {
-            return 'Advisory signal';
-        }
-
-        return $this->label($value);
     }
 
     private function statusBadge(string $label, string $semanticType): string
@@ -936,11 +631,6 @@ final class ModuleReviewPdfReportWriter
             'outdated', 'requires_newer_core' => 'warning',
             default => 'neutral',
         };
-    }
-
-    private function formatToken(mixed $value): string
-    {
-        return is_int($value) ? $this->escape((string) $value) : 'Unavailable';
     }
 
     private function integerValue(mixed $value): string

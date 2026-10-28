@@ -78,20 +78,21 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertNull($analysis['assessment']);
     }
 
-    public function testNullTokenUsageIsRenderedAsUnavailable(): void
+    public function testTechnicalExecutionSectionsAreOmitted(): void
     {
         $reflection = new \ReflectionMethod(ModuleReviewPdfReportWriter::class, 'buildHtml');
         $reflection->setAccessible(true);
         $html = $reflection->invoke(
             new ModuleReviewPdfReportWriter(),
-            self::analysisWithNullTokenUsage(),
+            self::analysisWithTechnicalMetadata(),
             self::moduleInfo(),
         );
 
         self::assertIsString($html);
-        $aiSection = substr($html, (int) strpos($html, 'AI execution information'));
-        self::assertStringContainsString('Unavailable', $aiSection);
-        self::assertStringNotContainsString('<td>0</td>', $aiSection);
+        self::assertStringNotContainsString('AI execution information', $html);
+        self::assertStringNotContainsString('Methodology', $html);
+        self::assertStringNotContainsString('Assessment signals', $html);
+        self::assertStringNotContainsString('Deterministic code-quality checks', $html);
     }
 
     public function testRendersReadableDiscoveryAndComparisonSections(): void
@@ -201,26 +202,13 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
 
         $html = $this->renderHtml($analysis);
 
-        self::assertStringContainsString('Search strategy', $html);
-        self::assertStringContainsString('Module-name search', $html);
-        self::assertStringContainsString('Core capability terms', $html);
-        self::assertStringContainsString('Functional search queries', $html);
         self::assertStringContainsString('profile management', $html);
-        self::assertStringContainsString('Domain-specific terms', $html);
-        self::assertStringContainsString('These terms describe the reusable problem or capability implemented by the module', $html);
-        self::assertStringContainsString('They are searched with lower ranking weight', $html);
-        self::assertStringContainsString('Candidate discovery ranking', $html);
-        self::assertStringContainsString('Weighted Reciprocal Rank Fusion (RRF)', $html);
-        self::assertStringContainsString('not a duplicate probability', $html);
-        self::assertStringContainsString('12 unique candidate projects discovered.', $html);
-        self::assertStringContainsString('Top 10 shown below.', $html);
-        self::assertStringContainsString('All discovered candidates were available to the semantic comparison stage.', $html);
-        self::assertStringContainsString('<th>Rank</th><th>Project</th><th>Title</th><th>Matched queries</th>', $html);
-        self::assertStringContainsString('profile (core)', $html);
-        self::assertStringContainsString('customer (domain)', $html);
-        self::assertStringContainsString('Project 10', $html);
-        self::assertStringNotContainsString('Project 11', $html);
-        self::assertStringNotContainsString('<th>Overlap</th>', $html);
+        self::assertStringContainsString('Candidate projects found:</strong> 12', $html);
+        self::assertStringContainsString('Projects compared:</strong> 12', $html);
+        self::assertStringNotContainsString('Search strategy', $html);
+        self::assertStringNotContainsString('Candidate discovery ranking', $html);
+        self::assertStringNotContainsString('Weighted Reciprocal Rank Fusion', $html);
+        self::assertStringNotContainsString('<th>Rank</th>', $html);
         self::assertStringContainsString('comparison-card', $html);
         self::assertStringContainsString('Likely Duplicate', $html);
         self::assertStringContainsString('Possible Overlap', $html);
@@ -238,14 +226,11 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Required changes before contribution', $html);
         self::assertStringContainsString('status-badge danger', $html);
         self::assertStringContainsString('Not Candidate Yet', $html);
-        self::assertStringContainsString('Strong negative signal', $html);
-        self::assertStringContainsString(
-            'The following validated review signals were combined deterministically to produce the advisory contribution assessment.',
-            $html
-        );
-        self::assertStringContainsString('Drupal coding standards: Not verified', $html);
-        self::assertStringContainsString('AI execution information', $html);
-        self::assertStringContainsString('Weighted Reciprocal Rank Fusion for candidate discovery ordering.', $html);
+        self::assertStringNotContainsString('Strong negative signal', $html);
+        self::assertStringNotContainsString('The following validated review signals were combined deterministically', $html);
+        self::assertStringNotContainsString('Drupal coding standards: Not verified', $html);
+        self::assertStringNotContainsString('AI execution information', $html);
+        self::assertStringNotContainsString('Methodology', $html);
         self::assertStringContainsString('font-size:11pt', $html);
         self::assertStringContainsString('font-size:10.5pt', $html);
         self::assertStringContainsString('font-size:9.5pt', $html);
@@ -276,14 +261,14 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         $html = $this->renderHtml($analysis);
 
         self::assertStringContainsString('Source coverage:</strong> Partial', $html);
-        self::assertStringContainsString('Eligible files:</strong> 20', $html);
-        self::assertStringContainsString('Files analyzed by AI #1:</strong> 8', $html);
-        self::assertStringContainsString('Selected budget:</strong> 128 KiB', $html);
+        self::assertStringContainsString('Files analyzed:</strong> 8 of 20', $html);
         self::assertStringContainsString('Files omitted due to source budget:</strong> 12', $html);
-        self::assertStringContainsString('Tests: 8', $html);
-        self::assertStringContainsString('Styles: 4', $html);
+        self::assertStringNotContainsString('Eligible files:', $html);
+        self::assertStringNotContainsString('Selected budget:', $html);
+        self::assertStringNotContainsString('Tests: 8', $html);
+        self::assertStringNotContainsString('Styles: 4', $html);
         self::assertStringContainsString(
-            'Omitted files may contain additional evidence.',
+            'omitted files may contain additional evidence.',
             $html,
         );
     }
@@ -301,17 +286,10 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
 
         $html = $this->renderHtml($analysis);
 
-        self::assertStringContainsString('200 result occurrences returned by Drupal.org.', $html);
-        self::assertStringContainsString('150 unique candidate projects discovered.', $html);
-        self::assertStringContainsString('23 candidates were found by more than one search query.', $html);
-        self::assertStringContainsString(
-            'The top 100 candidates after Weighted Reciprocal Rank Fusion were available to the semantic comparison stage.',
-            $html,
-        );
-        self::assertStringNotContainsString(
-            'All discovered candidates were available to the semantic comparison stage.',
-            $html,
-        );
+        self::assertStringContainsString('Candidate projects found:</strong> 150', $html);
+        self::assertStringContainsString('Projects compared:</strong> 100', $html);
+        self::assertStringNotContainsString('200 result occurrences returned by Drupal.org.', $html);
+        self::assertStringNotContainsString('multi-query', strtolower($html));
     }
 
     public function testRendersCoreCompatibilitySeparatelyFromFunctionalAssessment(): void
@@ -340,8 +318,8 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringContainsString('Outdated for Drupal 11', $html);
         self::assertStringContainsString('status-badge warning">Outdated for Drupal 11</span>', $html);
         self::assertStringContainsString('Latest verified core support:</strong> Drupal 10', $html);
-        self::assertStringContainsString('Contribution consideration', $html);
-        self::assertStringContainsString('final functional-overlap assessment is performed separately', $html);
+        self::assertStringContainsString('Consider contributing core compatibility before creating a new project.', $html);
+        self::assertStringNotContainsString('final functional-overlap assessment is performed separately', $html);
 
         $analysis['candidateCompatibility']['profiles']['status'] = 'compatible';
         $analysis['candidateCompatibility']['profiles']['supportedCoreMajors'] = [11];
@@ -461,7 +439,7 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
     /**
      * @return array<string, mixed>
      */
-    private static function analysisWithNullTokenUsage(): array
+    private static function analysisWithTechnicalMetadata(): array
     {
         $analysis = self::completeAnalysis();
         $analysis['ai']['review']['tokenUsage'] = [
