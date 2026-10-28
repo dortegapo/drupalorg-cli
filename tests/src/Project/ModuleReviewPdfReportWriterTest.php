@@ -203,8 +203,9 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         $html = $this->renderHtml($analysis);
 
         self::assertStringContainsString('profile management', $html);
-        self::assertStringContainsString('Candidate projects found:</strong> 12', $html);
-        self::assertStringContainsString('Projects compared:</strong> 12', $html);
+        self::assertStringNotContainsString('Drupal.org discovery', $html);
+        self::assertStringNotContainsString('Candidate projects found:', $html);
+        self::assertStringNotContainsString('Projects compared:', $html);
         self::assertStringNotContainsString('Search strategy', $html);
         self::assertStringNotContainsString('Candidate discovery ranking', $html);
         self::assertStringNotContainsString('Weighted Reciprocal Rank Fusion', $html);
@@ -271,25 +272,6 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
             'omitted files may contain additional evidence.',
             $html,
         );
-    }
-
-    public function testRendersDiscoveryPoolAndComparisonCountsSeparately(): void
-    {
-        $analysis = self::completeAnalysis();
-        $analysis['discovery'] = [
-            'searches' => 10,
-            'rawResultOccurrences' => 200,
-            'uniqueCandidatesDiscovered' => 150,
-            'multiQueryCandidates' => 23,
-            'candidatesSentToComparison' => 100,
-        ];
-
-        $html = $this->renderHtml($analysis);
-
-        self::assertStringContainsString('Candidate projects found:</strong> 150', $html);
-        self::assertStringContainsString('Projects compared:</strong> 100', $html);
-        self::assertStringNotContainsString('200 result occurrences returned by Drupal.org.', $html);
-        self::assertStringNotContainsString('multi-query', strtolower($html));
     }
 
     public function testRendersCoreCompatibilitySeparatelyFromFunctionalAssessment(): void

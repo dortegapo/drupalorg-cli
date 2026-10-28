@@ -69,8 +69,6 @@ final class ModuleReviewPdfReportWriter
             $html .= $this->reviewSection($review);
         }
 
-        $html .= $this->discoverySection($analysis);
-
         $comparison = is_array($analysis['comparison'] ?? null) ? $analysis['comparison'] : null;
         if ($comparison !== null) {
             $html .= $this->comparisonSection($analysis, $comparison);
@@ -286,36 +284,6 @@ final class ModuleReviewPdfReportWriter
         }
 
         return $html;
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
-     */
-    private function discoverySection(array $analysis): string
-    {
-        $searches = is_array($analysis['searches'] ?? null) ? $analysis['searches'] : [];
-        $candidates = is_array($analysis['candidates'] ?? null) ? $analysis['candidates'] : [];
-        $uniqueCandidates = $this->discoveryCount($analysis, 'uniqueCandidatesDiscovered', count($candidates));
-        $comparedCandidates = $this->discoveryCount($analysis, 'candidatesSentToComparison', count($candidates));
-
-        return '<section><h2>Drupal.org discovery</h2><p>'
-            . '<strong>Searches performed:</strong> ' . count($searches)
-            . '<br><strong>Candidate projects found:</strong> ' . $uniqueCandidates
-            . '<br><strong>Projects compared:</strong> ' . $comparedCandidates
-            . '</p></section>';
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
-     */
-    private function discoveryCount(array $analysis, string $key, int $fallback): int
-    {
-        $discovery = $analysis['discovery'] ?? null;
-        if (!is_array($discovery) || !is_int($discovery[$key] ?? null)) {
-            return $fallback;
-        }
-
-        return $discovery[$key];
     }
 
     /**
