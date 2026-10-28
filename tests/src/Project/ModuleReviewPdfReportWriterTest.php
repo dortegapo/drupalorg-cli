@@ -274,23 +274,9 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         );
     }
 
-    public function testRendersCoreCompatibilitySeparatelyFromFunctionalAssessment(): void
+    public function testDoesNotRenderPerCandidateCoreCompatibility(): void
     {
         $analysis = self::completeAnalysis();
-        $analysis['core'] = [
-            'runtimeVersion' => '11.4.8',
-            'targetMajor' => 11,
-        ];
-        $analysis['candidateCompatibility'] = [
-            'profiles' => [
-                'status' => 'outdated',
-                'targetCoreVersion' => '11.4.8',
-                'targetCoreMajor' => 11,
-                'supportedCoreMajors' => [10],
-                'latestRelevantRelease' => '1.0.0',
-                'declaredCompatibility' => ['^10'],
-            ],
-        ];
         $analysis['comparison']['candidates'][0]['assessment'] = 'likely_duplicate';
 
         $html = $this->renderHtml($analysis);
@@ -298,16 +284,12 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringNotContainsString('Target Drupal core', $html);
         self::assertStringNotContainsString('Runtime</dt><dd>Drupal 11.4.8', $html);
         self::assertStringNotContainsString('Target major</dt><dd>Drupal 11', $html);
-        self::assertStringContainsString('Outdated for Drupal 11', $html);
-        self::assertStringContainsString('status-badge warning">Outdated for Drupal 11</span>', $html);
-        self::assertStringContainsString('Latest verified core support:</strong> Drupal 10', $html);
-        self::assertStringContainsString('Consider contributing core compatibility before creating a new project.', $html);
+        self::assertStringContainsString('Core version requirement</dt><dd>^11', $html);
+        self::assertStringNotContainsString('Outdated for Drupal 11', $html);
+        self::assertStringNotContainsString('Core compatibility', $html);
+        self::assertStringNotContainsString('Latest verified core support', $html);
+        self::assertStringNotContainsString('Consider contributing core compatibility before creating a new project.', $html);
         self::assertStringNotContainsString('final functional-overlap assessment is performed separately', $html);
-
-        $analysis['candidateCompatibility']['profiles']['status'] = 'compatible';
-        $analysis['candidateCompatibility']['profiles']['supportedCoreMajors'] = [11];
-        $compatibleHtml = $this->renderHtml($analysis);
-        self::assertStringContainsString('status-badge success">Compatible with Drupal 11</span>', $compatibleHtml);
     }
 
     public function testRendersReadyAdvisoryNotesWithoutNeedsChangesLabel(): void

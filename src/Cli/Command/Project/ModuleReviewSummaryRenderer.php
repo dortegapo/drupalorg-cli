@@ -99,8 +99,6 @@ final class ModuleReviewSummaryRenderer
         $this->writePotentialOverlaps(
             $comparison,
             is_array($result['candidates'] ?? null) ? $result['candidates'] : [],
-            is_array($result['candidateCompatibility'] ?? null) ? $result['candidateCompatibility'] : [],
-            is_array($result['core'] ?? null) ? $result['core'] : [],
         );
         $this->writePdfPath($pdfPath);
     }
@@ -214,14 +212,10 @@ final class ModuleReviewSummaryRenderer
     /**
      * @param array<string, mixed> $comparison
      * @param list<array<string, mixed>> $candidates
-     * @param array<string, array<string, mixed>> $compatibilities
-     * @param array{runtimeVersion: ?string, targetMajor: ?int} $core
      */
     private function writePotentialOverlaps(
         array $comparison,
         array $candidates,
-        array $compatibilities,
-        array $core,
     ): void {
         if (!array_key_exists('candidates', $comparison) || !is_array($comparison['candidates'])) {
             return;
@@ -256,26 +250,12 @@ final class ModuleReviewSummaryRenderer
 
             $machineName = $match['machine_name'];
             $title = $candidateTitles[$machineName] ?? $machineName;
-            $compatibility = is_array($compatibilities[$machineName] ?? null)
-                ? $compatibilities[$machineName]
-                : [];
-            $status = is_string($compatibility['status'] ?? null) ? $compatibility['status'] : 'unknown';
-            $targetMajor = is_int($compatibility['targetCoreMajor'] ?? null)
-                ? $compatibility['targetCoreMajor']
-                : (is_int($core['targetMajor'] ?? null) ? $core['targetMajor'] : null);
             $assessmentLabel = $this->humanizeReviewLabel($assessment);
             $assessmentColor = $assessment === 'likely_duplicate' ? 'red' : 'yellow';
-            $compatibilityLabel = $this->compatibilityLabel($status, $targetMajor);
-            $compatibilityColor = match ($status) {
-                'compatible' => 'green',
-                'outdated', 'requires_newer_core' => 'red',
-                default => 'yellow',
-            };
             $this->output->writeln(sprintf(
-                '  %-18s %s · %s',
+                '  %-18s %s',
                 $title . ' (' . $machineName . ')',
                 $this->styleStatus($assessmentLabel, $assessmentColor),
-                $this->styleStatus($compatibilityLabel, $compatibilityColor),
             ));
             ++$shown;
             if ($shown === ($this->output->isVerbose() ? 5 : 3)) {
@@ -322,16 +302,6 @@ final class ModuleReviewSummaryRenderer
             'significant_changes' => 'SIGNIFICANT CHANGES',
             'unclear' => 'UNCLEAR',
             default => 'UNKNOWN',
-        };
-    }
-
-    private function compatibilityLabel(string $status, ?int $targetMajor): string
-    {
-        return match ($status) {
-            'compatible' => 'Compatible with ' . ($targetMajor === null ? 'target Drupal' : 'Drupal ' . $targetMajor),
-            'outdated' => 'Outdated for ' . ($targetMajor === null ? 'target Drupal' : 'Drupal ' . $targetMajor),
-            'requires_newer_core' => 'Requires a newer Drupal core',
-            default => 'Not verified',
         };
     }
 }

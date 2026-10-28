@@ -146,6 +146,7 @@ final class ModuleReviewWorkflow
                 $eventProgress,
                 $module->info->name,
                 $preparedSource,
+                $module->info->coreVersionRequirement,
             );
         } catch (\Throwable $exception) {
             $progressRenderer->finishOnFailure();
@@ -320,6 +321,7 @@ final class ModuleReviewWorkflow
         callable $progress,
         string $humanName,
         PreparedModuleSource $preparedSource,
+        string $coreVersionRequirement,
     ): ModuleReviewResult {
         if ($this->moduleAnalyzer !== null) {
             $result = ($this->moduleAnalyzer)(
@@ -329,6 +331,7 @@ final class ModuleReviewWorkflow
                 $progress,
                 $humanName,
                 $preparedSource,
+                $coreVersionRequirement,
             );
 
             if ($result instanceof ModuleReviewResult) {
@@ -349,6 +352,7 @@ final class ModuleReviewWorkflow
             $progress,
             $humanName,
             $preparedSource,
+            $coreVersionRequirement,
         );
     }
 

@@ -90,8 +90,8 @@ final class ProjectPublishProgressRenderer
             self::PREPARING_SOURCE => 'Preparing module source',
             self::ANALYZING_MODULE => 'Analyzing module',
             self::SEARCHING_DRUPAL_ORG => 'Searching Drupal.org',
-            self::COMPARING_PROJECTS => 'Comparing similar projects',
             self::CHECKING_COMPATIBILITY => 'Checking compatibility',
+            self::COMPARING_PROJECTS => 'Comparing similar projects',
             self::GENERATING_REVIEW_REPORT => 'Generating review report',
         ]);
     }

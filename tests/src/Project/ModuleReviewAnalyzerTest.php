@@ -12,7 +12,6 @@ use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\Client;
 use mglaman\DrupalOrg\Project\DrupalAiBridge;
-use mglaman\DrupalOrg\Project\DrupalCoreVersionInspector;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectSearch;
 use mglaman\DrupalOrg\Project\DrupalOrgProjectCompatibilityResolver;
 use mglaman\DrupalOrg\Project\ModuleContributionAssessmentResolver;
@@ -238,6 +237,8 @@ class ModuleReviewAnalyzerTest extends TestCase
         $review['secondary_search_terms'] = [
             ['term' => 'toolbar', 'reason' => 'Toolbar integration.'],
         ];
+        $captureDir = $this->workDir . '/captures';
+        mkdir($captureDir);
         $analyzer = $this->analyzer([
             self::searchResponse([self::project('original_palette', 'Original Palette', 'Palette navigation.')]),
             self::searchResponse([]),
@@ -273,7 +274,7 @@ class ModuleReviewAnalyzerTest extends TestCase
         self::assertSame('original_palette', $result['candidates'][0]['machineName']);
     }
 
-    public function testAddsCoreCompatibilityAfterSemanticComparisonWithoutChangingItsVerdict(): void
+    public function testFiltersIncompatibleCandidatesBeforeSemanticComparison(): void
     {
         file_put_contents($this->modulePath . '/module.php', '<?php\n');
         $analyzer = $this->analyzer([
@@ -289,9 +290,6 @@ class ModuleReviewAnalyzerTest extends TestCase
             ]),
         ], [
             self::aiSuccess(self::reviewResult()),
-            self::aiSuccess(self::comparisonResult([
-                self::comparisonCandidate('profile_project', 'likely_duplicate', ['profiles']),
-            ], 'likely_duplicate')),
         ], null, true);
 
         $events = [];
@@ -302,15 +300,16 @@ class ModuleReviewAnalyzerTest extends TestCase
             static function (string $event, array $context) use (&$events): void {
                 $events[] = [$event, $context];
             },
+            null,
+            null,
+            '^11',
         );
         $result = $result->toArray();
 
         self::assertTrue($result['complete']);
-        self::assertSame('11.4.8', $result['core']['runtimeVersion']);
-        self::assertSame(11, $result['core']['targetMajor']);
-        self::assertSame('outdated', $result['candidateCompatibility']['profile_project']['status']);
-        self::assertSame('likely_duplicate', $result['comparison']['verdict']);
-        self::assertSame('not_candidate_yet', $result['assessment']['status']);
+        self::assertSame([], $result['candidates']);
+        self::assertSame('no_clear_duplicate', $result['comparison']['verdict']);
+        self::assertStringContainsString('compatible with the module', $result['comparison']['summary']);
         self::assertCount(5, $this->history);
         self::assertSame(
             [
@@ -324,14 +323,10 @@ class ModuleReviewAnalyzerTest extends TestCase
                 'project_search_progress',
                 'project_search_completed',
                 'candidate_ranking_completed',
-                'comparison_ai_started',
-                'comparison_ai_completed',
-                'assessment_completed',
-                'core_version_started',
-                'core_version_completed',
                 'compatibility_started',
                 'compatibility_progress',
                 'compatibility_completed',
+                'assessment_completed',
                 'analysis_completed',
             ],
             array_values(array_filter(
@@ -339,6 +334,62 @@ class ModuleReviewAnalyzerTest extends TestCase
                 static fn (string $event): bool => !str_ends_with($event, '_tick'),
             )),
         );
+    }
+
+    public function testSendsCompatibleAndUnknownCandidatesToComparison(): void
+    {
+        file_put_contents($this->modulePath . '/module.php', '<?php\n');
+        $captureDir = $this->workDir . '/captures';
+        mkdir($captureDir);
+        $analyzer = $this->analyzer([
+            self::searchResponse([
+                self::project('compatible_project', 'Compatible', 'Profile management.'),
+                self::project('unknown_project', 'Unknown', 'Profile management.'),
+                self::project('incompatible_project', 'Incompatible', 'Profile management.'),
+            ]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::searchResponse([]),
+            self::compatibilityResponse([
+                self::package('1.0.0', '^11'),
+            ]),
+            self::compatibilityResponse([
+                ['version' => '1.0.0'],
+            ]),
+            self::compatibilityResponse([
+                self::package('1.0.0', '^10'),
+            ]),
+        ], [
+            self::aiSuccess(self::reviewResult()),
+            self::aiSuccess(self::comparisonResult([
+                self::comparisonCandidate('compatible_project', 'likely_duplicate', ['profiles']),
+                self::comparisonCandidate('unknown_project', 'possible_overlap', ['profiles']),
+            ], 'likely_duplicate')),
+        ], $captureDir, true);
+
+        $result = $analyzer->analyze(
+            $this->modulePath,
+            'example_module',
+            $this->runtime,
+            null,
+            null,
+            null,
+            '^11',
+        )->toArray();
+
+        self::assertSame(
+            ['compatible_project', 'unknown_project'],
+            array_column($result['candidates'], 'machineName'),
+        );
+        self::assertSame(1, $result['discovery']['candidatesExcludedByCore']);
+        self::assertSame(1, $result['discovery']['candidatesWithUnknownCoreCompatibility']);
+        self::assertSame('likely_duplicate', $result['comparison']['verdict']);
+        self::assertSame('2', trim((string) file_get_contents($this->workDir . '/ai-count.txt')));
+        $comparisonPayload = self::capturedPayload($captureDir . '/call-1.php');
+        self::assertIsString($comparisonPayload['user_prompt'] ?? null);
+        self::assertStringContainsString('compatible_project', $comparisonPayload['user_prompt']);
+        self::assertStringContainsString('unknown_project', $comparisonPayload['user_prompt']);
+        self::assertStringNotContainsString('incompatible_project', $comparisonPayload['user_prompt']);
     }
 
     public function testFunctionalSearchRecoversCandidateWhenHumanNameDoesNot(): void
@@ -479,6 +530,9 @@ class ModuleReviewAnalyzerTest extends TestCase
             'uniqueCandidatesDiscovered' => 3,
             'multiQueryCandidates' => 1,
             'candidatesSentToComparison' => 3,
+            'candidatesRankedBeforeCoreFilter' => 3,
+            'candidatesExcludedByCore' => 0,
+            'candidatesWithUnknownCoreCompatibility' => 0,
         ], $result['discovery']);
     }
 
@@ -502,6 +556,11 @@ class ModuleReviewAnalyzerTest extends TestCase
             }
             $responses[] = self::searchResponse($projects);
         }
+        for ($candidate = 0; $candidate < 40; ++$candidate) {
+            $responses[] = self::compatibilityResponse([
+                self::package('1.0.0', $candidate < 20 ? '^10' : '^11'),
+            ]);
+        }
         $captureDir = $this->workDir . '/captures';
         mkdir($captureDir);
         $analyzer = $this->analyzer(
@@ -511,6 +570,7 @@ class ModuleReviewAnalyzerTest extends TestCase
                 self::aiSuccess(self::comparisonResult([], 'no_clear_duplicate')),
             ],
             $captureDir,
+            true,
         );
 
         $result = $analyzer->analyze(
@@ -519,12 +579,16 @@ class ModuleReviewAnalyzerTest extends TestCase
             $this->runtime,
             null,
             'Example Module',
+            null,
+            '^11',
         );
         $result = $result->toArray();
 
         self::assertTrue($result['complete']);
         self::assertSame(200, $result['discovery']['rawResultOccurrences']);
         self::assertSame(200, $result['discovery']['uniqueCandidatesDiscovered']);
+        self::assertSame(40, $result['discovery']['candidatesRankedBeforeCoreFilter']);
+        self::assertSame(20, $result['discovery']['candidatesExcludedByCore']);
         self::assertSame(20, $result['discovery']['candidatesSentToComparison']);
         self::assertCount(20, $result['candidates']);
         $comparisonPayload = self::capturedPayload($captureDir . '/call-1.php');
@@ -771,7 +835,6 @@ class ModuleReviewAnalyzerTest extends TestCase
             new ModuleReviewComparisonPromptBuilder(),
             new ModuleReviewComparisonResultValidator(),
             new ModuleContributionAssessmentResolver(),
-            $withCompatibility ? new DrupalCoreVersionInspector() : null,
             $withCompatibility ? new DrupalOrgProjectCompatibilityResolver($client) : null,
         );
     }
@@ -978,6 +1041,17 @@ PHP
             ['Content-Type' => 'application/json'],
             json_encode(['packages' => ['drupal/profile_project' => $packages]], JSON_THROW_ON_ERROR),
         );
+    }
+
+    /**
+     * @return array{version: string, require: array{'drupal/core': string}}
+     */
+    private static function package(string $version, string $constraint): array
+    {
+        return [
+            'version' => $version,
+            'require' => ['drupal/core' => $constraint],
+        ];
     }
 
     /**

@@ -54,8 +54,6 @@ final class ModuleReviewProgressRendererTest extends TestCase
         ]);
         $renderer = new ModuleReviewProgressRenderer($progress);
 
-        $renderer->handle('core_version_started');
-        $renderer->handle('core_version_completed');
         $renderer->handle('project_search_started', ['total' => 1]);
         $renderer->handle('project_search_progress', [
             'current' => 1,

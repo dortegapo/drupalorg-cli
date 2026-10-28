@@ -16,7 +16,7 @@ use PHPUnit\Framework\TestCase;
 #[CoversClass(DrupalOrgProjectCompatibilityResolver::class)]
 final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
 {
-    public function testReportsCompatibleWhenAStableReleaseSupportsTheTargetMajor(): void
+    public function testReportsCompatibleWhenAStableReleaseSupportsALocalMajor(): void
     {
         $resolver = $this->resolver([
             self::metadataResponse([
@@ -25,34 +25,44 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
             ]),
         ]);
 
-        $result = $resolver->resolve('coffee', self::targetCore());
+        $result = $resolver->resolve('coffee', [11]);
 
         self::assertSame('compatible', $result['status']);
         self::assertSame([9, 10, 11], $result['supportedCoreMajors']);
-        self::assertSame('2.0.1', $result['latestRelevantRelease']);
         self::assertSame('^10.2 || ^11.0', $result['declaredCompatibility'][0]);
     }
 
-    public function testReportsCompatibleForPatchSpecificTildeConstraint(): void
+    public function testReportsIncompatibleWhenThereIsNoIntersection(): void
     {
         $resolver = $this->resolver([
-            self::metadataResponse([
-                self::package('2.0.1', '~11.4.1'),
-            ]),
+            self::metadataResponse([self::package('1.4.0', '^9.2 || ^10')]),
         ]);
 
-        self::assertSame('compatible', $resolver->resolve('coffee', self::targetCore())['status']);
+        self::assertSame('incompatible', $resolver->resolve('coffee', [11])['status']);
     }
 
-    public function testReportsCompatibleForAnExplicitMajorRange(): void
+    public function testCompatibilityUsesAnyLocalMajorIntersection(): void
     {
         $resolver = $this->resolver([
-            self::metadataResponse([
-                self::package('2.0.1', '>=11.4.1 <12'),
-            ]),
+            self::metadataResponse([self::package('1.0.0', '^10')]),
+            self::metadataResponse([self::package('1.0.0', '^11')]),
+            self::metadataResponse([self::package('1.0.0', '^12')]),
         ]);
 
-        self::assertSame('compatible', $resolver->resolve('coffee', self::targetCore())['status']);
+        self::assertSame('compatible', $resolver->resolve('first', [10, 11])['status']);
+        self::assertSame('compatible', $resolver->resolve('second', [10, 11])['status']);
+        self::assertSame('incompatible', $resolver->resolve('third', [10, 11])['status']);
+    }
+
+    public function testSupportsPatchSpecificAndRangeConstraints(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([self::package('2.0.1', '~11.4.1')]),
+            self::metadataResponse([self::package('2.0.1', '>=11.4.1 <12')]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', [11])['status']);
+        self::assertSame('compatible', $resolver->resolve('coffee', [11])['status']);
     }
 
     public function testExpandsMinifiedMetadataBeforeCheckingCompatibility(): void
@@ -61,54 +71,39 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
             self::metadataResponse([
                 self::package('2.0.1', '^10'),
                 ['version' => '2.0.2'],
-            ]),
+            ], true),
         ]);
 
-        $result = $resolver->resolve('coffee', self::targetCore());
+        $result = $resolver->resolve('coffee', [11]);
 
-        self::assertSame('outdated', $result['status']);
-        self::assertSame('2.0.2', $result['latestRelevantRelease']);
+        self::assertSame('incompatible', $result['status']);
         self::assertSame(['^10'], $result['declaredCompatibility']);
     }
 
-    public function testReportsOutdatedWhenOnlyLowerCoreMajorsAreDeclared(): void
+    public function testReportsUnknownWhenMetadataIsMissingOrRequestFails(): void
     {
         $resolver = $this->resolver([
-            self::metadataResponse([
-                self::package('1.4.0', '^9.2 || ^10'),
-            ]),
+            self::metadataResponse([['version' => '2.0.1']]),
+            new Response(500),
         ]);
 
-        self::assertSame('outdated', $resolver->resolve('coffee', self::targetCore())['status']);
+        self::assertSame('unknown', $resolver->resolve('coffee', [11])['status']);
+        self::assertSame('unknown', $resolver->resolve('coffee', [11])['status']);
     }
 
-    public function testReportsRequiresNewerCoreWhenOnlyHigherMajorsAreDeclared(): void
+    public function testResolvesManyCandidatesConcurrentlyAndKeepsFailuresUnknown(): void
     {
         $resolver = $this->resolver([
-            self::metadataResponse([
-                self::package('3.0.0', '^12'),
-            ]),
+            self::metadataResponse([self::package('1.0.0', '^11')]),
+            self::metadataResponse([self::package('1.0.0', '^10')]),
+            new Response(500),
         ]);
 
-        self::assertSame('requires_newer_core', $resolver->resolve('coffee', self::targetCore())['status']);
-    }
+        $result = $resolver->resolveMany(['compatible', 'incompatible', 'failed'], [11], 2);
 
-    public function testReportsUnknownWhenCompatibilityMetadataIsMissing(): void
-    {
-        $resolver = $this->resolver([
-            self::metadataResponse([
-                ['version' => '2.0.1'],
-            ]),
-        ]);
-
-        self::assertSame('unknown', $resolver->resolve('coffee', self::targetCore())['status']);
-    }
-
-    public function testReportsUnknownWhenThePublicMetadataLookupFails(): void
-    {
-        $resolver = $this->resolver([new Response(500)]);
-
-        self::assertSame('unknown', $resolver->resolve('coffee', self::targetCore())['status']);
+        self::assertSame('compatible', $result['compatible']['status']);
+        self::assertSame('incompatible', $result['incompatible']['status']);
+        self::assertSame('unknown', $result['failed']['status']);
     }
 
     public function testUsesInteractiveTimeoutsForMetadataLookup(): void
@@ -120,34 +115,10 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         $stack->push(Middleware::history($history));
         $resolver = new DrupalOrgProjectCompatibilityResolver(new Client(false, $stack));
 
-        $resolver->resolve('coffee', self::targetCore());
+        $resolver->resolve('coffee', [11]);
 
         self::assertSame(5.0, $history[0]['options']['connect_timeout']);
         self::assertSame(10.0, $history[0]['options']['timeout']);
-    }
-
-    public function testDoesNotTreatDevelopmentReleasesAsStableCompatibilityEvidence(): void
-    {
-        $resolver = $this->resolver([
-            self::metadataResponse([
-                self::package('3.0.0-alpha1', '^11'),
-                self::package('2.0.1', '^10'),
-            ]),
-        ]);
-
-        self::assertSame('outdated', $resolver->resolve('coffee', self::targetCore())['status']);
-    }
-
-    public function testUnknownTargetDoesNotMakeARequest(): void
-    {
-        $resolver = $this->resolver([]);
-
-        $result = $resolver->resolve('coffee', [
-            'runtimeVersion' => null,
-            'targetMajor' => null,
-        ]);
-
-        self::assertSame('unknown', $result['status']);
     }
 
     /**
@@ -163,12 +134,19 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
     /**
      * @param list<array<string, mixed>> $packages
      */
-    private static function metadataResponse(array $packages): Response
+    private static function metadataResponse(array $packages, bool $minified = false): Response
     {
+        $payload = [
+            'packages' => ['drupal/coffee' => $packages],
+        ];
+        if ($minified) {
+            $payload['minified'] = 'composer/2.0';
+        }
+
         return new Response(
             200,
             ['Content-Type' => 'application/json'],
-            json_encode(['packages' => ['drupal/coffee' => $packages], 'minified' => 'composer/2.0'], JSON_THROW_ON_ERROR),
+            json_encode($payload, JSON_THROW_ON_ERROR),
         );
     }
 
@@ -180,17 +158,6 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         return [
             'version' => $version,
             'require' => ['drupal/core' => $constraint],
-        ];
-    }
-
-    /**
-     * @return array{runtimeVersion: string, targetMajor: int}
-     */
-    private static function targetCore(): array
-    {
-        return [
-            'runtimeVersion' => '11.4.8',
-            'targetMajor' => 11,
         ];
     }
 }

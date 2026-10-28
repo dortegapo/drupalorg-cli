@@ -26,7 +26,6 @@ final class ModuleReviewAnalyzerFactory
             new ModuleReviewComparisonPromptBuilder(),
             new ModuleReviewComparisonResultValidator(),
             new ModuleContributionAssessmentResolver(),
-            new DrupalCoreVersionInspector(),
             new DrupalOrgProjectCompatibilityResolver($this->client),
         );
     }

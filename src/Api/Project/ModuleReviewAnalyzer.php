@@ -10,6 +10,9 @@ final class ModuleReviewAnalyzer
 {
     private const SEARCH_LIMIT = 20;
 
+    /** Keep a broad ranked pool so compatibility filtering cannot hide later matches. */
+    private const PREFILTER_CANDIDATES = 40;
+
     private const MAXIMUM_COMPARISON_CANDIDATES = 20;
 
     private const SEARCH_CONCURRENCY = 4;
@@ -30,7 +33,6 @@ final class ModuleReviewAnalyzer
         'comparison_ai' => 'The module review comparison could not be completed by Drupal AI.',
         'comparison_validation' => 'The Drupal AI module comparison result was invalid.',
         'assessment' => 'The module contribution assessment could not be completed.',
-        'core_version' => 'The Drupal runtime core version could not be determined.',
         'compatibility' => 'Drupal.org core compatibility could not be verified for one or more candidates.',
     ];
 
@@ -45,7 +47,6 @@ final class ModuleReviewAnalyzer
         private readonly ModuleReviewComparisonPromptBuilder $comparisonPromptBuilder,
         private readonly ModuleReviewComparisonResultValidator $comparisonValidator,
         private readonly ModuleContributionAssessmentResolver $assessmentResolver,
-        private readonly ?DrupalCoreVersionInspector $coreVersionInspector = null,
         private readonly ?DrupalOrgProjectCompatibilityResolver $compatibilityResolver = null,
     ) {
     }
@@ -99,6 +100,7 @@ final class ModuleReviewAnalyzer
      *     command: list<string>
      * } $runtime
      * @param PreparedModuleSource|array<string, mixed>|null $preparedSource
+     * @param string|null $coreVersionRequirement Source of truth from .info.yml.
      *
      * @return ModuleReviewResult
      */
@@ -109,6 +111,7 @@ final class ModuleReviewAnalyzer
         ?callable $progress = null,
         ?string $humanName = null,
         PreparedModuleSource|array|null $preparedSource = null,
+        ?string $coreVersionRequirement = null,
     ): ModuleReviewResult {
         $module = [
             'machineName' => $machineName,
@@ -283,10 +286,10 @@ final class ModuleReviewAnalyzer
         ]);
 
         try {
-            $candidates = $this->candidateRanker->rank(
+            $prefilterCandidates = $this->candidateRanker->rank(
                 $primaryRankings,
                 $secondaryRankings,
-                self::MAXIMUM_COMPARISON_CANDIDATES,
+                self::PREFILTER_CANDIDATES,
             );
         } catch (\RuntimeException) {
             return $this->incomplete(
@@ -301,14 +304,81 @@ final class ModuleReviewAnalyzer
             );
         }
         $this->emitProgress($progress, 'candidate_ranking_completed', [
-            'candidateCount' => count($candidates),
+            'candidateCount' => count($prefilterCandidates),
         ]);
+
+        $compatibilityLimitations = [];
+        $excludedByCore = 0;
+        $unknownCoreCompatibility = 0;
+        $candidates = $prefilterCandidates;
+        if ($this->compatibilityResolver !== null && $coreVersionRequirement !== null) {
+            try {
+                $localCoreMajors = DrupalCoreVersionRequirement::supportedMajors($coreVersionRequirement);
+                $compatibilityTotal = count($prefilterCandidates);
+                $this->emitProgress($progress, 'compatibility_started', [
+                    'current' => 0,
+                    'total' => $compatibilityTotal,
+                ]);
+                $compatibilities = $this->compatibilityResolver->resolveMany(
+                    array_values(array_map(
+                        static fn (array $candidate): string => $candidate['machineName'],
+                        $prefilterCandidates,
+                    )),
+                    $localCoreMajors,
+                );
+                $candidates = [];
+                foreach ($prefilterCandidates as $index => $candidate) {
+                    $compatibility = $compatibilities[$candidate['machineName']]
+                        ?? $this->compatibilityResolver->unknown();
+                    $status = $compatibility['status'];
+                    if ($status === 'compatible' || $status === 'unknown') {
+                        $candidates[] = $candidate;
+                    } else {
+                        ++$excludedByCore;
+                    }
+                    if ($status === 'unknown') {
+                        ++$unknownCoreCompatibility;
+                    }
+                    $this->emitProgress($progress, 'compatibility_progress', [
+                        'current' => $index + 1,
+                        'total' => $compatibilityTotal,
+                        'machineName' => $candidate['machineName'],
+                    ]);
+                }
+                $this->emitProgress($progress, 'compatibility_completed', [
+                    'current' => $compatibilityTotal,
+                    'total' => $compatibilityTotal,
+                ]);
+                if ($unknownCoreCompatibility > 0) {
+                    $compatibilityLimitations[] = [
+                        'stage' => 'compatibility',
+                        'message' => self::LIMITATION_MESSAGES['compatibility'],
+                    ];
+                }
+            } catch (\InvalidArgumentException) {
+                // An invalid module requirement must not discard possible matches.
+                // Keep the broad pool and record the limitation for the report.
+                $unknownCoreCompatibility = count($prefilterCandidates);
+                $compatibilityLimitations[] = [
+                    'stage' => 'compatibility',
+                    'message' => self::LIMITATION_MESSAGES['compatibility'],
+                ];
+            }
+        }
+        $candidates = array_slice($candidates, 0, self::MAXIMUM_COMPARISON_CANDIDATES);
+        $discovery = $this->discoveryMetadata(
+            $searches,
+            $candidates,
+            count($prefilterCandidates),
+            $excludedByCore,
+            $unknownCoreCompatibility,
+        );
 
         if ($candidates === []) {
             $comparison = [
                 'verdict' => 'no_clear_duplicate',
                 'confidence' => 1.0,
-                'summary' => 'No Drupal.org projects matched the generated search terms.',
+                'summary' => 'No functionally relevant Drupal.org projects compatible with the module\'s supported Drupal core versions were found.',
                 'candidates' => [],
             ];
             $assessment = $this->assessmentResolver->resolve($review, $comparison);
@@ -322,6 +392,8 @@ final class ModuleReviewAnalyzer
                 $assessment,
                 $ai,
                 $progress,
+                $discovery,
+                $compatibilityLimitations,
             );
         }
 
@@ -404,71 +476,6 @@ final class ModuleReviewAnalyzer
             'status' => $assessment['status'],
         ]);
 
-        $core = [
-            'runtimeVersion' => null,
-            'targetMajor' => null,
-        ];
-        $compatibility = [];
-        $compatibilityLimitations = [];
-        if ($this->coreVersionInspector !== null) {
-            $this->emitProgress($progress, 'core_version_started');
-            try {
-                $inspectedCore = $this->coreVersionInspector->inspect($runtime);
-                if ($inspectedCore !== null) {
-                    $core = [
-                        'runtimeVersion' => $inspectedCore['version'],
-                        'targetMajor' => $inspectedCore['major'],
-                    ];
-                } else {
-                    $compatibilityLimitations[] = [
-                        'stage' => 'core_version',
-                        'message' => self::LIMITATION_MESSAGES['core_version'],
-                    ];
-                }
-            } catch (\Exception) {
-                $compatibilityLimitations[] = [
-                    'stage' => 'core_version',
-                    'message' => self::LIMITATION_MESSAGES['core_version'],
-                ];
-            }
-            $this->emitProgress($progress, 'core_version_completed', $core);
-        }
-
-        if ($this->compatibilityResolver !== null) {
-            $comparisonCandidates = $comparison['candidates'];
-            $compatibilityTotal = count($comparisonCandidates);
-            $this->emitProgress($progress, 'compatibility_started', [
-                'current' => 0,
-                'total' => $compatibilityTotal,
-            ]);
-            $compatibilityCurrent = 0;
-            foreach ($comparisonCandidates as $comparisonCandidate) {
-                $candidateMachineName = $comparisonCandidate['machine_name'];
-                try {
-                    $compatibility[$candidateMachineName] = $this->compatibilityResolver->resolve(
-                        $candidateMachineName,
-                        $core,
-                    );
-                } catch (\Exception) {
-                    $compatibility[$candidateMachineName] = $this->compatibilityResolver->unknown($core);
-                    $compatibilityLimitations[] = [
-                        'stage' => 'compatibility',
-                        'message' => self::LIMITATION_MESSAGES['compatibility'],
-                    ];
-                }
-                ++$compatibilityCurrent;
-                $this->emitProgress($progress, 'compatibility_progress', [
-                    'current' => $compatibilityCurrent,
-                    'total' => $compatibilityTotal,
-                    'machineName' => $candidateMachineName,
-                ]);
-            }
-            $this->emitProgress($progress, 'compatibility_completed', [
-                'current' => $compatibilityCurrent,
-                'total' => $compatibilityTotal,
-            ]);
-        }
-
         $result = [
             'complete' => true,
             'module' => $module,
@@ -476,11 +483,9 @@ final class ModuleReviewAnalyzer
             'review' => $review,
             'searches' => $searches,
             'candidates' => $candidates,
-            'discovery' => $this->discoveryMetadata($searches, $candidates),
+            'discovery' => $discovery,
             'comparison' => $comparison,
             'assessment' => $assessment,
-            'core' => $core,
-            'candidateCompatibility' => $compatibility,
             'ai' => $ai,
             'limitations' => $compatibilityLimitations,
         ];
@@ -499,6 +504,8 @@ final class ModuleReviewAnalyzer
      * @param array<string, mixed> $comparison
      * @param array<string, mixed> $assessment
      * @param array<string, mixed> $ai
+     * @param array<string, mixed> $discovery
+     * @param list<array{stage: string, message: string}> $limitations
      *
      * @return ModuleReviewResult
      */
@@ -511,6 +518,8 @@ final class ModuleReviewAnalyzer
         array $assessment,
         array $ai,
         ?callable $progress,
+        array $discovery,
+        array $limitations = [],
     ): ModuleReviewResult {
         $result = [
             'complete' => true,
@@ -519,16 +528,11 @@ final class ModuleReviewAnalyzer
             'review' => $review,
             'searches' => $searches,
             'candidates' => [],
-            'discovery' => $this->discoveryMetadata($searches, []),
+            'discovery' => $discovery,
             'comparison' => $comparison,
             'assessment' => $assessment,
-            'core' => [
-                'runtimeVersion' => null,
-                'targetMajor' => null,
-            ],
-            'candidateCompatibility' => [],
             'ai' => $ai,
-            'limitations' => [],
+            'limitations' => $limitations,
         ];
         $this->emitProgress($progress, 'assessment_completed', [
             'status' => $assessment['status'],
@@ -620,11 +624,19 @@ final class ModuleReviewAnalyzer
      *     rawResultOccurrences: int,
      *     uniqueCandidatesDiscovered: int,
      *     multiQueryCandidates: int,
-     *     candidatesSentToComparison: int
+     *     candidatesSentToComparison: int,
+     *     candidatesRankedBeforeCoreFilter: int,
+     *     candidatesExcludedByCore: int,
+     *     candidatesWithUnknownCoreCompatibility: int
      * }
      */
-    private function discoveryMetadata(array $searches, array $candidates): array
-    {
+    private function discoveryMetadata(
+        array $searches,
+        array $candidates,
+        ?int $rankedBeforeCoreFilter = null,
+        int $excludedByCore = 0,
+        int $unknownCoreCompatibility = 0,
+    ): array {
         $rawResultOccurrences = 0;
         $queriesByCandidate = [];
 
@@ -664,6 +676,9 @@ final class ModuleReviewAnalyzer
             'uniqueCandidatesDiscovered' => count($queriesByCandidate),
             'multiQueryCandidates' => $multiQueryCandidates,
             'candidatesSentToComparison' => count($candidates),
+            'candidatesRankedBeforeCoreFilter' => $rankedBeforeCoreFilter ?? count($candidates),
+            'candidatesExcludedByCore' => $excludedByCore,
+            'candidatesWithUnknownCoreCompatibility' => $unknownCoreCompatibility,
         ];
     }
 

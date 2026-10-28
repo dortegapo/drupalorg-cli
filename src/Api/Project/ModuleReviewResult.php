@@ -36,12 +36,6 @@ final class ModuleReviewResult
     /** @var array<string, mixed>|null */
     public readonly ?array $assessment;
 
-    /** @var array<string, mixed>|null */
-    public readonly ?array $core;
-
-    /** @var array<string, mixed> */
-    public readonly array $candidateCompatibility;
-
     /** @var array<string, mixed> */
     public readonly array $ai;
 
@@ -57,8 +51,6 @@ final class ModuleReviewResult
      * @param array<string, mixed> $discovery
      * @param array<string, mixed>|null $comparison
      * @param array<string, mixed>|null $assessment
-     * @param array<string, mixed>|null $core
-     * @param array<string, mixed> $candidateCompatibility
      * @param array<string, mixed> $ai
      * @param list<array<string, mixed>> $limitations
      */
@@ -72,8 +64,6 @@ final class ModuleReviewResult
         array $discovery,
         ?array $comparison,
         ?array $assessment,
-        ?array $core,
-        array $candidateCompatibility,
         array $ai,
         array $limitations,
     ) {
@@ -85,8 +75,6 @@ final class ModuleReviewResult
         $this->discovery = $discovery;
         $this->comparison = $comparison;
         $this->assessment = $assessment;
-        $this->core = $core;
-        $this->candidateCompatibility = $candidateCompatibility;
         $this->ai = $ai;
         $this->limitations = $limitations;
     }
@@ -104,10 +92,6 @@ final class ModuleReviewResult
             discovery: is_array($data['discovery'] ?? null) ? $data['discovery'] : [],
             comparison: is_array($data['comparison'] ?? null) ? $data['comparison'] : null,
             assessment: is_array($data['assessment'] ?? null) ? $data['assessment'] : null,
-            core: is_array($data['core'] ?? null) ? $data['core'] : null,
-            candidateCompatibility: is_array($data['candidateCompatibility'] ?? null)
-                ? $data['candidateCompatibility']
-                : [],
             ai: is_array($data['ai'] ?? null) ? $data['ai'] : [],
             limitations: is_array($data['limitations'] ?? null) ? $data['limitations'] : [],
         );
@@ -131,11 +115,6 @@ final class ModuleReviewResult
             'ai' => $this->ai,
             'limitations' => $this->limitations,
         ];
-        if ($this->core !== null) {
-            $data['core'] = $this->core;
-            $data['candidateCompatibility'] = $this->candidateCompatibility;
-        }
-
         return $data;
     }
 }

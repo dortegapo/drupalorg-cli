@@ -37,8 +37,6 @@ final class ModuleReviewProgressRenderer
             'comparison_ai_completed' => $this->progress->complete(ProjectPublishProgressRenderer::COMPARING_PROJECTS),
             'comparison_ai_failed' => $this->progress->fail(ProjectPublishProgressRenderer::COMPARING_PROJECTS),
             'assessment_completed' => $this->progress->detail('Contribution assessment completed.'),
-            'core_version_started' => $this->progress->detail('Checking Drupal core version...'),
-            'core_version_completed' => $this->progress->detail('Drupal core version check completed.'),
             'compatibility_started' => $this->progress->start(ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY),
             'compatibility_progress' => $this->compatibilityProgress($context),
             'compatibility_completed' => $this->progress->complete(ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY),
@@ -57,7 +55,7 @@ final class ModuleReviewProgressRenderer
             'review_prompt', 'review_ai', 'review_validation' => ProjectPublishProgressRenderer::ANALYZING_MODULE,
             'project_search' => ProjectPublishProgressRenderer::SEARCHING_DRUPAL_ORG,
             'candidate_ranking', 'comparison_prompt', 'comparison_ai', 'comparison_validation', 'assessment' => ProjectPublishProgressRenderer::COMPARING_PROJECTS,
-            'core_version', 'compatibility' => ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY,
+            'compatibility' => ProjectPublishProgressRenderer::CHECKING_COMPATIBILITY,
             default => null,
         };
         if ($phase !== null && ($result?->complete ?? true) !== true) {

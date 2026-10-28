@@ -168,10 +168,6 @@ final class ModuleReviewPdfReportWriter
             $html .= '<li>' . $count . ' project' . ($count === 1 ? '' : 's')
                 . ' with possible functional overlap</li>';
         }
-        $compatibilitySummary = $this->executiveCompatibilitySummary($analysis, $comparisonCandidates, $candidateMap);
-        if ($compatibilitySummary !== '') {
-            $html .= '<li><span class="meta">' . $compatibilitySummary . '</span></li>';
-        }
         if ($titlesByAssessment['likely_duplicate'] === [] && $titlesByAssessment['possible_overlap'] === []) {
             $html .= '<li>No likely duplicate or potential functional overlap was identified.</li>';
         }
@@ -182,40 +178,6 @@ final class ModuleReviewPdfReportWriter
             . '</ul><p>This assessment is advisory only. It does not prevent you from continuing to publish.</p></section>';
 
         return $html;
-    }
-
-    /**
-     * @param array<string, mixed> $analysis
-     * @param list<mixed> $comparisonCandidates
-     * @param array<string, array<string, mixed>> $candidateMap
-     */
-    private function executiveCompatibilitySummary(
-        array $analysis,
-        array $comparisonCandidates,
-        array $candidateMap,
-    ): string {
-        $compatibilities = is_array($analysis['candidateCompatibility'] ?? null)
-            ? $analysis['candidateCompatibility']
-            : [];
-        if ($compatibilities === []) {
-            return '';
-        }
-
-        $items = [];
-        foreach (array_slice($comparisonCandidates, 0, 3) as $candidate) {
-            if (!is_array($candidate) || !is_string($candidate['machine_name'] ?? null)) {
-                continue;
-            }
-            $machineName = $candidate['machine_name'];
-            $compatibility = is_array($compatibilities[$machineName] ?? null)
-                ? $compatibilities[$machineName]
-                : [];
-            $status = is_string($compatibility['status'] ?? null) ? $compatibility['status'] : 'unknown';
-            $title = $this->stringValue($candidateMap[$machineName]['title'] ?? $machineName);
-            $items[] = $this->escape($title) . ' — ' . $this->escape($this->compatibilityLabel($status));
-        }
-
-        return $items === [] ? '' : 'Core compatibility: ' . implode('; ', $items);
     }
 
     /**
@@ -303,7 +265,7 @@ final class ModuleReviewPdfReportWriter
         if ($detailedCandidates !== []) {
             $html .= '<h3>Potential functional overlaps</h3>';
             foreach ($detailedCandidates as $candidate) {
-                $html .= $this->comparisonCard($candidate, $candidateMap, $analysis);
+                $html .= $this->comparisonCard($candidate, $candidateMap);
             }
         }
         if ($relatedCandidates !== []) {
@@ -469,9 +431,8 @@ final class ModuleReviewPdfReportWriter
     /**
      * @param array<string, mixed> $candidate
      * @param array<string, array<string, mixed>> $candidateMap
-     * @param array<string, mixed> $analysis
      */
-    private function comparisonCard(array $candidate, array $candidateMap, array $analysis): string
+    private function comparisonCard(array $candidate, array $candidateMap): string
     {
         $machineName = $this->stringValue($candidate['machine_name'] ?? 'Unavailable');
         $poolCandidate = $candidateMap[$machineName] ?? [];
@@ -498,48 +459,7 @@ final class ModuleReviewPdfReportWriter
             $html .= '<p><strong>Reason:</strong> ' . $this->escape($reason) . '</p>';
         }
 
-        return $html . $this->compatibilityBlock($candidate, $analysis) . '</article>';
-    }
-
-    /**
-     * @param array<string, mixed> $candidate
-     * @param array<string, mixed> $analysis
-     */
-    private function compatibilityBlock(array $candidate, array $analysis): string
-    {
-        $machineName = $this->stringValue($candidate['machine_name'] ?? '');
-        $compatibilities = is_array($analysis['candidateCompatibility'] ?? null)
-            ? $analysis['candidateCompatibility']
-            : [];
-        $compatibility = is_array($compatibilities[$machineName] ?? null)
-            ? $compatibilities[$machineName]
-            : [];
-        $status = is_string($compatibility['status'] ?? null) ? $compatibility['status'] : 'unknown';
-        $targetMajor = is_int($compatibility['targetCoreMajor'] ?? null)
-            ? $compatibility['targetCoreMajor']
-            : null;
-        $targetLabel = $targetMajor === null ? 'target Drupal core' : 'Drupal ' . $targetMajor;
-        $label = match ($status) {
-            'compatible' => 'Compatible with ' . $targetLabel,
-            'outdated' => 'Outdated for ' . $targetLabel,
-            'requires_newer_core' => 'Requires newer core than ' . $targetLabel,
-            default => 'Not verified',
-        };
-        $html = '<h4>Core compatibility</h4><p>'
-            . $this->statusBadge($label, $this->compatibilitySemanticType($status)) . '</p>';
-        if ($status === 'outdated') {
-            $supported = is_array($compatibility['supportedCoreMajors'] ?? null)
-                ? $compatibility['supportedCoreMajors']
-                : [];
-            $supported = array_values(array_filter($supported, 'is_int'));
-            if ($supported !== []) {
-                $html .= '<p><strong>Latest verified core support:</strong> Drupal '
-                    . max($supported) . '</p>';
-            }
-            $html .= '<p>Consider contributing core compatibility before creating a new project.</p>';
-        }
-
-        return $html;
+        return $html . '</article>';
     }
 
     private function listBlock(mixed $items, string $emptyMessage = 'Unavailable', string $semanticType = 'neutral'): string
@@ -573,14 +493,6 @@ final class ModuleReviewPdfReportWriter
         };
     }
 
-    private function compatibilitySemanticType(string $status): string
-    {
-        return match ($status) {
-            'compatible' => 'success',
-            'outdated', 'requires_newer_core' => 'warning',
-            default => 'neutral',
-        };
-    }
 
     private function integerValue(mixed $value): string
     {
@@ -616,16 +528,6 @@ final class ModuleReviewPdfReportWriter
         }
 
         return ucwords(str_replace('_', ' ', $value));
-    }
-
-    private function compatibilityLabel(string $status): string
-    {
-        return match ($status) {
-            'compatible' => 'Compatible',
-            'outdated' => 'Outdated',
-            'requires_newer_core' => 'Requires newer core',
-            default => 'Not verified',
-        };
     }
 
     private function escape(string $value): string
