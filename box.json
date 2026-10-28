@@ -5,7 +5,8 @@
     "skill-data"
   ],
   "files": [
-    "vendor/symfony/console/Resources/bin/hiddeninput.exe"
+    "vendor/symfony/console/Resources/bin/hiddeninput.exe",
+    "vendor/phpstan/phpstan/bootstrap.php"
   ],
   "finder": [
     {
