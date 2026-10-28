@@ -10,6 +10,7 @@ use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Response;
 use mglaman\DrupalOrg\GitLab\Client;
 use mglaman\DrupalOrg\GitLab\Entity\GitLabIssue;
+use mglaman\DrupalOrg\GitLab\IssueLinkType;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
@@ -171,6 +172,86 @@ class ClientTest extends TestCase
         return array_map(static fn(int $id) => ['id' => $id], range($firstId, $firstId + $count - 1));
     }
 
+    public function testGetMergeRequestNotesFollowsPagination(): void
+    {
+        $notes = $this->client(
+            self::json(self::notes(100)),
+            self::json(self::notes(1, 100)),
+        )->getMergeRequestNotes(59858, 219);
+
+        self::assertCount(101, $notes);
+        self::assertCount(2, $this->history);
+        $request = $this->sentRequest(1);
+        self::assertSame('/api/v4/projects/59858/merge_requests/219/notes', $request->getUri()->getPath());
+        $query = self::query($request);
+        self::assertSame('100', $query['per_page']);
+        self::assertSame('2', $query['page']);
+        self::assertSame('asc', $query['sort']);
+        self::assertSame('created_at', $query['order_by']);
+    }
+
+    public function testGetMergeRequestClosesIssues(): void
+    {
+        $issues = $this->client(self::json([['iid' => 3625000, 'state' => 'opened']]))
+            ->getMergeRequestClosesIssues(59858, 219);
+
+        self::assertCount(1, $issues);
+        self::assertSame(3625000, $issues[0]->iid);
+        self::assertSame(
+            'https://git.drupalcode.org/api/v4/projects/59858/merge_requests/219/closes_issues?per_page=100',
+            (string) $this->sentRequest()->getUri()
+        );
+    }
+
+    public function testGetCommitUrlEncodesThePath(): void
+    {
+        $commit = $this->client(self::json(['id' => 'd6ef1a7c']))->getCommit('project/tool', 'd6ef1a7');
+
+        self::assertSame('d6ef1a7c', $commit->id);
+        self::assertSame(
+            'https://git.drupalcode.org/api/v4/projects/project%2Ftool/repository/commits/d6ef1a7',
+            (string) $this->sentRequest()->getUri()
+        );
+    }
+
+    public function testGetCommitRefsRequestsBranchesAndTags(): void
+    {
+        $refs = $this->client(self::json(self::refs(2)))->getCommitRefs('project/tool', 'd6ef1a7c');
+
+        self::assertCount(2, $refs);
+        self::assertCount(1, $this->history);
+        $request = $this->sentRequest();
+        self::assertSame(
+            'https://git.drupalcode.org/api/v4/projects/project%2Ftool/repository/commits/d6ef1a7c/refs',
+            (string) $request->getUri()->withQuery('')
+        );
+        $query = self::query($request);
+        self::assertSame('all', $query['type']);
+        self::assertSame('100', $query['per_page']);
+        self::assertSame('1', $query['page']);
+    }
+
+    public function testGetCommitRefsFollowsPaginationWhileAPageIsFull(): void
+    {
+        $refs = $this->client(
+            self::json(self::refs(100)),
+            self::json(self::refs(3)),
+        )->getCommitRefs('project/tool', 'd6ef1a7c');
+
+        self::assertCount(103, $refs);
+        self::assertCount(2, $this->history);
+        self::assertSame('1', self::query($this->sentRequest(0))['page']);
+        self::assertSame('2', self::query($this->sentRequest(1))['page']);
+    }
+
+    /**
+     * @return array<int, array{type: string, name: string}>
+     */
+    private static function refs(int $count): array
+    {
+        return array_map(static fn(int $index) => ['type' => 'tag', 'name' => "1.0.$index"], range(0, $count - 1));
+    }
+
     public function testGetIssuesByIidMapsFailuresToNull(): void
     {
         $issues = $this->client(
@@ -206,5 +287,22 @@ class ClientTest extends TestCase
 
         self::assertSame(1, $project->id);
         self::assertSame(0, $this->responses->count(), 'Both the 503 and the 200 should have been consumed.');
+    }
+
+    public function testPostIssueLinkUsesNumericProjectIds(): void
+    {
+        $this->client(self::json(['link_type' => 'blocks'], 201))
+            ->postIssueLink(200, 3618722, 100, 3585914, IssueLinkType::Blocks);
+
+        $request = $this->sentRequest();
+        self::assertSame('POST', $request->getMethod());
+        self::assertSame(
+            'https://git.drupalcode.org/api/v4/projects/200/issues/3618722/links',
+            (string) $request->getUri()
+        );
+        self::assertSame(
+            '{"target_project_id":100,"target_issue_iid":3585914,"link_type":"blocks"}',
+            (string) $request->getBody()
+        );
     }
 }

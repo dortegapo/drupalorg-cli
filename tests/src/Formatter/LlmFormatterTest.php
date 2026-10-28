@@ -7,10 +7,14 @@ use mglaman\DrupalOrg\Entity\IssueNode;
 use mglaman\DrupalOrg\Entity\Release;
 use mglaman\DrupalOrg\Result\Issue\IssueForkResult;
 use mglaman\DrupalOrg\Result\Issue\IssueResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemCommentResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemLinkResult;
 use mglaman\DrupalOrg\Result\Maintainer\MaintainerIssuesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestItem;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
+use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillItem;
@@ -168,6 +172,38 @@ class LlmFormatterTest extends TestCase
         self::assertStringContainsString('<url>https://www.drupal.org/node/1234567</url>', $output);
     }
 
+    public function testProjectMetadataResult(): void
+    {
+        $result = new ProjectMetadataResult(
+            title: 'Example <Module>',
+            machineName: 'example_module',
+            projectType: 'module',
+            coreVersionRequirement: '^11',
+            dependencies: ['drupal:views'],
+            summary: 'Manages reusable records.',
+            description: 'Provides reusable record management.',
+            features: ['Create records'],
+            integrations: ['Views'],
+            providerId: 'provider',
+            modelId: 'model',
+            tokenUsage: ['input' => 1, 'output' => 2, 'total' => 3],
+        );
+
+        $output = (new LlmFormatter())->format($result);
+
+        self::assertStringStartsWith('<project_metadata>', $output);
+        self::assertStringContainsString('<title>Example &lt;Module&gt;</title>', $output);
+        self::assertStringContainsString('<machine_name>example_module</machine_name>', $output);
+        self::assertStringContainsString('<project_type>module</project_type>', $output);
+        self::assertStringContainsString('<core_version_requirement>^11</core_version_requirement>', $output);
+        self::assertStringContainsString('<dependency>drupal:views</dependency>', $output);
+        self::assertStringContainsString('<summary>Manages reusable records.</summary>', $output);
+        self::assertStringContainsString('<description><![CDATA[Provides reusable record management.]]></description>', $output);
+        self::assertStringContainsString('<feature>Create records</feature>', $output);
+        self::assertStringContainsString('<integration>Views</integration>', $output);
+        self::assertStringEndsWith('</project_metadata>', $output);
+    }
+
     public function testMaintainerIssuesResult(): void
     {
         $result = new MaintainerIssuesResult(
@@ -209,6 +245,34 @@ class LlmFormatterTest extends TestCase
         self::assertStringContainsString('<version>10.3.8</version>', $output);
         self::assertStringContainsString('<date>', $output);
         self::assertStringContainsString('<description>Security fixes</description>', $output);
+    }
+
+    public function testProjectContainsResult(): void
+    {
+        $result = new ProjectContainsResult(
+            projectName: 'tool',
+            sha: 'd6ef1a7c0ffee',
+            title: 'Fix <tool> discovery & cache',
+            committedDate: '2025-03-14T09:26:53.000+00:00',
+            webUrl: 'https://git.drupalcode.org/project/tool/-/commit/d6ef1a7c0ffee',
+            branches: ['1.x'],
+            tags: ['1.0.0-beta12', '1.0.0'],
+        );
+
+        $output = (new LlmFormatter())->format($result);
+
+        self::assertStringStartsWith('<drupal_context>', $output);
+        self::assertStringContainsString('<project>tool</project>', $output);
+        self::assertStringContainsString('<sha>d6ef1a7c0ffee</sha>', $output);
+        self::assertStringContainsString('<title>Fix &lt;tool&gt; discovery &amp; cache</title>', $output);
+        self::assertStringContainsString('<committed_date>2025-03-14T09:26:53.000+00:00</committed_date>', $output);
+        self::assertStringContainsString('<url>https://git.drupalcode.org/project/tool/-/commit/d6ef1a7c0ffee</url>', $output);
+        self::assertStringContainsString("<branches>\n    <branch>1.x</branch>\n  </branches>", $output);
+        self::assertStringContainsString(
+            "<tags order=\"oldest_first\">\n    <tag>1.0.0-beta12</tag>\n    <tag>1.0.0</tag>\n  </tags>",
+            $output
+        );
+        self::assertStringEndsWith('</drupal_context>', $output);
     }
 
     public function testSkillListResult(): void
@@ -310,6 +374,73 @@ class LlmFormatterTest extends TestCase
         self::assertStringNotContainsString('<b>', $output);
     }
 
+    public function testMergeRequestResult(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make());
+
+        self::assertStringContainsString('<drupal_context>', $output);
+        self::assertStringContainsString('<iid>219</iid>', $output);
+        self::assertStringContainsString('<title>Issue #3625000: Fix &lt;b&gt;the&lt;/b&gt; widget</title>', $output);
+        self::assertStringContainsString('<author>contributor</author>', $output);
+        self::assertStringContainsString('<state>opened</state>', $output);
+        self::assertStringContainsString('<draft>yes</draft>', $output);
+        self::assertStringContainsString('<source_branch>3625000-fix-widget</source_branch>', $output);
+        self::assertStringContainsString('<target_branch>1.x</target_branch>', $output);
+        self::assertStringContainsString('<head_sha>abc123</head_sha>', $output);
+        self::assertStringContainsString('<detailed_merge_status>draft_status</detailed_merge_status>', $output);
+        self::assertStringContainsString('<has_conflicts>no</has_conflicts>', $output);
+        self::assertStringContainsString('<blocking_discussions_resolved>no</blocking_discussions_resolved>', $output);
+        self::assertStringContainsString("<head_pipeline>\n    <status>success</status>\n    <url>https://git.drupalcode.org/project/tool/-/pipelines/99</url>", $output);
+        self::assertStringContainsString('<iid>3625000</iid>', $output);
+        self::assertStringContainsString('<label>state::needsReview</label>', $output);
+        self::assertStringContainsString('<url>https://git.drupalcode.org/project/tool/-/work_items/3625000</url>', $output);
+        self::assertStringNotContainsString('<comments>', $output);
+        self::assertStringNotContainsString('<target_note_id>', $output);
+    }
+
+    public function testMergeRequestResultWithoutClosingIssuesHasEmptyElement(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make(closesIssues: []));
+
+        self::assertStringContainsString("<closes_issues>\n  </closes_issues>", $output);
+    }
+
+    public function testMergeRequestResultMarksTheLinkedNote(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make(withComments: true, targetNoteId: 3625786));
+
+        self::assertStringContainsString('<target_note_id>3625786</target_note_id>', $output);
+        self::assertStringContainsString("<comment>\n      <id>100</id>", $output);
+        self::assertStringContainsString("<comment target=\"true\">\n      <id>3625786</id>", $output);
+        self::assertSame(1, substr_count($output, 'target="true"'));
+        self::assertStringContainsString('<path>src/Widget.php</path>', $output);
+        self::assertStringContainsString('<line>42</line>', $output);
+        self::assertStringContainsString('<body><![CDATA[This needs a <null> check.]]></body>', $output);
+    }
+
+    public function testMergeRequestResultWithUncheckedConflicts(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make(hasConflicts: null));
+
+        self::assertStringContainsString('<has_conflicts>unknown</has_conflicts>', $output);
+    }
+
+    public function testMergeRequestResultFlagsAMissingLinkedNote(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make(withComments: true, targetNoteId: 999));
+
+        self::assertStringContainsString('<target_note_id missing="true">999</target_note_id>', $output);
+        self::assertStringNotContainsString('target="true"', $output);
+    }
+
+    public function testMergeRequestResultReportsUnavailableComments(): void
+    {
+        $output = (new LlmFormatter())->format(MergeRequestResultFixture::make(targetNoteId: 3625786, commentsError: 'Needs a <token>.'));
+
+        self::assertStringContainsString('<target_note_id>3625786</target_note_id>', $output);
+        self::assertStringContainsString('<comments_error>Needs a &lt;token&gt;.</comments_error>', $output);
+    }
+
     public function testXmlEscapingInTitle(): void
     {
         $result = new IssueResult(
@@ -378,5 +509,36 @@ class LlmFormatterTest extends TestCase
         $output = $formatter->format(new GitLabIssueResult(self::makeGitLabIssue()));
 
         self::assertStringNotContainsString('<comments>', $output);
+    }
+
+    public function testWorkItemCommentResult(): void
+    {
+        $formatter = new LlmFormatter();
+        $output = $formatter->format(new WorkItemCommentResult('project/tool', 3583107, 3625786));
+
+        self::assertStringContainsString('<issue_iid>3583107</issue_iid>', $output);
+        self::assertStringContainsString('<note_id>3625786</note_id>', $output);
+        self::assertStringContainsString(
+            '<url>https://git.drupalcode.org/project/tool/-/work_items/3583107#note_3625786</url>',
+            $output,
+        );
+    }
+
+    public function testWorkItemLinkResult(): void
+    {
+        $formatter = new LlmFormatter();
+        $output = $formatter->format(new WorkItemLinkResult('project/mcp_server_tool_bridge', 3618722, 'is_blocked_by', 'project/mcp_server', 3585914));
+
+        self::assertStringContainsString('<link_type>is_blocked_by</link_type>', $output);
+        self::assertStringContainsString("<source>\n    <project_path>project/mcp_server_tool_bridge</project_path>\n    <issue_iid>3618722</issue_iid>", $output);
+        self::assertStringContainsString('<url>https://git.drupalcode.org/project/mcp_server/-/work_items/3585914</url>', $output);
+        self::assertStringContainsString('<already_linked>no</already_linked>', $output);
+    }
+
+    public function testWorkItemLinkResultAlreadyLinked(): void
+    {
+        $output = (new LlmFormatter())->format(new WorkItemLinkResult('project/tool', 3583118, 'relates_to', 'project/tool', 3582968, alreadyLinked: true));
+
+        self::assertStringContainsString('<already_linked>yes</already_linked>', $output);
     }
 }

@@ -1,37 +1,35 @@
 <?php
 
+declare(strict_types=1);
+
 namespace mglaman\DrupalOrgCli;
 
+use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Output\OutputInterface;
 
 trait BrowserTrait
 {
+    protected function openUrl(
+        string $url,
+        OutputInterface $stdErr,
+        OutputInterface $stdOut,
+        ?string $displayUrl = null,
+    ): bool {
+        $displayUrl ??= $url;
+        if (($this->browserLauncher())->openDefaultUrl($url)) {
+            $stdErr->writeln("<info>Opened</info>: $displayUrl");
 
-    protected function getDefaultBrowser(): ?string
-    {
-        $potential = ['xdg-open', 'open', 'start'];
-        foreach ($potential as $browser) {
-            // Check if command exists by executing help flag.
-            $output = (int) shell_exec("command -v $browser; echo $?");
-            if ($output === 0) {
-                return $browser;
-            }
+            return true;
         }
-        return null;
+
+        $stdErr->writeln('<error>Could not open a browser automatically.</error>');
+        $stdOut->writeln($displayUrl);
+
+        return false;
     }
 
-    protected function openUrl(string $url, OutputInterface $stdErr, OutputInterface $stdOut): void
+    protected function browserLauncher(): BrowserLauncher
     {
-        $browser = $this->getDefaultBrowser();
-        if ($browser !== null) {
-            $opened = (int) shell_exec("$browser $url 2>&1; echo $?");
-            if ($opened === 0) {
-                $stdErr->writeln("<info>Opened</info>: $url");
-                return;
-            }
-        } else {
-            $stdErr->writeln("<error>Browser not found: $browser</error>");
-        }
-        $stdOut->writeln($url);
+        return new BrowserLauncher();
     }
 }

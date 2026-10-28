@@ -13,11 +13,13 @@ use mglaman\DrupalOrg\Action\Issue\GetIssueForkAction;
 use mglaman\DrupalOrg\Action\Issue\GetIssueLinkAction;
 use mglaman\DrupalOrg\Action\Issue\GetLatestIssuePatchAction;
 use mglaman\DrupalOrg\Action\Maintainer\GetMaintainerIssuesAction;
+use mglaman\DrupalOrg\Action\MergeRequest\GetMergeRequestAction;
 use mglaman\DrupalOrg\Action\MergeRequest\GetMergeRequestDiffAction;
 use mglaman\DrupalOrg\Action\MergeRequest\GetMergeRequestFilesAction;
 use mglaman\DrupalOrg\Action\MergeRequest\GetMergeRequestLogsAction;
 use mglaman\DrupalOrg\Action\MergeRequest\GetMergeRequestStatusAction;
 use mglaman\DrupalOrg\Action\MergeRequest\ListMergeRequestsAction;
+use mglaman\DrupalOrg\Action\Project\GetProjectContainsAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectIssuesAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleaseNotesAction;
 use mglaman\DrupalOrg\Action\Project\GetProjectReleasesAction;
@@ -28,14 +30,17 @@ use mglaman\DrupalOrg\Enum\MergeRequestState;
 use mglaman\DrupalOrg\Enum\ProjectIssueCategory;
 use mglaman\DrupalOrg\Enum\ProjectIssueType;
 use mglaman\DrupalOrg\GitLab\Client as GitLabClient;
+use mglaman\DrupalOrg\GitLab\MergeRequestRef;
 use mglaman\DrupalOrg\GitLab\WorkItemRef;
 
 class ToolRegistry
 {
     private const NID_PATTERN = '^\d+$';
 
-    public function __construct(private readonly Client $client)
-    {
+    public function __construct(
+        private readonly Client $client,
+        private readonly GitLabClient $gitLabClient = new GitLabClient(),
+    ) {
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'issue_show', description: 'Get details of a Drupal.org issue, optionally including comments.')]
@@ -61,7 +66,7 @@ class ToolRegistry
         #[Schema(description: 'The Drupal.org issue node ID.', pattern: self::NID_PATTERN)]
         string $nid
     ): mixed {
-        return (new GetIssueBranchNameAction($this->client, new GitLabClient()))($nid)->jsonSerialize();
+        return (new GetIssueBranchNameAction($this->client, $this->gitLabClient))($nid)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'issue_get_patch_url', description: 'Get the latest patch URL for an issue.')]
@@ -77,10 +82,10 @@ class ToolRegistry
         #[Schema(description: 'The Drupal.org issue node ID.', pattern: self::NID_PATTERN)]
         string $nid
     ): mixed {
-        return (new GetIssueForkAction($this->client, new GitLabClient()))($nid)->jsonSerialize();
+        return (new GetIssueForkAction($this->client, $this->gitLabClient))($nid)->jsonSerialize();
     }
 
-    #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'project_get_issues', description: 'Get open issues for a Drupal.org project.')]
+    #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'project_get_issues', description: 'Get open issues for a Drupal.org project. Projects that migrated their issue queue to GitLab return GitLab work items in the gitlab_project_issues shape; the core filter does not apply to them.')]
     public function projectGetIssues(
         #[Schema(description: "The project machine name (e.g. 'drupal', 'token', 'pathauto').")]
         string $machineName,
@@ -97,8 +102,12 @@ class ToolRegistry
         if ($project === null) {
             throw new \RuntimeException("Project '$machineName' not found.");
         }
+        $issueType = ProjectIssueType::from($type);
         $issueCategory = $category !== null ? ProjectIssueCategory::from($category) : null;
-        return (new GetProjectIssuesAction($this->client))($project, ProjectIssueType::from($type), $core, $limit, $issueCategory)->jsonSerialize();
+        if (!$project->hasIssueQueue) {
+            return (new ListGitLabIssuesAction($this->gitLabClient))($project->machineName, limit: $limit, type: $issueType, category: $issueCategory)->jsonSerialize();
+        }
+        return (new GetProjectIssuesAction($this->client))($project, $issueType, $core, $limit, $issueCategory)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'issue_search', description: 'Search issues for a Drupal.org project by title keyword.')]
@@ -127,6 +136,20 @@ class ToolRegistry
             throw new \RuntimeException("Project '$machineName' not found.");
         }
         return (new GetProjectReleasesAction($this->client))($project)->jsonSerialize();
+    }
+
+    #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'project_contains', description: 'List the branches and tags of a Drupal.org project that contain a commit. Tags are ordered oldest first, so the first tag is the release that shipped the commit.')]
+    public function projectContains(
+        #[Schema(description: "The project machine name (e.g. 'drupal', 'token', 'pathauto').")]
+        string $machineName,
+        #[Schema(description: 'The commit SHA, full or abbreviated.')]
+        string $sha
+    ): mixed {
+        $project = $this->client->getProject($machineName);
+        if ($project === null) {
+            throw new \RuntimeException("Project '$machineName' not found.");
+        }
+        return (new GetProjectContainsAction($this->gitLabClient))($project->machineName, $sha)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'project_get_release_notes', description: 'Get release notes for a project version.')]
@@ -160,7 +183,7 @@ class ToolRegistry
         #[Schema(description: 'Filter merge requests by state.', enum: ['opened', 'closed', 'merged', 'all'])]
         string $state = 'opened'
     ): mixed {
-        return (new ListMergeRequestsAction($this->client, new GitLabClient()))($nid, MergeRequestState::from($state))->jsonSerialize();
+        return (new ListMergeRequestsAction($this->client, $this->gitLabClient))($nid, MergeRequestState::from($state))->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'mr_diff', description: 'Get the unified diff for a merge request.')]
@@ -170,7 +193,7 @@ class ToolRegistry
         #[Schema(description: 'The merge request internal ID (IID).', minimum: 1)]
         int $mrIid
     ): mixed {
-        return (new GetMergeRequestDiffAction($this->client, new GitLabClient()))($nid, $mrIid)->jsonSerialize();
+        return (new GetMergeRequestDiffAction($this->client, $this->gitLabClient))($nid, $mrIid)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'mr_files', description: 'Get changed files for a merge request.')]
@@ -180,7 +203,7 @@ class ToolRegistry
         #[Schema(description: 'The merge request internal ID (IID).', minimum: 1)]
         int $mrIid
     ): mixed {
-        return (new GetMergeRequestFilesAction($this->client, new GitLabClient()))($nid, $mrIid)->jsonSerialize();
+        return (new GetMergeRequestFilesAction($this->client, $this->gitLabClient))($nid, $mrIid)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'mr_status', description: 'Get CI pipeline status for a merge request.')]
@@ -190,7 +213,36 @@ class ToolRegistry
         #[Schema(description: 'The merge request internal ID (IID).', minimum: 1)]
         int $mrIid
     ): mixed {
-        return (new GetMergeRequestStatusAction($this->client, new GitLabClient()))($nid, $mrIid)->jsonSerialize();
+        return (new GetMergeRequestStatusAction($this->client, $this->gitLabClient))($nid, $mrIid)->jsonSerialize();
+    }
+
+    #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'mr_show', description: 'Get merge request state (draft, merge status, conflicts, blocking discussions, head pipeline), the work items it closes, and optionally its review notes. A merge request URL ending in #note_<id> also returns the notes and marks that note.')]
+    public function mrShow(
+        #[Schema(description: 'A Drupal.org issue node ID, a project-path!iid reference (e.g. project/drupal!708), or a merge request URL, optionally ending in #note_<id>.')]
+        string $ref,
+        #[Schema(description: 'The merge request internal ID (IID). Required when ref is an issue node ID.', minimum: 1)]
+        ?int $mrIid = null,
+        #[Schema(description: 'Whether to include non-system merge request notes.')]
+        bool $withComments = false,
+        #[Schema(description: 'Whether to keep drupalbot notes when including notes.')]
+        bool $includeBotComments = false
+    ): mixed {
+        $mergeRequestRef = MergeRequestRef::tryParse($ref);
+        if ($mergeRequestRef === null && !ctype_digit($ref)) {
+            throw new \InvalidArgumentException("Invalid merge request reference: $ref");
+        }
+        $mrIid = $mergeRequestRef->mrIid ?? $mrIid;
+        if ($mrIid === null) {
+            throw new \InvalidArgumentException('mrIid is required when ref does not name a merge request.');
+        }
+        $nid = $mergeRequestRef === null ? $ref : '';
+        return (new GetMergeRequestAction($this->client, $this->gitLabClient))(
+            $nid,
+            $mrIid,
+            $mergeRequestRef,
+            $withComments,
+            $includeBotComments,
+        )->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'mr_logs', description: 'Get failed CI job logs for a merge request.')]
@@ -200,7 +252,7 @@ class ToolRegistry
         #[Schema(description: 'The merge request internal ID (IID).', minimum: 1)]
         int $mrIid
     ): mixed {
-        return (new GetMergeRequestLogsAction($this->client, new GitLabClient()))($nid, $mrIid)->jsonSerialize();
+        return (new GetMergeRequestLogsAction($this->client, $this->gitLabClient))($nid, $mrIid)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'gitlab_issue_show', description: 'Get details of a GitLab work item by URL. Use for projects that have migrated their issue queue to GitLab.')]
@@ -212,7 +264,7 @@ class ToolRegistry
         if ($ref === null) {
             throw new \InvalidArgumentException("Invalid GitLab work item URL: $workItemUrl");
         }
-        return (new GetGitLabIssueAction(new GitLabClient()))($ref)->jsonSerialize();
+        return (new GetGitLabIssueAction($this->gitLabClient))($ref)->jsonSerialize();
     }
 
     #[McpTool(annotations: new ToolAnnotations(readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true), name: 'gitlab_project_issues', description: 'List GitLab issues for a project that has migrated its issue queue to GitLab.')]
@@ -222,8 +274,13 @@ class ToolRegistry
         #[Schema(description: 'Issue state filter.', enum: ['opened', 'closed', 'all'])]
         string $state = 'opened',
         #[Schema(description: 'Maximum number of issues to return.', minimum: 1, maximum: 100)]
-        int $limit = 25
+        int $limit = 25,
+        #[Schema(description: 'Filter issues by status type.', enum: ['all', 'rtbc', 'review'])]
+        string $type = 'all',
+        #[Schema(description: 'Filter issues by category.', enum: ['bug', 'task', 'feature', 'support', 'plan'])]
+        ?string $category = null
     ): mixed {
-        return (new ListGitLabIssuesAction(new GitLabClient()))($machineName, $state, $limit)->jsonSerialize();
+        $issueCategory = $category !== null ? ProjectIssueCategory::from($category) : null;
+        return (new ListGitLabIssuesAction($this->gitLabClient))($machineName, $state, $limit, ProjectIssueType::from($type), $issueCategory)->jsonSerialize();
     }
 }

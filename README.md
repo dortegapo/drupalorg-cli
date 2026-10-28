@@ -82,6 +82,71 @@ Use the 'list' command to see available commands.
 drupalorg list
 ```
 
+## Project publication
+
+`project:publish <module>` publishes a committed Drupal module subtree through
+the Drupal.org project, Git, release, and Composer workflow. It accepts either
+an explicit module directory or a machine name resolvable from the current
+Drupal/Composer project.
+
+```bash
+drupalorg project:publish ./web/modules/custom/example_module
+drupalorg project:publish example_module
+drupalorg project:publish example_module --release-version=1.0.0 --branch=1.x
+```
+
+For a missing project it retains the optional review, metadata, and manual
+project-creation handoff. Once the Drupal.org project exists it resumes at the
+first unfinished publication stage: repository availability, source push,
+release tag, manual release form, release verification, or Composer metadata.
+
+- `--release-version` and `--branch` select the release tag and release branch. They
+  are required in non-interactive publication runs; interactive mode suggests
+  `1.0.0` and `1.x` but always asks for confirmation through the prompt.
+- `--dry-run` inspects project and Git refs without mutating anything and
+  prints the resumable plan.
+- `--no-browser` prints the normal Drupal.org creation URL instead of opening a
+  browser, including the manual Drupal.org release form.
+- Git publishing needs existing SSH access to `git@git.drupal.org`. The CLI
+  never stores credentials, alters `origin`, force-pushes, or moves a tag.
+- Source must be committed. Only the module subtree is exported with `git
+  archive`; untracked files are excluded and obvious sensitive tracked files
+  block publication.
+- The Drupal.org release form is always reviewed and saved by a human in the
+  browser. Composer verification uses a temporary directory and
+  `https://packages.drupal.org/8`, never the user's project files. Packaging
+  can propagate later, so rerun the same command to resume verification.
+- When Drupal AI is available, the optional review asks before sending selected
+  module source to the configured provider. Source selection has a budget, and
+  local redaction is best effort rather than a guarantee that every secret is
+  detected. A PDF report is generated locally when the review runs.
+- The generated Drupal.org metadata is advisory. Review it and save the form
+  yourself; the CLI never submits the form.
+
+### Browser companion
+
+The optional browser companion can prefill the Drupal.org project form from the
+generated metadata. `project:publish` offers first-run setup only when browser
+use is enabled and a published companion distribution is available. You can
+also run:
+
+```bash
+drupalorg browser:setup
+drupalorg browser:setup --reset
+```
+
+For development, `browser:setup` can configure a companion that you installed
+manually with the browser's developer tools (for example, **Load unpacked**).
+Published browser-store distributions are not available yet, so
+`project:publish` falls back directly to manual form completion until one is
+published. When a distribution is available, Chrome/Chromium-compatible
+browsers, Microsoft Edge, Firefox, and Safari are offered where the operating
+system supports them. The CLI also falls back when the selected browser cannot
+be opened, the companion is not installed, or the process is headless. The
+companion never reads cookies, passwords, history, or sessions, and never
+submits or saves the Drupal.org form. Its development installation notes are in
+[`browser-extension/README.md`](browser-extension/README.md).
+
 ## Commands
 
 ````
@@ -110,8 +175,11 @@ Available commands:
   mr:files                  List changed files in a merge request.
   mr:list            [mrl]  List merge requests for a Drupal.org issue fork or project.
   mr:logs                   Show failed job traces from the latest pipeline for a merge request.
+  mr:show                   Show merge request state, the work items it closes, and optionally its review notes.
   mr:status                 Show the pipeline status for a merge request.
  project
+  project:contains          Lists the branches and tags that contain a commit.
+  project:publish             Publish a module to Drupal.org.
   project:issues      [pi]  Lists issues for a project.
   project:kanban            Opens project kanban
   project:link              Opens project page

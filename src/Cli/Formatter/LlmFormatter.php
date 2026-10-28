@@ -8,14 +8,28 @@ use mglaman\DrupalOrg\Result\GitLab\GitLabIssuesResult;
 use mglaman\DrupalOrg\Result\Issue\IssueForkResult;
 use mglaman\DrupalOrg\Result\Issue\IssueResult;
 use mglaman\DrupalOrg\Result\Issue\SlashCommandResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemCommentResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemLinkResult;
 use mglaman\DrupalOrg\Result\Maintainer\MaintainerIssuesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestDiffResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestFilesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
+use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
+use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -107,6 +121,71 @@ XML;
         return "<drupal_context>\n  <project>{$projectTitle}</project>\n  <items>\n{$items}  </items>\n</drupal_context>";
     }
 
+    protected function formatGetProject(GetProjectResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->machineName);
+        if (!$result->found()) {
+            return "<project_lookup><machine_name>{$machineName}</machine_name><found>false</found></project_lookup>";
+        }
+
+        $title = $this->xmlEscape($result->project?->title ?? '');
+
+        return "<project_lookup><machine_name>{$machineName}</machine_name><found>true</found>"
+            . "<title>{$title}</title></project_lookup>";
+    }
+
+    protected function formatProjectMetadata(ProjectMetadataResult $result): string
+    {
+        $title = $this->xmlEscape($result->title);
+        $machineName = $this->xmlEscape($result->machineName);
+        $projectType = $this->xmlEscape($result->projectType);
+        $coreRequirement = $this->xmlEscape($result->coreVersionRequirement);
+        $summary = $this->xmlEscape($result->summary);
+        $description = $this->cdataWrap($result->description);
+
+        $dependencies = '';
+        foreach ($result->dependencies as $dependency) {
+            $dependencies .= '    <dependency>' . $this->xmlEscape($dependency) . "</dependency>\n";
+        }
+
+        $features = '';
+        foreach ($result->features as $feature) {
+            $features .= '    <feature>' . $this->xmlEscape($feature) . "</feature>\n";
+        }
+
+        $integrations = '';
+        foreach ($result->integrations as $integration) {
+            $integrations .= '    <integration>' . $this->xmlEscape($integration) . "</integration>\n";
+        }
+        $formMetadata = $this->cdataWrap(json_encode([
+            'maintenance_status' => 'Actively maintained',
+            'development_status' => 'Under active development',
+            'categories' => $result->categories,
+            'ecosystems' => $result->ecosystems,
+            'supporting_organizations' => $result->supportingOrganizations,
+            'issues' => $result->issues,
+            'resources' => $result->resources,
+        ], JSON_THROW_ON_ERROR));
+
+        return <<<XML
+<project_metadata>
+  <title>{$title}</title>
+  <machine_name>{$machineName}</machine_name>
+  <project_type>{$projectType}</project_type>
+  <core_version_requirement>{$coreRequirement}</core_version_requirement>
+  <dependencies>
+{$dependencies}  </dependencies>
+  <summary>{$summary}</summary>
+  <description>{$description}</description>
+  <features>
+{$features}  </features>
+  <integrations>
+{$integrations}  </integrations>
+  <drupal_org_form_metadata>{$formMetadata}</drupal_org_form_metadata>
+</project_metadata>
+XML;
+    }
+
     protected function formatMaintainerIssues(MaintainerIssuesResult $result): string
     {
         $feedTitle = $this->xmlEscape($result->feedTitle);
@@ -139,6 +218,51 @@ XML;
             $items .= "    </item>\n";
         }
         return "<drupal_context>\n  <project>{$projectTitle}</project>\n  <items>\n{$items}  </items>\n</drupal_context>";
+    }
+
+    protected function formatProjectContains(ProjectContainsResult $result): string
+    {
+        $project = $this->xmlEscape($result->projectName);
+        $sha = $this->xmlEscape($result->sha);
+        $title = $this->xmlEscape($result->title);
+        $committedDate = $this->xmlEscape($result->committedDate);
+        $url = $this->xmlEscape($result->webUrl);
+
+        $branchesXml = '';
+        foreach ($result->branches as $branch) {
+            $branchesXml .= '    <branch>' . $this->xmlEscape($branch) . "</branch>\n";
+        }
+
+        $tagsXml = '';
+        foreach ($result->tags as $tag) {
+            $tagsXml .= '    <tag>' . $this->xmlEscape($tag) . "</tag>\n";
+        }
+
+        return <<<XML
+<drupal_context>
+  <project>{$project}</project>
+  <commit>
+    <sha>{$sha}</sha>
+    <title>{$title}</title>
+    <committed_date>{$committedDate}</committed_date>
+    <url>{$url}</url>
+  </commit>
+  <branches>
+{$branchesXml}  </branches>
+  <tags order="oldest_first">
+{$tagsXml}  </tags>
+</drupal_context>
+XML;
+    }
+
+    protected function formatResolveModule(ResolveModuleResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->module->location->machineName);
+        $path = $this->xmlEscape($result->module->location->resolvedPath);
+        $infoFile = $this->xmlEscape($result->module->location->infoFile);
+
+        return "<module><machine_name>{$machineName}</machine_name><path>{$path}</path>"
+            . "<info_file>{$infoFile}</info_file></module>";
     }
 
     protected function formatIssueFork(IssueForkResult $result): string
@@ -217,6 +341,95 @@ XML;
   <pipeline_id>{$pipelineId}</pipeline_id>
   <status>{$status}</status>
   <pipeline_url>{$pipelineUrl}</pipeline_url>
+</drupal_context>
+XML;
+    }
+
+    protected function formatMergeRequest(MergeRequestResult $result): string
+    {
+        $title = $this->xmlEscape($result->title);
+        $author = $this->xmlEscape($result->author);
+        $state = $this->xmlEscape($result->state);
+        $draft = $result->draft ? 'yes' : 'no';
+        $sourceBranch = $this->xmlEscape($result->sourceBranch);
+        $targetBranch = $this->xmlEscape($result->targetBranch);
+        $headSha = $this->xmlEscape($result->headSha);
+        $webUrl = $this->xmlEscape($result->webUrl);
+        $detailedMergeStatus = $this->xmlEscape($result->detailedMergeStatus);
+        $hasConflicts = match ($result->hasConflicts) {
+            true => 'yes',
+            false => 'no',
+            null => 'unknown',
+        };
+        $discussionsResolved = $result->blockingDiscussionsResolved ? 'yes' : 'no';
+        $pipelineStatus = $this->xmlEscape($result->pipelineStatus ?? 'none');
+        $pipelineUrl = $this->xmlEscape($result->pipelineUrl ?? '');
+
+        $closesIssuesXml = '';
+        foreach ($result->closesIssues as $issue) {
+            $closesIssuesXml .= "    <issue>\n";
+            $closesIssuesXml .= "      <iid>{$issue->iid}</iid>\n";
+            $closesIssuesXml .= '      <title>' . $this->xmlEscape($issue->title) . "</title>\n";
+            $closesIssuesXml .= '      <state>' . $this->xmlEscape($issue->state) . "</state>\n";
+            $closesIssuesXml .= "      <labels>\n";
+            foreach ($issue->labels as $label) {
+                $closesIssuesXml .= '        <label>' . $this->xmlEscape($label) . "</label>\n";
+            }
+            $closesIssuesXml .= "      </labels>\n";
+            $closesIssuesXml .= '      <url>' . $this->xmlEscape($issue->webUrl) . "</url>\n";
+            $closesIssuesXml .= "    </issue>\n";
+        }
+
+        $targetNoteXml = '';
+        if ($result->targetNoteId !== null) {
+            $targetNoteMissing = $result->isTargetNoteMissing() ? ' missing="true"' : '';
+            $targetNoteXml = "\n  <target_note_id{$targetNoteMissing}>{$result->targetNoteId}</target_note_id>";
+        }
+        $commentsErrorXml = $result->commentsError !== null
+            ? "\n  <comments_error>" . $this->xmlEscape($result->commentsError) . '</comments_error>'
+            : '';
+
+        $commentsXml = '';
+        if ($result->comments !== []) {
+            $commentsXml = "\n  <comments>";
+            foreach ($result->comments as $comment) {
+                $targetAttribute = $result->isTargetNote($comment) ? ' target="true"' : '';
+                $commentsXml .= "\n    <comment{$targetAttribute}>";
+                $commentsXml .= "\n      <id>{$comment->id}</id>";
+                $commentsXml .= "\n      <author>" . $this->xmlEscape($comment->author) . '</author>';
+                $commentsXml .= "\n      <created>" . $this->xmlEscape($comment->createdAt) . '</created>';
+                if ($comment->path !== null) {
+                    $commentsXml .= "\n      <path>" . $this->xmlEscape($comment->path) . '</path>';
+                    $commentsXml .= "\n      <line>" . ($comment->line ?? '') . '</line>';
+                }
+                $commentsXml .= "\n      <body>" . $this->cdataWrap($comment->body) . '</body>';
+                $commentsXml .= "\n    </comment>";
+            }
+            $commentsXml .= "\n  </comments>";
+        }
+
+        return <<<XML
+<drupal_context>
+  <merge_request>
+    <iid>{$result->iid}</iid>
+    <title>{$title}</title>
+    <author>{$author}</author>
+    <state>{$state}</state>
+    <draft>{$draft}</draft>
+    <source_branch>{$sourceBranch}</source_branch>
+    <target_branch>{$targetBranch}</target_branch>
+    <head_sha>{$headSha}</head_sha>
+    <url>{$webUrl}</url>
+    <detailed_merge_status>{$detailedMergeStatus}</detailed_merge_status>
+    <has_conflicts>{$hasConflicts}</has_conflicts>
+    <blocking_discussions_resolved>{$discussionsResolved}</blocking_discussions_resolved>
+  </merge_request>
+  <head_pipeline>
+    <status>{$pipelineStatus}</status>
+    <url>{$pipelineUrl}</url>
+  </head_pipeline>
+  <closes_issues>
+{$closesIssuesXml}  </closes_issues>{$targetNoteXml}{$commentsErrorXml}{$commentsXml}
 </drupal_context>
 XML;
     }
@@ -347,6 +560,48 @@ XML;
 XML;
     }
 
+    protected function formatWorkItemComment(WorkItemCommentResult $result): string
+    {
+        $projectPath = $this->xmlEscape($result->projectPath);
+        $url = $this->xmlEscape($result->noteUrl());
+
+        return <<<XML
+<drupal_context>
+  <project_path>{$projectPath}</project_path>
+  <issue_iid>{$result->issueIid}</issue_iid>
+  <note_id>{$result->noteId}</note_id>
+  <url>{$url}</url>
+</drupal_context>
+XML;
+    }
+
+    protected function formatWorkItemLink(WorkItemLinkResult $result): string
+    {
+        $sourceProjectPath = $this->xmlEscape($result->sourceProjectPath);
+        $sourceUrl = $this->xmlEscape($result->sourceUrl());
+        $linkType = $this->xmlEscape($result->linkType);
+        $targetProjectPath = $this->xmlEscape($result->targetProjectPath);
+        $targetUrl = $this->xmlEscape($result->targetUrl());
+        $alreadyLinked = $result->alreadyLinked ? 'yes' : 'no';
+
+        return <<<XML
+<drupal_context>
+  <source>
+    <project_path>{$sourceProjectPath}</project_path>
+    <issue_iid>{$result->sourceIid}</issue_iid>
+    <url>{$sourceUrl}</url>
+  </source>
+  <link_type>{$linkType}</link_type>
+  <target>
+    <project_path>{$targetProjectPath}</project_path>
+    <issue_iid>{$result->targetIid}</issue_iid>
+    <url>{$targetUrl}</url>
+  </target>
+  <already_linked>{$alreadyLinked}</already_linked>
+</drupal_context>
+XML;
+    }
+
     protected function formatSkillList(SkillListResult $result): string
     {
         $items = '';
@@ -359,6 +614,41 @@ XML;
             $items .= "    </skill>\n";
         }
         return "<skills>\n  <usage>drupalorg skill:get &lt;name&gt;</usage>\n  <items>\n{$items}  </items>\n</skills>";
+    }
+
+    protected function formatProjectRepository(ProjectRepositoryResult $result): string
+    {
+        return '<project_repository>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_repository>';
+    }
+
+    protected function formatPublishProjectSource(PublishProjectSourceResult $result): string
+    {
+        return '<source_publication>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</source_publication>';
+    }
+
+    protected function formatCreateProjectTag(CreateProjectTagResult $result): string
+    {
+        return '<release_tag>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</release_tag>';
+    }
+
+    protected function formatComposerPackage(ComposerPackageResult $result): string
+    {
+        return '<composer_package>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</composer_package>';
+    }
+
+    protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string
+    {
+        return '<project_source_status>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_source_status>';
+    }
+
+    protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
+    {
+        return '<local_project_source>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</local_project_source>';
+    }
+
+    protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string
+    {
+        return '<drupal_org_git_access>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</drupal_org_git_access>';
     }
 
     private function toIso8601(int $timestamp): string

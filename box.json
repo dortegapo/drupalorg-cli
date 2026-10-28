@@ -12,6 +12,10 @@
       "name": "/(\\.php|\\.json|\\.yml|\\.twig)$/",
       "exclude": ["Tests","tests", "docs"],
       "in": "vendor"
+    },
+    {
+      "name": "/(\\.ttf|\\.ufm|\\.afm|\\.css|\\.svg|\\.png|\\.icc)$/",
+      "in": "vendor/dompdf"
     }
   ],
   "compactors": [

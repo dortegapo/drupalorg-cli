@@ -7,14 +7,28 @@ use mglaman\DrupalOrg\Result\GitLab\GitLabIssuesResult;
 use mglaman\DrupalOrg\Result\Issue\IssueForkResult;
 use mglaman\DrupalOrg\Result\Issue\IssueResult;
 use mglaman\DrupalOrg\Result\Issue\SlashCommandResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemCommentResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemLinkResult;
 use mglaman\DrupalOrg\Result\Maintainer\MaintainerIssuesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestDiffResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestFilesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
+use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
+use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\ResultInterface;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
@@ -27,15 +41,29 @@ abstract class AbstractFormatter implements FormatterInterface
             $result instanceof IssueForkResult => $this->formatIssueFork($result),
             $result instanceof IssueSearchResult => $this->formatIssueSearch($result),
             $result instanceof ProjectIssuesResult => $this->formatProjectIssues($result),
+            $result instanceof GetProjectResult => $this->formatGetProject($result),
+            $result instanceof ProjectMetadataResult => $this->formatProjectMetadata($result),
             $result instanceof MaintainerIssuesResult => $this->formatMaintainerIssues($result),
             $result instanceof ProjectReleasesResult => $this->formatProjectReleases($result),
+            $result instanceof ProjectContainsResult => $this->formatProjectContains($result),
+            $result instanceof ResolveModuleResult => $this->formatResolveModule($result),
+            $result instanceof ProjectRepositoryResult => $this->formatProjectRepository($result),
+            $result instanceof PublishProjectSourceResult => $this->formatPublishProjectSource($result),
+            $result instanceof CreateProjectTagResult => $this->formatCreateProjectTag($result),
+            $result instanceof ComposerPackageResult => $this->formatComposerPackage($result),
+            $result instanceof ProjectSourceStatusResult => $this->formatProjectSourceStatus($result),
+            $result instanceof ProjectLocalSourceResult => $this->formatProjectLocalSource($result),
+            $result instanceof DrupalOrgGitAccessResult => $this->formatDrupalOrgGitAccess($result),
             $result instanceof MergeRequestListResult => $this->formatMergeRequestList($result),
             $result instanceof MergeRequestStatusResult => $this->formatMergeRequestStatus($result),
+            $result instanceof MergeRequestResult => $this->formatMergeRequest($result),
             $result instanceof MergeRequestFilesResult => $this->formatMergeRequestFiles($result),
             $result instanceof MergeRequestDiffResult => $this->formatMergeRequestDiff($result),
             $result instanceof GitLabIssueResult => $this->formatGitLabIssue($result),
             $result instanceof GitLabIssuesResult => $this->formatGitLabIssues($result),
             $result instanceof SlashCommandResult => $this->formatSlashCommand($result),
+            $result instanceof WorkItemCommentResult => $this->formatWorkItemComment($result),
+            $result instanceof WorkItemLinkResult => $this->formatWorkItemLink($result),
             $result instanceof SkillListResult => $this->formatSkillList($result),
             default => throw new \InvalidArgumentException(
                 sprintf('Unsupported result type: %s', get_class($result))
@@ -47,14 +75,28 @@ abstract class AbstractFormatter implements FormatterInterface
     abstract protected function formatIssueFork(IssueForkResult $result): string;
     abstract protected function formatIssueSearch(IssueSearchResult $result): string;
     abstract protected function formatProjectIssues(ProjectIssuesResult $result): string;
+    abstract protected function formatGetProject(GetProjectResult $result): string;
+    abstract protected function formatProjectMetadata(ProjectMetadataResult $result): string;
     abstract protected function formatMaintainerIssues(MaintainerIssuesResult $result): string;
     abstract protected function formatProjectReleases(ProjectReleasesResult $result): string;
+    abstract protected function formatProjectContains(ProjectContainsResult $result): string;
+    abstract protected function formatResolveModule(ResolveModuleResult $result): string;
+    abstract protected function formatProjectRepository(ProjectRepositoryResult $result): string;
+    abstract protected function formatPublishProjectSource(PublishProjectSourceResult $result): string;
+    abstract protected function formatCreateProjectTag(CreateProjectTagResult $result): string;
+    abstract protected function formatComposerPackage(ComposerPackageResult $result): string;
+    abstract protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string;
+    abstract protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string;
+    abstract protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string;
     abstract protected function formatMergeRequestList(MergeRequestListResult $result): string;
     abstract protected function formatMergeRequestStatus(MergeRequestStatusResult $result): string;
+    abstract protected function formatMergeRequest(MergeRequestResult $result): string;
     abstract protected function formatMergeRequestFiles(MergeRequestFilesResult $result): string;
     abstract protected function formatMergeRequestDiff(MergeRequestDiffResult $result): string;
     abstract protected function formatGitLabIssue(GitLabIssueResult $result): string;
     abstract protected function formatGitLabIssues(GitLabIssuesResult $result): string;
     abstract protected function formatSlashCommand(SlashCommandResult $result): string;
+    abstract protected function formatWorkItemComment(WorkItemCommentResult $result): string;
+    abstract protected function formatWorkItemLink(WorkItemLinkResult $result): string;
     abstract protected function formatSkillList(SkillListResult $result): string;
 }

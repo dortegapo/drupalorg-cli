@@ -62,11 +62,14 @@ class Application extends ParentApplication
         $commands[] = new Command\Issue\Apply();
         $commands[] = new Command\Issue\Show();
         $commands[] = new Command\Project\Link();
+        $commands[] = new Command\Project\Publish();
+        $commands[] = new Command\Browser\Setup();
         $commands[] = new Command\Project\Kanban();
         $commands[] = new Command\Project\ProjectIssues();
         $commands[] = new Command\Issue\Search();
         $commands[] = new Command\Project\Releases();
         $commands[] = new Command\Project\ReleaseNotes();
+        $commands[] = new Command\Project\Contains();
         $commands[] = new Command\Maintainer\Issues();
         $commands[] = new Command\Maintainer\ReleaseNotes();
         $commands[] = new Command\Skill\Install();
@@ -82,13 +85,17 @@ class Application extends ParentApplication
         $commands[] = new Command\Issue\Label();
         $commands[] = new Command\Issue\Unlabel();
         $commands[] = new Command\Issue\Relabel();
+        $commands[] = new Command\Issue\Comment();
+        $commands[] = new Command\Issue\Relate();
         $commands[] = new Command\MergeRequest\ListMergeRequests();
         $commands[] = new Command\MergeRequest\GetDiff();
         $commands[] = new Command\MergeRequest\GetFiles();
         $commands[] = new Command\MergeRequest\GetStatus();
+        $commands[] = new Command\MergeRequest\Show();
         $commands[] = new Command\MergeRequest\GetLogs();
         $commands[] = new Command\Mcp\Serve();
         $commands[] = new Command\Mcp\Config();
+
         return $commands;
     }
 

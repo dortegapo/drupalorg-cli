@@ -8,14 +8,28 @@ use mglaman\DrupalOrg\Result\GitLab\GitLabIssuesResult;
 use mglaman\DrupalOrg\Result\Issue\IssueForkResult;
 use mglaman\DrupalOrg\Result\Issue\IssueResult;
 use mglaman\DrupalOrg\Result\Issue\SlashCommandResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemCommentResult;
+use mglaman\DrupalOrg\Result\Issue\WorkItemLinkResult;
 use mglaman\DrupalOrg\Result\Maintainer\MaintainerIssuesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestDiffResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestFilesResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestListResult;
+use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestResult;
 use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
+use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class MarkdownFormatter extends AbstractFormatter
@@ -85,6 +99,123 @@ class MarkdownFormatter extends AbstractFormatter
         return implode("\n", $lines);
     }
 
+    protected function formatGetProject(GetProjectResult $result): string
+    {
+        if (!$result->found()) {
+            return '# ' . $result->machineName . "\n\nProject not found.";
+        }
+
+        return sprintf(
+            "# %s\n\n- **Machine name:** %s\n- **NID:** %s",
+            $result->project?->title,
+            $result->project?->machineName,
+            $result->project?->nid,
+        );
+    }
+
+    protected function formatProjectMetadata(ProjectMetadataResult $result): string
+    {
+        $lines = [];
+        $lines[] = '# ' . $result->title;
+        $lines[] = '';
+        $lines[] = '- **Machine name:** ' . $result->machineName;
+        $lines[] = '- **Project type:** ' . $result->projectType;
+        $lines[] = '- **Core requirement:** ' . $result->coreVersionRequirement;
+        $lines[] = '';
+        $lines[] = '## Summary';
+        $lines[] = '';
+        $lines[] = $result->summary;
+        $lines[] = '';
+        $lines[] = '## Description';
+        $lines[] = '';
+        $lines[] = $result->description;
+        $lines[] = '';
+        $lines[] = '## Features';
+        $lines[] = '';
+        foreach ($result->features as $feature) {
+            $lines[] = '- ' . $feature;
+        }
+        $lines[] = '';
+        $lines[] = '## Integrations';
+        $lines[] = '';
+        if ($result->integrations === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->integrations as $integration) {
+                $lines[] = '- ' . $integration;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '## Dependencies';
+        $lines[] = '';
+        if ($result->dependencies === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->dependencies as $dependency) {
+                $lines[] = '- ' . $dependency;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '## Drupal.org form metadata';
+        $lines[] = '';
+        $lines[] = '- **Maintenance status:** Actively maintained';
+        $lines[] = '- **Development status:** Under active development';
+        $lines[] = '- **Issue tracker:** ' . ($result->issues->enableTracker ? 'enabled' : 'disabled');
+        foreach ([
+            'Categories' => $result->categories,
+            'Ecosystems' => $result->ecosystems,
+            'Issue components' => $result->issues->components,
+        ] as $label => $items) {
+            $lines[] = '';
+            $lines[] = '### ' . $label;
+            if ($items === []) {
+                $lines[] = 'None declared.';
+                continue;
+            }
+            foreach ($items as $item) {
+                $lines[] = '- ' . $item;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '### Issue submission guidelines';
+        $lines[] = $result->issues->submissionGuidelines !== ''
+            ? $result->issues->submissionGuidelines
+            : 'None declared.';
+        $lines[] = '';
+        $lines[] = '### Issue summary template';
+        $lines[] = $result->issues->summaryTemplate !== ''
+            ? $result->issues->summaryTemplate
+            : 'None declared.';
+        $lines[] = '';
+        $lines[] = '### Supporting organizations';
+        if ($result->supportingOrganizations === []) {
+            $lines[] = 'None declared.';
+        } else {
+            foreach ($result->supportingOrganizations as $organization) {
+                $lines[] = '- ' . $organization->name . ': ' . $organization->howTheyHelped;
+            }
+        }
+        $lines[] = '';
+        $lines[] = '### Resources';
+        foreach ([
+            'Homepage' => $result->resources->homepage,
+            'Changelog' => $result->resources->changelog,
+            'Demo' => $result->resources->demo,
+        ] as $label => $url) {
+            if ($url !== '') {
+                $lines[] = '- ' . $label . ': ' . $url;
+            }
+        }
+        foreach ($result->resources->documentation as $documentation) {
+            $lines[] = '- Documentation — ' . $documentation->title . ': ' . $documentation->url;
+        }
+        foreach ($result->resources->screenshots as $screenshot) {
+            $lines[] = '- Screenshot: ' . $screenshot;
+        }
+
+        return implode("\n", $lines);
+    }
+
     protected function formatMaintainerIssues(MaintainerIssuesResult $result): string
     {
         $lines = [];
@@ -107,6 +238,36 @@ class MarkdownFormatter extends AbstractFormatter
             $lines[] = "- **{$release->fieldReleaseVersion}** ({$date}) — {$description}";
         }
         return implode("\n", $lines);
+    }
+
+    protected function formatProjectContains(ProjectContainsResult $result): string
+    {
+        $lines = [];
+        $lines[] = "# {$result->title}";
+        $lines[] = '';
+        $lines[] = "- **Project:** {$result->projectName}";
+        $lines[] = "- **Commit:** [{$result->sha}]({$result->webUrl})";
+        $lines[] = "- **Committed:** {$result->committedDate}";
+        $lines[] = '';
+        $lines[] = '## Branches';
+        $lines[] = '';
+        $lines[] = $result->branches === [] ? 'None' : '- ' . implode("\n- ", $result->branches);
+        $lines[] = '';
+        $lines[] = '## Tags (oldest first)';
+        $lines[] = '';
+        $lines[] = $result->tags === [] ? 'None' : '- ' . implode("\n- ", $result->tags);
+        return implode("\n", $lines);
+    }
+
+    protected function formatResolveModule(ResolveModuleResult $result): string
+    {
+        return sprintf(
+            "# %s\n\n- **Machine name:** %s\n- **Path:** %s\n- **Info file:** %s",
+            $result->module->info->name,
+            $result->module->location->machineName,
+            $result->module->location->resolvedPath,
+            $result->module->location->infoFile,
+        );
     }
 
     protected function formatIssueFork(IssueForkResult $result): string
@@ -169,6 +330,67 @@ class MarkdownFormatter extends AbstractFormatter
         }
         if ($result->pipelineUrl !== null && $result->pipelineUrl !== '') {
             $lines[] = "- **Pipeline URL:** {$result->pipelineUrl}";
+        }
+        return implode("\n", $lines);
+    }
+
+    protected function formatMergeRequest(MergeRequestResult $result): string
+    {
+        $lines = [];
+        $lines[] = "# MR !{$result->iid}: {$result->title}";
+        $lines[] = '';
+        $draft = $result->draft ? ' (draft)' : '';
+        $lines[] = "- **State:** {$result->state}{$draft}";
+        $lines[] = "- **Author:** {$result->author}";
+        $lines[] = "- **Branch:** `{$result->sourceBranch}` → `{$result->targetBranch}`";
+        $lines[] = "- **Head SHA:** `{$result->headSha}`";
+        $mergeStatus = $result->detailedMergeStatus !== '' ? $result->detailedMergeStatus : 'unknown';
+        $conflicts = match ($result->hasConflicts) {
+            true => 'yes',
+            false => 'no',
+            null => 'unknown (not checked yet, run again)',
+        };
+        $discussions = $result->blockingDiscussionsResolved ? 'resolved' : 'unresolved';
+        $lines[] = "- **Merge status:** {$mergeStatus} | Conflicts: {$conflicts} | Discussions: {$discussions}";
+        if ($result->pipelineStatus === null) {
+            $lines[] = '- **Pipeline:** none';
+        } else {
+            $lines[] = "- **Pipeline:** {$result->pipelineStatus} {$result->pipelineUrl}";
+        }
+        $lines[] = "- **URL:** {$result->webUrl}";
+        $lines[] = '';
+        $lines[] = '## Closes issues';
+        $lines[] = '';
+        if ($result->closesIssues === []) {
+            $lines[] = 'None. Merging this MR does not close any work item.';
+        }
+        foreach ($result->closesIssues as $issue) {
+            $labels = $issue->labels !== [] ? ' — ' . implode(', ', $issue->labels) : '';
+            $lines[] = "- [#{$issue->iid}]({$issue->webUrl}) [{$issue->state}] {$issue->title}{$labels}";
+        }
+        if ($result->commentsError !== null) {
+            $lines[] = '';
+            $lines[] = "> **Comments unavailable:** {$result->commentsError}";
+        }
+        if ($result->isTargetNoteMissing()) {
+            $lines[] = '';
+            $lines[] = "> **Linked note {$result->targetNoteId} not found** on this merge request.";
+        }
+        if ($result->comments !== []) {
+            $lines[] = '';
+            $lines[] = '## Comments';
+            foreach ($result->comments as $comment) {
+                $target = $result->isTargetNote($comment) ? ' ← linked note' : '';
+                $lines[] = '';
+                $lines[] = sprintf('### Note %d — %s (%s)%s', $comment->id, $comment->author, $comment->createdAt, $target);
+                if ($comment->path !== null) {
+                    $location = $comment->line !== null ? "{$comment->path}:{$comment->line}" : $comment->path;
+                    $lines[] = '';
+                    $lines[] = "On `{$location}`";
+                }
+                $lines[] = '';
+                $lines[] = $comment->body;
+            }
         }
         return implode("\n", $lines);
     }
@@ -265,6 +487,32 @@ class MarkdownFormatter extends AbstractFormatter
         );
     }
 
+    protected function formatWorkItemComment(WorkItemCommentResult $result): string
+    {
+        return sprintf(
+            "Posted [note #%d](%s) on %s#%d.",
+            $result->noteId,
+            $result->noteUrl(),
+            $result->projectPath,
+            $result->issueIid,
+        );
+    }
+
+    protected function formatWorkItemLink(WorkItemLinkResult $result): string
+    {
+        return sprintf(
+            "%s [%s#%d](%s) `%s` [%s#%d](%s).",
+            $result->alreadyLinked ? 'Already linked' : 'Linked',
+            $result->sourceProjectPath,
+            $result->sourceIid,
+            $result->sourceUrl(),
+            $result->linkType,
+            $result->targetProjectPath,
+            $result->targetIid,
+            $result->targetUrl(),
+        );
+    }
+
     protected function formatSkillList(SkillListResult $result): string
     {
         $lines = [];
@@ -278,5 +526,60 @@ class MarkdownFormatter extends AbstractFormatter
         $lines[] = '';
         $lines[] = 'Run `drupalorg skill:get <name>` to read a skill.';
         return implode("\n", $lines);
+    }
+
+    protected function formatProjectRepository(ProjectRepositoryResult $result): string
+    {
+        return sprintf("# Project repository\n\n- **Reachable:** %s\n- **URL:** %s", $result->reachable ? 'yes' : 'no', $result->url);
+    }
+
+    protected function formatPublishProjectSource(PublishProjectSourceResult $result): string
+    {
+        return sprintf("# Source publication\n\n- **Branch:** %s\n- **Commit:** %s\n- **Files changed:** %d", $result->branch, $result->commitSha, $result->filesChanged);
+    }
+
+    protected function formatCreateProjectTag(CreateProjectTagResult $result): string
+    {
+        return sprintf("# Release tag\n\n- **Tag:** %s\n- **Commit:** %s", $result->tag, $result->commitSha);
+    }
+
+    protected function formatComposerPackage(ComposerPackageResult $result): string
+    {
+        return sprintf("# Composer package\n\n- **Package:** %s\n- **Version:** %s\n- **Status:** %s", $result->package, $result->version, $result->status);
+    }
+
+    protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string
+    {
+        return sprintf(
+            "# Project source status\n\n- **Branch matches source:** %s\n- **Tag matches source:** %s",
+            $result->branchMatchesSource ? 'yes' : 'no',
+            $result->tagMatchesSource ? 'yes' : 'no',
+        );
+    }
+
+    protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
+    {
+        return sprintf(
+            "# Local project source\n\n- **Repository exists:** %s\n- **Git root:** %s\n- **Module prefix:** %s\n- **Repository has HEAD:** %s\n- **Module in HEAD:** %s\n- **Module clean:** %s\n- **Commit:** %s\n- **Tree:** %s\n- **Bootstrap required:** %s\n- **Bootstrap reason:** %s",
+            $result->repositoryExists ? 'yes' : 'no',
+            $result->gitRoot,
+            $result->modulePrefix,
+            $result->repositoryHasHead ? 'yes' : 'no',
+            $result->moduleExistsInHead ? 'yes' : 'no',
+            $result->moduleClean ? 'yes' : 'no',
+            $result->sourceCommitSha,
+            $result->sourceTreeSha,
+            $result->bootstrapRequired ? 'yes' : 'no',
+            $result->bootstrapReason ?? 'none',
+        );
+    }
+
+    protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string
+    {
+        return sprintf(
+            "# Drupal.org Git access\n\n- **Status:** %s\n- **Username:** %s",
+            $result->status,
+            $result->username ?? 'unknown',
+        );
     }
 }
