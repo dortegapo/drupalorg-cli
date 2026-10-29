@@ -257,7 +257,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n\n"));
+        $input->setStream($this->inputStream(''));
         $result = $handoff->run(
             $input,
             $output,
@@ -358,7 +358,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n1\n\n\n"));
+        $input->setStream($this->inputStream("1\n\n"));
 
         $result = $handoff->run(
             $input,
@@ -379,7 +379,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertSame(BrowserFamily::CHROMIUM, $manager->getBrowserFamily());
     }
 
-    public function testDecliningPrefillKeepsTheManualHandoff(): void
+    public function testConfiguredCompanionPrefillsAutomatically(): void
     {
         $opened = [];
         $handoff = new DrupalOrgProjectCreationHandoff(
@@ -397,7 +397,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("n\n"));
+        $input->setStream($this->inputStream(''));
 
         $result = $handoff->run(
             $input,
@@ -412,7 +412,8 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         );
 
         self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
-        self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
+        self::assertCount(1, $opened);
+        self::assertStringStartsWith(DrupalOrgProjectPrefillUrlBuilder::PROJECT_CREATION_URL . '#', $opened[0]);
     }
 
     public function testReopensTheSamePrefillUrl(): void
@@ -433,7 +434,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n"));
+        $input->setStream($this->inputStream(''));
 
         $result = $handoff->run(
             $input,
@@ -516,7 +517,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n"));
+        $input->setStream($this->inputStream(''));
         $output = new BufferedOutput();
 
         $handoff->run(
@@ -555,7 +556,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n"));
+        $input->setStream($this->inputStream(''));
         $output = new BufferedOutput();
 
         $result = $handoff->run(
@@ -601,7 +602,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n"));
+        $input->setStream($this->inputStream(''));
         $output = new BufferedOutput(OutputInterface::VERBOSITY_DEBUG);
         $errorOutput = new BufferedOutput();
 
@@ -657,7 +658,7 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
         );
         $input->setInteractive(true);
-        $input->setStream($this->inputStream("y\n"));
+        $input->setStream($this->inputStream(''));
         $output = new BufferedOutput();
         $errorOutput = new BufferedOutput();
 

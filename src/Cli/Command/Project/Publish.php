@@ -211,7 +211,7 @@ class Publish extends Command
             if (!$review->continuePublishing) {
                 return self::SUCCESS;
             }
-            $metadata = $this->generateMetadataIfRequested($input, $output, $module, $review, $progress);
+            $metadata = $this->generateMetadata($output, $module, $review, $progress);
             $handoff = ($this->projectCreationHandoff ?? new DrupalOrgProjectCreationHandoff(
                 $this->client,
                 null,
@@ -794,8 +794,7 @@ class Publish extends Command
 
     /**
      */
-    private function generateMetadataIfRequested(
-        InputInterface $input,
+    private function generateMetadata(
         OutputInterface $output,
         ModuleContext $module,
         ModuleReviewWorkflowResult $review,
@@ -807,16 +806,9 @@ class Publish extends Command
         }
 
         $output->writeln('');
+        $output->writeln('Generating Drupal.org project metadata automatically.');
         $output->writeln('This uses one additional AI request. Module source is not sent again.');
         $output->writeln('');
-        if (!$this->askConfirmation(
-            $input,
-            $output,
-            '<fg=yellow;options=bold>Generate Drupal.org project metadata automatically?</> [Y/n] ',
-            true,
-        )) {
-            return null;
-        }
 
         $progress->register([
             ProjectPublishProgressRenderer::GENERATING_METADATA => 'Generating project metadata',

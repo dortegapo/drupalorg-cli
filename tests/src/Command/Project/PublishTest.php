@@ -300,7 +300,7 @@ class PublishTest extends TestCase
                 ]],
             ]),
         );
-        $tester->setInputs(['y', 'y', 'y', 'n', 'cancel']);
+        $tester->setInputs(['y', 'y']);
 
         self::assertSame(0, $tester->execute([
             'module' => 'my_module',
@@ -308,7 +308,8 @@ class PublishTest extends TestCase
             '--branch' => '1.x',
         ]));
         self::assertSame(1, $command->metadataCalls);
-        self::assertStringContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
+        self::assertStringNotContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
+        self::assertStringContainsString('Generating Drupal.org project metadata automatically.', $tester->getDisplay());
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
         self::assertStringContainsString('Summary', $tester->getDisplay());
         self::assertStringContainsString('This uses one additional AI request. Module source is not sent again.', $tester->getDisplay());
@@ -316,7 +317,7 @@ class PublishTest extends TestCase
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
 
-    public function testMetadataGenerationCanBeSkipped(): void
+    public function testMetadataGenerationDoesNotRunWhenReviewIsCancelled(): void
     {
         $this->createDiscoverableModule();
         chdir($this->workDir);
@@ -338,7 +339,7 @@ class PublishTest extends TestCase
                 ]],
             ]),
         );
-        $tester->setInputs(['y', 'y', 'n', 'cancel']);
+        $tester->setInputs(['y', 'n']);
 
         self::assertSame(0, $tester->execute([
             'module' => 'my_module',
@@ -346,6 +347,7 @@ class PublishTest extends TestCase
             '--branch' => '1.x',
         ]));
         self::assertSame(0, $command->metadataCalls);
+        self::assertStringNotContainsString('Generate Drupal.org project metadata automatically?', $tester->getDisplay());
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
 
@@ -371,7 +373,7 @@ class PublishTest extends TestCase
                 ]],
             ]),
         );
-        $tester->setInputs(['y', 'y', 'y', 'cancel']);
+        $tester->setInputs(['y', 'y']);
 
         self::assertSame(0, $tester->execute([
             'module' => 'my_module',

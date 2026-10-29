@@ -23,7 +23,6 @@ use Symfony\Component\Console\Helper\QuestionHelper;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Question\ConfirmationQuestion;
 
 final class DrupalOrgProjectCreationHandoff
 {
@@ -149,11 +148,7 @@ final class DrupalOrgProjectCreationHandoff
     ): ?string {
         if ($metadata === null
             || !$input->hasOption('no-browser')
-            || (bool) $input->getOption('no-browser')
-            || !(bool) $helper->ask($input, $output, new ConfirmationQuestion(
-                '<fg=yellow;options=bold>Prefill the Drupal.org project form automatically?</> [Y/n] ',
-                true,
-            ))) {
+            || (bool) $input->getOption('no-browser')) {
             return null;
         }
 
