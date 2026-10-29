@@ -35,6 +35,7 @@ use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrgCli\Command\Command;
 use mglaman\DrupalOrgCli\Browser\BrowserLauncher;
 use Symfony\Component\Console\Helper\QuestionHelper;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -807,7 +808,7 @@ class Publish extends Command
 
         $output->writeln('');
         $output->writeln('Generating Drupal.org project metadata automatically.');
-        $output->writeln('This uses one additional AI request. Module source is not sent again.');
+        $output->writeln('This may use up to two additional AI requests. Module source is not sent again.');
         $output->writeln('');
 
         $progress->register([
@@ -829,9 +830,12 @@ class Publish extends Command
             $progress->complete(ProjectPublishProgressRenderer::GENERATING_METADATA);
 
             return $metadata;
-        } catch (\Exception) {
+        } catch (\Throwable $exception) {
             $progress->fail(ProjectPublishProgressRenderer::GENERATING_METADATA);
             $progress->warning('Could not generate Drupal.org project metadata automatically.');
+            if ($output->isVerbose() && trim($exception->getMessage()) !== '') {
+                $progress->detail('Metadata generation detail: ' . OutputFormatter::escape(trim($exception->getMessage())));
+            }
             $progress->warning('You can enter the project metadata manually on Drupal.org.');
 
             return null;

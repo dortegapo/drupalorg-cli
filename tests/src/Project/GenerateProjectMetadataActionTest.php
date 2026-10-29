@@ -118,6 +118,44 @@ final class GenerateProjectMetadataActionTest extends TestCase
         $action(...self::input());
     }
 
+    public function testRetriesMetadataGenerationAfterARejectedResponse(): void
+    {
+        $attempts = 0;
+        $action = new GenerateProjectMetadataAction(
+            static function () use (&$attempts): array {
+                ++$attempts;
+                if ($attempts === 1) {
+                    return [
+                        'providerId' => 'provider',
+                        'modelId' => 'model',
+                        'result' => [
+                            'summary' => '<strong>Invalid summary</strong>',
+                        ],
+                        'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
+                    ];
+                }
+
+                return [
+                    'providerId' => 'provider',
+                    'modelId' => 'model',
+                    'result' => [
+                        'summary' => 'Summary.',
+                        'description' => 'Description.',
+                        'features' => [],
+                        'integrations' => [],
+                        ...self::additionalMetadata(),
+                    ],
+                    'tokenUsage' => ['input' => null, 'output' => null, 'total' => null],
+                ];
+            },
+        );
+
+        $result = $action(...self::input());
+
+        self::assertSame(2, $attempts);
+        self::assertSame('Summary.', $result->summary);
+    }
+
     /**
      * @return array{
      *     runtime: array{type: 'local-drush', workingDirectory: string, command: list<string>},

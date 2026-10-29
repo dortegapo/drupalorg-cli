@@ -312,7 +312,7 @@ class PublishTest extends TestCase
         self::assertStringContainsString('Generating Drupal.org project metadata automatically.', $tester->getDisplay());
         self::assertStringContainsString('Drupal.org project metadata', $tester->getDisplay());
         self::assertStringContainsString('Summary', $tester->getDisplay());
-        self::assertStringContainsString('This uses one additional AI request. Module source is not sent again.', $tester->getDisplay());
+        self::assertStringContainsString('This may use up to two additional AI requests. Module source is not sent again.', $tester->getDisplay());
         self::assertStringNotContainsString('Selected source is locally filtered/redacted on a best-effort basis', $tester->getDisplay());
         self::assertStringNotContainsString('Metadata AI:', $tester->getDisplay());
     }
@@ -380,7 +380,7 @@ class PublishTest extends TestCase
             '--release-version' => '1.0.0',
             '--branch' => '1.x',
         ]));
-        self::assertSame(1, $command->metadataCalls);
+        self::assertSame(2, $command->metadataCalls);
         self::assertStringContainsString(
             'Could not generate Drupal.org project metadata automatically.',
             $tester->getDisplay(),

@@ -12,6 +12,8 @@ use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 
 final class GenerateProjectMetadataAction implements ActionInterface
 {
+    private const MAX_ATTEMPTS = 2;
+
     /**
      * @param \Closure|null $structuredChat
      */
@@ -57,8 +59,25 @@ final class GenerateProjectMetadataAction implements ActionInterface
             'review' => $review,
             'sourceCoverage' => $sourceCoverage,
         ]);
-        $response = $this->callStructuredChat($runtime, $prompts, $onWait);
-        $metadata = (new ProjectMetadataResultValidator())->validate($response['result']);
+        $response = null;
+        $metadata = null;
+        $lastException = null;
+        for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; ++$attempt) {
+            $attemptPrompts = $attempt === 1
+                ? $prompts
+                : $this->retryPrompts($prompts);
+            try {
+                $response = $this->callStructuredChat($runtime, $attemptPrompts, $onWait);
+                $metadata = (new ProjectMetadataResultValidator())->validate($response['result']);
+                break;
+            } catch (\RuntimeException $exception) {
+                $lastException = $exception;
+            }
+        }
+
+        if ($response === null || $metadata === null) {
+            throw $lastException ?? new \RuntimeException('Drupal AI project metadata generation failed.');
+        }
 
         return new ProjectMetadataResult(
             title: $title,
@@ -165,5 +184,23 @@ final class GenerateProjectMetadataAction implements ActionInterface
          *     tokenUsage: array{input: ?int, output: ?int, total: ?int}
          * } $response */
         return $response;
+    }
+
+    /**
+     * @param array{systemPrompt: string, userPrompt: string, schema: array<string, mixed>} $prompts
+     *
+     * @return array{systemPrompt: string, userPrompt: string, schema: array<string, mixed>}
+     */
+    private function retryPrompts(array $prompts): array
+    {
+        $prompts['userPrompt'] .= <<<'PROMPT'
+
+
+This is a retry after the previous generation attempt failed. Return a complete
+JSON object that follows the supplied schema exactly. Do not omit fields, add fields,
+use HTML or Markdown, invent URLs, or use category values outside the supplied enum.
+PROMPT;
+
+        return $prompts;
     }
 }
