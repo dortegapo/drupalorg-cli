@@ -74,8 +74,11 @@ class ProjectMetadataPromptBuilderTest extends TestCase
         self::assertArrayNotHasKey('$ref', $result['schema']);
         self::assertArrayNotHasKey('$defs', $result['schema']);
         self::assertSame('array', $result['schema']['properties']['features']['type']);
+        self::assertSame(10, $result['schema']['properties']['features']['maxItems']);
         self::assertSame('string', $result['schema']['properties']['features']['items']['type']);
         self::assertSame('array', $result['schema']['properties']['integrations']['type']);
+        self::assertSame(10, $result['schema']['properties']['integrations']['maxItems']);
+        self::assertSame(3, $result['schema']['properties']['categories']['maxItems']);
     }
 
     public function testProjectMetadataValuesRemainDataInsideTheUserPrompt(): void

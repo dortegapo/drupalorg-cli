@@ -91,7 +91,7 @@ The source coverage is {$input['sourceCoverage']}. If it is partial, do not infe
 
 The output must be a factual, reusable-project-focused English summary and description. Summary: one or two concise sentences. Description: one to three concise paragraphs explaining what the module does, the reusable problem it addresses, and its general use. Avoid marketing language such as "powerful" or "ultimate".
 
-Features must be concise, observable capabilities supported by the characterization. Normally return three to eight features. Integrations must contain only real integrations supported by the characterization; return an empty list for a generic Drupal concept when no integration is supported.
+Features must be concise, observable capabilities supported by the characterization. Normally return three to eight features. Integrations must contain only real integrations supported by the characterization, such as a contributed module or external service. Do not list individual token families, Drupal concepts, or generic APIs as separate integrations. Return at most ten integrations, or an empty list when no real integration is supported.
 
 Categories must contain zero to three exact values from the Drupal.org module category vocabulary. Choose categories only when the characterization supports them. Ecosystem entries must be existing Drupal.org project names clearly supported by the module's purpose or dependencies; return an empty list when the module is not an ecosystem extension. Supporting organizations may include an employer or organization only when the supplied evidence explicitly identifies it as supporting, developing, or maintaining this module. Do not infer an employer from the user's account, license, email address, or unrelated context. If no organization is explicitly evidenced, return an empty list. Never invent an organization.
 
@@ -114,14 +114,17 @@ PROMPT;
                 'description' => ['type' => 'string'],
                 'features' => [
                     'type' => 'array',
+                    'maxItems' => 10,
                     'items' => ['type' => 'string'],
                 ],
                 'integrations' => [
                     'type' => 'array',
+                    'maxItems' => 10,
                     'items' => ['type' => 'string'],
                 ],
                 'categories' => [
                     'type' => 'array',
+                    'maxItems' => 3,
                     'items' => [
                         'type' => 'string',
                         'enum' => DrupalOrgProjectFormData::MODULE_CATEGORIES,
@@ -129,10 +132,12 @@ PROMPT;
                 ],
                 'ecosystem' => [
                     'type' => 'array',
+                    'maxItems' => 10,
                     'items' => ['type' => 'string'],
                 ],
                 'supporting_organizations' => [
                     'type' => 'array',
+                    'maxItems' => 10,
                     'items' => [
                         'type' => 'object',
                         'additionalProperties' => false,
@@ -149,6 +154,7 @@ PROMPT;
                     'properties' => [
                         'components' => [
                             'type' => 'array',
+                            'maxItems' => 10,
                             'items' => ['type' => 'string'],
                         ],
                         'submission_guidelines' => ['type' => 'string'],
@@ -183,6 +189,7 @@ PROMPT;
                         ],
                         'screenshots' => [
                             'type' => 'array',
+                            'maxItems' => 10,
                             'items' => ['type' => 'string'],
                         ],
                     ],

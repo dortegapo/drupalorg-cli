@@ -199,6 +199,8 @@ final class GenerateProjectMetadataAction implements ActionInterface
 This is a retry after the previous generation attempt failed. Return a complete
 JSON object that follows the supplied schema exactly. Do not omit fields, add fields,
 use HTML or Markdown, invent URLs, or use category values outside the supplied enum.
+Keep every list within its schema maxItems limit, especially integrations: include only
+real module or external-service integrations, not individual Drupal concepts or token families.
 PROMPT;
 
         return $prompts;
