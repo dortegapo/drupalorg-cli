@@ -93,6 +93,12 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringNotContainsString('Methodology', $html);
         self::assertStringNotContainsString('Assessment signals', $html);
         self::assertStringNotContainsString('Deterministic code-quality checks', $html);
+        self::assertStringNotContainsString('<h2>Module</h2>', $html);
+        self::assertStringNotContainsString('Machine name', $html);
+        self::assertStringNotContainsString('Human-readable name', $html);
+        self::assertStringNotContainsString('Core version requirement', $html);
+        self::assertStringNotContainsString('Module purpose', $html);
+        self::assertStringNotContainsString('Evidence scope', $html);
     }
 
     public function testRendersReadableDiscoveryAndComparisonSections(): void
@@ -284,7 +290,7 @@ final class ModuleReviewPdfReportWriterTest extends TestCase
         self::assertStringNotContainsString('Target Drupal core', $html);
         self::assertStringNotContainsString('Runtime</dt><dd>Drupal 11.4.8', $html);
         self::assertStringNotContainsString('Target major</dt><dd>Drupal 11', $html);
-        self::assertStringContainsString('Core version requirement</dt><dd>^11', $html);
+        self::assertStringNotContainsString('Core version requirement</dt><dd>^11', $html);
         self::assertStringNotContainsString('Outdated for Drupal 11', $html);
         self::assertStringNotContainsString('Core compatibility', $html);
         self::assertStringNotContainsString('Latest verified core support', $html);

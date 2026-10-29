@@ -54,13 +54,10 @@ final class ModuleReviewPdfReportWriter
      */
     private function buildHtml(array $analysis, array $moduleInfo): string
     {
-        $machineName = $this->escape($moduleInfo['machineName']);
         $html = '<!doctype html><html><head><meta charset="UTF-8">'
             . '<style>' . $this->styles() . '</style></head><body>';
         $html .= '<h1>Drupal.org Contribution Review</h1>';
-        $html .= '<p class="subtitle">' . $machineName . '</p>';
         $html .= '<p class="notice">AI-assisted, advisory report</p>';
-        $html .= $this->moduleSection($moduleInfo);
         $html .= $this->assessmentSection($analysis);
 
         $review = is_array($analysis['review'] ?? null) ? $analysis['review'] : null;
@@ -78,24 +75,6 @@ final class ModuleReviewPdfReportWriter
         $html .= '</body></html>';
 
         return $html;
-    }
-
-    /**
-     * @param array{
-     *     machineName: string,
-     *     name: string,
-     *     type: string,
-     *     coreVersionRequirement: string
-     * } $moduleInfo
-     */
-    private function moduleSection(array $moduleInfo): string
-    {
-        return '<section><h2>Module</h2><dl>'
-            . $this->definition('Machine name', $moduleInfo['machineName'])
-            . $this->definition('Human-readable name', $moduleInfo['name'])
-            . $this->definition('Type', $moduleInfo['type'])
-            . $this->definition('Core version requirement', $moduleInfo['coreVersionRequirement'])
-            . '</dl></section>';
     }
 
     /**
@@ -186,7 +165,6 @@ final class ModuleReviewPdfReportWriter
     private function reviewSection(array $review): string
     {
         $html = '<section><h2>Module review</h2>';
-        $html .= '<h3>Module purpose</h3><p>' . $this->escape($this->stringValue($review['purpose'] ?? 'Unavailable')) . '</p>';
         $html .= $this->reusabilitySection($review['reusability'] ?? null);
         $html .= $this->contribReadinessSection($review['contrib_readiness'] ?? null);
         $html .= '</section>';
@@ -238,11 +216,7 @@ final class ModuleReviewPdfReportWriter
         $html = '<section><h2>Functional overlap</h2>'
             . '<p><strong>Verdict:</strong> ' . $this->escape($this->label($comparison['verdict'] ?? 'unknown'))
             . '<br><strong>Confidence:</strong> ' . $this->formatConfidence($comparison['confidence'] ?? null)
-            . '</p><p>' . $this->escape($this->stringValue($comparison['summary'] ?? 'Unavailable')) . '</p>'
-            . '<aside class="evidence-scope"><strong>Evidence scope</strong><br>'
-            . 'Comparison uses public Drupal.org metadata; candidate source code was not downloaded. '
-            . 'Missing metadata is treated as unverified.'
-            . '</aside>';
+            . '</p><p>' . $this->escape($this->stringValue($comparison['summary'] ?? 'Unavailable')) . '</p>';
         $candidateMap = $this->candidateMap($analysis['candidates'] ?? []);
         $comparisonCandidates = is_array($comparison['candidates'] ?? null) ? $comparison['candidates'] : [];
         $detailedCandidates = [];
@@ -372,11 +346,6 @@ final class ModuleReviewPdfReportWriter
         }
 
         return $html . '</ul></section>';
-    }
-
-    private function definition(string $label, string $value): string
-    {
-        return '<dt>' . $this->escape($label) . '</dt><dd>' . $this->escape($value) . '</dd>';
     }
 
     private function findingsList(mixed $findings, string $heading = 'Findings', string $semanticType = 'neutral'): string
