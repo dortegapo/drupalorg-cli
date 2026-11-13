@@ -5,13 +5,18 @@
     "skill-data"
   ],
   "files": [
-    "vendor/symfony/console/Resources/bin/hiddeninput.exe"
+    "vendor/symfony/console/Resources/bin/hiddeninput.exe",
+    "vendor/phpstan/phpstan/bootstrap.php"
   ],
   "finder": [
     {
       "name": "/(\\.php|\\.json|\\.yml|\\.twig)$/",
       "exclude": ["Tests","tests", "docs"],
       "in": "vendor"
+    },
+    {
+      "name": "/(\\.ttf|\\.ufm|\\.afm|\\.css|\\.svg|\\.png|\\.icc)$/",
+      "in": "vendor/dompdf"
     }
   ],
   "compactors": [
