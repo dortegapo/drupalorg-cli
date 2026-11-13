@@ -76,6 +76,31 @@ with clearly labelled fields, contributor lists, and change records.
 
 ## Command Reference
 
+### Project publication
+
+`project:publish <module>` validates a committed module, checks the Drupal.org
+project and repository, and resumes the first incomplete source, tag, release, or
+Composer verification step. For a new project it runs the optional AI contribution
+review, prints generated metadata for the human Drupal.org form, and polls until the
+project exists.
+
+```bash
+drupalorg project:publish <module>
+drupalorg project:publish <module> --release-version=1.0.0 --branch=1.0.x
+drupalorg project:publish <module> --dry-run --release-version=1.0.0 --branch=1.0.x
+```
+
+The source must be committed and clean. An initial interactive run may initialize
+Git and create the module-only commit; untracked files are never published. Git
+publication requires Drupal.org SSH access. The command first respects the user's
+normal OpenSSH configuration and, when needed, can select a local SSH identity
+that successfully authenticates and reuse it for source and tag pushes. Drupal.org
+project and release forms remain human-reviewed browser steps. The command waits
+for both creations automatically and resumes after Save. Rerun
+`project:publish` after an interruption or while Composer packaging is still
+propagating. Use `--no-browser` to print URLs without opening them. `--dry-run`
+performs read-only inspection and prints the resumable plan.
+
 ### Issue commands
 
 `<nid>` accepts a D.o NID, shorthand (`ai_context#3586157`), or full GitLab work item URL.
