@@ -7,23 +7,35 @@ namespace mglaman\DrupalOrg\Action\Project;
 use mglaman\DrupalOrg\Action\ActionInterface;
 use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
 use mglaman\DrupalOrg\Project\ProjectRepositoryUrls;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
 
 /** Inspects public Drupal.org refs without cloning a project repository. */
 class InspectProjectRepositoryAction implements ActionInterface
 {
-    public function __construct(private readonly ?ProjectRepositoryUrls $urls = null)
-    {
+    public function __construct(
+        private readonly ?ProjectRepositoryUrls $urls = null,
+        /** @var \Closure(list<string>): Process|null */
+        private readonly ?\Closure $processFactory = null,
+    ) {
     }
 
     public function __invoke(string $machineName): ProjectRepositoryResult
     {
         $url = ($this->urls ?? ProjectRepositoryUrls::forDrupalOrg($machineName))->readUrl;
         try {
-            $process = new Process(['git', 'ls-remote', '--heads', '--tags', $url]);
+            $process = ($this->processFactory ?? static fn(array $command): Process => new Process($command))([
+                'git',
+                'ls-remote',
+                '--heads',
+                '--tags',
+                $url,
+            ]);
             $process->setTimeout(20);
             $process->setEnv(array_merge($_ENV, $_SERVER, ['GIT_TERMINAL_PROMPT' => '0']));
             $process->run();
+        } catch (ProcessTimedOutException) {
+            return new ProjectRepositoryResult($url, false, failure: 'network_failure');
         } catch (\Throwable $exception) {
             return new ProjectRepositoryResult($url, false, failure: 'git_not_available');
         }

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "drupalorg-cli project form prefill",
+  "version": "0.1.0",
+  "description": "Prefills the Drupal.org project creation form from drupalorg-cli.",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": ["https://www.drupal.org/node/add/project-module*"],
+      "js": ["prefill.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

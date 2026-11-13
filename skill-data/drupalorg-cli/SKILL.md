@@ -101,6 +101,18 @@ for both creations automatically and resumes after Save. Rerun
 propagating. Use `--no-browser` to print URLs without opening them. `--dry-run`
 performs read-only inspection and prints the resumable plan.
 
+`browser:setup` optionally configures the Browser Companion for project form
+prefill. The extension fills fields from generated metadata but never submits
+the form. If it is not configured, not published for the selected browser, or
+cannot be launched, `project:publish` uses the normal manual form. Project
+verification polls immediately and backs off to a maximum five-second interval;
+the command resumes automatically after Save without an Enter prompt.
+
+```bash
+drupalorg browser:setup
+drupalorg browser:setup --reset
+```
+
 ### Issue commands
 
 `<nid>` accepts a D.o NID, shorthand (`ai_context#3586157`), or full GitLab work item URL.

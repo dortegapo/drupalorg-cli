@@ -107,6 +107,10 @@ release tag, manual release form, release verification, or Composer metadata.
   prints the resumable plan.
 - `--no-browser` prints the normal Drupal.org creation URL instead of opening a
   browser, including the manual Drupal.org release form.
+- `browser:setup` configures the optional Browser Companion used to prefill the
+  project form from generated metadata. The companion only fills the form; it
+  never submits it. If it is not configured, unavailable, or cannot be opened,
+  publication falls back to the normal manual form.
 - Git publishing needs SSH access to `git@git.drupal.org`. The command first
   respects the user's normal OpenSSH configuration and, when needed, can select
   a local SSH identity that successfully authenticates and reuse it for source
@@ -126,6 +130,11 @@ release tag, manual release form, release verification, or Composer metadata.
   detected. A PDF report is generated locally when the review runs.
 - The generated Drupal.org metadata is advisory. Review it and save the form
   yourself; the CLI never submits the form.
+
+Project creation and release verification use automatic polling after Save. The
+project checks start immediately and back off to a maximum five-second interval;
+no extra Enter prompt is required. Ctrl+C remains the way to cancel a waiting
+command.
 
 ## Commands
 
@@ -157,6 +166,8 @@ Available commands:
   mr:logs                   Show failed job traces from the latest pipeline for a merge request.
   mr:show                   Show merge request state, the work items it closes, and optionally its review notes.
   mr:status                 Show the pipeline status for a merge request.
+ browser
+  browser:setup             Configure the optional Drupal.org browser companion.
  project
   project:contains          Lists the branches and tags that contain a commit.
   project:publish             Publish a module to Drupal.org.

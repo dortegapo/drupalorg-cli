@@ -95,7 +95,7 @@ final class DrupalOrgReleaseCreationHandoffTest extends TestCase
             new Project('123', 'Example', 'example'),
             ProjectReleaseVersion::fromString('10.6.3'),
         ));
-        self::assertSame([2, 3], $delays);
+        self::assertSame([1, 2], $delays);
         self::assertStringContainsString('FOUND Drupal.org release: 10.6.3', $output->fetch());
     }
 

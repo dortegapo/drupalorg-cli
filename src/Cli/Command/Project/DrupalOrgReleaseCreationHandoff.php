@@ -60,7 +60,7 @@ final class DrupalOrgReleaseCreationHandoff
         Project $project,
         ProjectReleaseVersion $version,
     ): bool {
-        $delays = [2, 3, 5, 5, 10];
+        $delays = [1, 2, 3, 5];
         $attempt = 0;
         while (true) {
             try {

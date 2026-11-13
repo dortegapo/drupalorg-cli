@@ -93,6 +93,17 @@ jobs:
     - name: phpunit
       run: ./vendor/bin/phpunit
 
+  browser-companion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Browser Companion tests
+        run: node --test browser-extension/test/*.test.mjs
+
   drupal-compat:
     # Checks that this package can be installed as a dependency of a Drupal
     # site, so its Symfony constraints don't conflict with Drupal core's.

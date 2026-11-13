@@ -20,6 +20,7 @@ use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 
 #[CoversClass(InspectProjectRepositoryAction::class)]
 #[CoversClass(InspectProjectSourceAction::class)]
@@ -72,6 +73,25 @@ final class ProjectPublicationGitActionTest extends TestCase
         self::assertSame('repository_not_ready', InspectProjectRepositoryAction::classifyFailure('Project foo could not be found (HTTP 404)'));
         self::assertSame('network_failure', InspectProjectRepositoryAction::classifyFailure('Could not resolve host: git.drupal.org'));
         self::assertSame('network_failure', InspectProjectRepositoryAction::classifyFailure('SSL connection timeout'));
+    }
+
+    public function testRepositoryTimeoutIsReportedAsNetworkFailure(): void
+    {
+        $timedOutProcess = new class(['git', 'ls-remote']) extends Process {
+            public function run(?callable $callback = null, array $env = []): int
+            {
+                throw new ProcessTimedOutException($this, ProcessTimedOutException::TYPE_GENERAL);
+            }
+        };
+        $repository = (new InspectProjectRepositoryAction(
+            $this->urls,
+            static function (array $command) use ($timedOutProcess): Process {
+                return $timedOutProcess;
+            },
+        ))('foo');
+
+        self::assertFalse($repository->reachable);
+        self::assertSame('network_failure', $repository->failure);
     }
 
     public function testPushFailureClassificationIsSafeAndActionable(): void

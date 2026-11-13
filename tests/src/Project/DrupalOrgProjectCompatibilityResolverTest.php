@@ -41,6 +41,28 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         self::assertSame('incompatible', $resolver->resolve('coffee', [11])['status']);
     }
 
+    public function testTreatsPrereleaseVersionsAsCompatibilityEvidence(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('2.0.0-alpha1', '^11'),
+                self::package('2.0.0-beta1', '^11'),
+                self::package('2.0.0-rc1', '^11'),
+            ]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', [11])['status']);
+    }
+
+    public function testReportsUnknownWhenMetadataContainsOnlyDevelopmentVersions(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([self::package('2.0.x-dev', '^11'), self::package('dev-main', '^10')]),
+        ]);
+
+        self::assertSame('unknown', $resolver->resolve('coffee', [11])['status']);
+    }
+
     public function testCompatibilityUsesAnyLocalMajorIntersection(): void
     {
         $resolver = $this->resolver([

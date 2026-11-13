@@ -181,7 +181,7 @@ final class DrupalOrgProjectCompatibilityResolver
         $declaredCompatibility = [];
         $latestRelease = null;
         foreach ($packages as $package) {
-            if (!is_array($package) || !$this->isStableVersion($package['version'] ?? null)) {
+            if (!is_array($package) || !$this->isReleaseVersion($package['version'] ?? null)) {
                 continue;
             }
 
@@ -250,10 +250,15 @@ final class DrupalOrgProjectCompatibilityResolver
         return self::METADATA_ENDPOINT . rawurlencode(trim($machineName)) . '.json';
     }
 
-    private function isStableVersion(mixed $version): bool
+    /**
+     * Composer metadata includes stable, alpha, beta, and RC releases. They
+     * are all useful evidence of a project's declared core compatibility;
+     * development-only versions are deliberately treated as unknown.
+     */
+    private function isReleaseVersion(mixed $version): bool
     {
         return is_string($version)
             && trim($version) !== ''
-            && preg_match('/(?:dev|alpha|beta|rc)/i', $version) !== 1;
+            && preg_match('/dev/i', $version) !== 1;
     }
 }
