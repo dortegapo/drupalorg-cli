@@ -2,6 +2,7 @@
 
 namespace mglaman\DrupalOrgCli\Command\Project;
 
+use mglaman\DrupalOrg\Action\Project\GetProjectAction;
 use mglaman\DrupalOrg\Entity\Project;
 use mglaman\DrupalOrg\ProjectRemote;
 use mglaman\DrupalOrgCli\Command\Command;
@@ -44,7 +45,7 @@ abstract class ProjectCommandBase extends Command
 
         // The kanban and link command doesn't need the project data from drupal.org,
         // but checking that the project exists makes sense for all project commands.
-        $project = $this->client->getProject($this->projectName);
+        $project = (new GetProjectAction($this->client))($this->projectName)->project;
         if ($project === null) {
             $this->stdErr->writeln("Project $this->projectName not found.");
             exit(1);

@@ -19,7 +19,18 @@ use mglaman\DrupalOrg\Result\MergeRequest\MergeRequestStatusResult;
 use mglaman\DrupalOrg\Result\Issue\IssueSearchResult;
 use mglaman\DrupalOrg\Result\Project\ProjectContainsResult;
 use mglaman\DrupalOrg\Result\Project\ProjectIssuesResult;
+use mglaman\DrupalOrg\Result\Project\ProjectMetadataResult;
 use mglaman\DrupalOrg\Result\Project\ProjectReleasesResult;
+use mglaman\DrupalOrg\Result\Project\GetProjectResult;
+use mglaman\DrupalOrg\Result\Project\ResolveModuleResult;
+use mglaman\DrupalOrg\Result\Project\ProjectRepositoryResult;
+use mglaman\DrupalOrg\Result\Project\PublishProjectSourceResult;
+use mglaman\DrupalOrg\Result\Project\CreateProjectTagResult;
+use mglaman\DrupalOrg\Result\Project\ComposerPackageResult;
+use mglaman\DrupalOrg\Result\Project\ProjectSourceStatusResult;
+use mglaman\DrupalOrg\Result\Project\ProjectLocalSourceResult;
+use mglaman\DrupalOrg\Result\Project\DrupalOrgGitAccessResult;
+use mglaman\DrupalOrg\Result\Project\ProjectPublishStateResult;
 use mglaman\DrupalOrg\Result\Skill\SkillListResult;
 
 class LlmFormatter extends AbstractFormatter
@@ -111,6 +122,71 @@ XML;
         return "<drupal_context>\n  <project>{$projectTitle}</project>\n  <items>\n{$items}  </items>\n</drupal_context>";
     }
 
+    protected function formatGetProject(GetProjectResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->machineName);
+        if (!$result->found()) {
+            return "<project_lookup><machine_name>{$machineName}</machine_name><found>false</found></project_lookup>";
+        }
+
+        $title = $this->xmlEscape($result->project?->title ?? '');
+
+        return "<project_lookup><machine_name>{$machineName}</machine_name><found>true</found>"
+            . "<title>{$title}</title></project_lookup>";
+    }
+
+    protected function formatProjectMetadata(ProjectMetadataResult $result): string
+    {
+        $title = $this->xmlEscape($result->title);
+        $machineName = $this->xmlEscape($result->machineName);
+        $projectType = $this->xmlEscape($result->projectType);
+        $coreRequirement = $this->xmlEscape($result->coreVersionRequirement);
+        $summary = $this->xmlEscape($result->summary);
+        $description = $this->cdataWrap($result->description);
+
+        $dependencies = '';
+        foreach ($result->dependencies as $dependency) {
+            $dependencies .= '    <dependency>' . $this->xmlEscape($dependency) . "</dependency>\n";
+        }
+
+        $features = '';
+        foreach ($result->features as $feature) {
+            $features .= '    <feature>' . $this->xmlEscape($feature) . "</feature>\n";
+        }
+
+        $integrations = '';
+        foreach ($result->integrations as $integration) {
+            $integrations .= '    <integration>' . $this->xmlEscape($integration) . "</integration>\n";
+        }
+        $formMetadata = $this->cdataWrap(json_encode([
+            'maintenance_status' => 'Actively maintained',
+            'development_status' => 'Under active development',
+            'categories' => $result->categories,
+            'ecosystems' => $result->ecosystems,
+            'supporting_organizations' => $result->supportingOrganizations,
+            'issues' => $result->issues,
+            'resources' => $result->resources,
+        ], JSON_THROW_ON_ERROR));
+
+        return <<<XML
+<project_metadata>
+  <title>{$title}</title>
+  <machine_name>{$machineName}</machine_name>
+  <project_type>{$projectType}</project_type>
+  <core_version_requirement>{$coreRequirement}</core_version_requirement>
+  <dependencies>
+{$dependencies}  </dependencies>
+  <summary>{$summary}</summary>
+  <description>{$description}</description>
+  <features>
+{$features}  </features>
+  <integrations>
+{$integrations}  </integrations>
+  <drupal_org_form_metadata>{$formMetadata}</drupal_org_form_metadata>
+</project_metadata>
+XML;
+    }
+
     protected function formatMaintainerIssues(MaintainerIssuesResult $result): string
     {
         $feedTitle = $this->xmlEscape($result->feedTitle);
@@ -178,6 +254,16 @@ XML;
 {$tagsXml}  </tags>
 </drupal_context>
 XML;
+    }
+
+    protected function formatResolveModule(ResolveModuleResult $result): string
+    {
+        $machineName = $this->xmlEscape($result->module->location->machineName);
+        $path = $this->xmlEscape($result->module->location->resolvedPath);
+        $infoFile = $this->xmlEscape($result->module->location->infoFile);
+
+        return "<module><machine_name>{$machineName}</machine_name><path>{$path}</path>"
+            . "<info_file>{$infoFile}</info_file></module>";
     }
 
     protected function formatIssueFork(IssueForkResult $result): string
@@ -529,6 +615,46 @@ XML;
             $items .= "    </skill>\n";
         }
         return "<skills>\n  <usage>drupalorg skill:get &lt;name&gt;</usage>\n  <items>\n{$items}  </items>\n</skills>";
+    }
+
+    protected function formatProjectRepository(ProjectRepositoryResult $result): string
+    {
+        return '<project_repository>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_repository>';
+    }
+
+    protected function formatPublishProjectSource(PublishProjectSourceResult $result): string
+    {
+        return '<source_publication>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</source_publication>';
+    }
+
+    protected function formatCreateProjectTag(CreateProjectTagResult $result): string
+    {
+        return '<release_tag>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</release_tag>';
+    }
+
+    protected function formatComposerPackage(ComposerPackageResult $result): string
+    {
+        return '<composer_package>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</composer_package>';
+    }
+
+    protected function formatProjectSourceStatus(ProjectSourceStatusResult $result): string
+    {
+        return '<project_source_status>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_source_status>';
+    }
+
+    protected function formatProjectLocalSource(ProjectLocalSourceResult $result): string
+    {
+        return '<local_project_source>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</local_project_source>';
+    }
+
+    protected function formatDrupalOrgGitAccess(DrupalOrgGitAccessResult $result): string
+    {
+        return '<drupal_org_git_access>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</drupal_org_git_access>';
+    }
+
+    protected function formatProjectPublishState(ProjectPublishStateResult $result): string
+    {
+        return '<project_publish_state>' . $this->cdataWrap(json_encode($result, JSON_THROW_ON_ERROR)) . '</project_publish_state>';
     }
 
     private function toIso8601(int $timestamp): string
