@@ -127,6 +127,39 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
         self::assertStringNotContainsString('Press Enter to verify', $display);
     }
 
+    public function testPollingKeepsTheFiveSecondCap(): void
+    {
+        $delays = [];
+        $responses = [];
+        for ($i = 0; $i < 6; ++$i) {
+            $responses[] = new Response(
+                200,
+                ['Content-Type' => 'application/json'],
+                json_encode(['list' => []], JSON_THROW_ON_ERROR),
+            );
+        }
+        $responses[] = $this->projectResponse();
+        $handoff = new DrupalOrgProjectCreationHandoff(
+            $this->client(...$responses),
+            sleeper: static function (int $seconds) use (&$delays): void {
+                $delays[] = $seconds;
+            },
+        );
+
+        $result = $handoff->run(
+            $this->input(),
+            new BufferedOutput(),
+            new BufferedOutput(),
+            'example',
+            'Example',
+            'module',
+            '^11',
+        );
+
+        self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+        self::assertSame([1, 2, 3, 5, 5, 5], $delays);
+    }
+
     public function testConfiguredBrowserCompanionReceivesPrefillUrlWithoutPrintingIt(): void
     {
         $opened = [];
@@ -159,6 +192,144 @@ final class DrupalOrgProjectCreationHandoffTest extends TestCase
             self::assertCount(1, $opened);
             self::assertStringContainsString('drupalorg-cli-prefill=', $opened[0]);
             self::assertStringNotContainsString('drupalorg-cli-prefill=', $output->fetch());
+        } finally {
+            @unlink($configPath);
+            @rmdir($configDirectory);
+        }
+    }
+
+    public function testOversizedPrefillFallsBackToTheNormalProjectForm(): void
+    {
+        $opened = [];
+        $configDirectory = sys_get_temp_dir() . '/drupalorg-cli-prefill-' . bin2hex(random_bytes(6));
+        mkdir($configDirectory, 0700);
+        $configPath = $configDirectory . '/config.json';
+        $manager = new BrowserCompanionManager(new BrowserCompanionConfigStore($configPath));
+        $manager->configure(BrowserFamily::CHROMIUM, BrowserCompanionInstallation::LOCAL);
+        try {
+            $handoff = new DrupalOrgProjectCreationHandoff(
+                $this->client($this->projectResponse()),
+                static function (string $url) use (&$opened): void {
+                    $opened[] = $url;
+                },
+                browserCompanionManager: $manager,
+            );
+            $output = new BufferedOutput();
+            $metadata = new ProjectMetadataResult(
+                'Example',
+                'example',
+                'module',
+                '^11',
+                [],
+                str_repeat('large summary ', 600),
+                'Generated description.',
+                [],
+                [],
+                'openai',
+                'test',
+                ['input' => null, 'output' => null, 'total' => null],
+            );
+            $result = $handoff->run(
+                new ArrayInput([], new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)])),
+                $output,
+                $output,
+                'example',
+                'Example',
+                'module',
+                '^11',
+                $metadata,
+            );
+
+            self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+            self::assertSame([DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL], $opened);
+            $display = $output->fetch();
+            self::assertStringContainsString('too large', $display);
+            self::assertStringNotContainsString('drupalorg-cli-prefill=', $display);
+        } finally {
+            @unlink($configPath);
+            @rmdir($configDirectory);
+        }
+    }
+
+    public function testBrowserLaunchFailureRetriesWithTheNormalProjectForm(): void
+    {
+        $opened = [];
+        $configDirectory = sys_get_temp_dir() . '/drupalorg-cli-prefill-' . bin2hex(random_bytes(6));
+        mkdir($configDirectory, 0700);
+        $configPath = $configDirectory . '/config.json';
+        $manager = new BrowserCompanionManager(new BrowserCompanionConfigStore($configPath));
+        $manager->configure(BrowserFamily::FIREFOX, BrowserCompanionInstallation::LOCAL);
+        $launcher = new \mglaman\DrupalOrgCli\Browser\BrowserLauncher(
+            new \mglaman\DrupalOrg\Browser\BrowserPlatformDetector('Linux', [], ''),
+            commandExists: static fn(array $command): bool => true,
+            processRunner: static function (array $command) use (&$opened): bool {
+                $opened[] = $command[array_key_last($command)];
+
+                return false;
+            },
+        );
+        try {
+            $handoff = new DrupalOrgProjectCreationHandoff(
+                $this->client($this->projectResponse()),
+                browserLauncher: $launcher,
+                browserCompanionManager: $manager,
+            );
+            $output = new BufferedOutput();
+            $result = $handoff->run(
+                new ArrayInput([], new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)])),
+                $output,
+                $output,
+                'example',
+                'Example',
+                'module',
+                '^11',
+                $this->metadata(),
+            );
+
+            self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+            self::assertNotEmpty($opened);
+            self::assertStringContainsString('drupalorg-cli-prefill=', $opened[0]);
+            self::assertContains(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $opened);
+            self::assertStringNotContainsString('drupalorg-cli-prefill=', $output->fetch());
+        } finally {
+            @unlink($configPath);
+            @rmdir($configDirectory);
+        }
+    }
+
+    public function testNoBrowserSkipsConfiguredCompanionPrefill(): void
+    {
+        $opened = [];
+        $configDirectory = sys_get_temp_dir() . '/drupalorg-cli-prefill-' . bin2hex(random_bytes(6));
+        mkdir($configDirectory, 0700);
+        $configPath = $configDirectory . '/config.json';
+        $manager = new BrowserCompanionManager(new BrowserCompanionConfigStore($configPath));
+        $manager->configure(BrowserFamily::CHROMIUM, BrowserCompanionInstallation::LOCAL);
+        try {
+            $handoff = new DrupalOrgProjectCreationHandoff(
+                $this->client($this->projectResponse()),
+                static function (string $url) use (&$opened): void {
+                    $opened[] = $url;
+                },
+                browserCompanionManager: $manager,
+            );
+            $output = new BufferedOutput();
+            $result = $handoff->run(
+                $this->input(),
+                $output,
+                $output,
+                'example',
+                'Example',
+                'module',
+                '^11',
+                $this->metadata(),
+            );
+
+            self::assertSame(ProjectCreationHandoffResult::FOUND, $result->status);
+            self::assertSame([], $opened);
+            $display = $output->fetch();
+            self::assertStringContainsString(DrupalOrgProjectCreationHandoff::PROJECT_CREATION_URL, $display);
+            self::assertStringNotContainsString('drupalorg-cli-prefill=', $display);
         } finally {
             @unlink($configPath);
             @rmdir($configDirectory);

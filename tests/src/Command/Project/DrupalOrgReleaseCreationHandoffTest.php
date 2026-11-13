@@ -99,6 +99,48 @@ final class DrupalOrgReleaseCreationHandoffTest extends TestCase
         self::assertStringContainsString('FOUND Drupal.org release: 10.6.3', $output->fetch());
     }
 
+    public function testPollingKeepsTheFiveSecondCap(): void
+    {
+        $release = Release::fromStdClass(json_decode(
+            file_get_contents(__DIR__ . '/../../../fixtures/release_node.json'),
+            false,
+            512,
+            JSON_THROW_ON_ERROR,
+        ));
+        $client = $this->createMock(Client::class);
+        $client->method('getProjectReleases')->willReturnOnConsecutiveCalls(
+            [],
+            [],
+            [],
+            [],
+            [],
+            [],
+            [$release],
+        );
+        $delays = [];
+        $handoff = new DrupalOrgReleaseCreationHandoff(
+            $client,
+            sleeper: static function (int $seconds) use (&$delays): void {
+                $delays[] = $seconds;
+            },
+        );
+        $input = new ArrayInput(
+            ['--no-browser' => true],
+            new InputDefinition([new InputOption('no-browser', null, InputOption::VALUE_NONE)]),
+        );
+        $input->setInteractive(true);
+        $output = new BufferedOutput();
+
+        self::assertTrue($handoff->run(
+            $input,
+            $output,
+            $output,
+            new Project('123', 'Example', 'example'),
+            ProjectReleaseVersion::fromString('10.6.3'),
+        ));
+        self::assertSame([1, 2, 3, 5, 5, 5], $delays);
+    }
+
     /** @return resource */
     private function inputStream(string $contents)
     {

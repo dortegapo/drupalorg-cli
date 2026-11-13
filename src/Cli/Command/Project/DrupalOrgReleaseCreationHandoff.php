@@ -63,6 +63,8 @@ final class DrupalOrgReleaseCreationHandoff
         $delays = [1, 2, 3, 5];
         $attempt = 0;
         while (true) {
+            ++$attempt;
+            $this->writePollingStatus($output, $version, $attempt);
             try {
                 $releases = ($this->releaseLookupAction ?? new GetProjectReleasesAction($this->client))($project, true, true)->releases;
             } catch (\Exception $exception) {
@@ -83,11 +85,52 @@ final class DrupalOrgReleaseCreationHandoff
                 }
             }
 
-            $delay = $delays[min($attempt, count($delays) - 1)];
-            ++$attempt;
-            ($this->sleeper ?? static function (int $seconds): void {
-                sleep($seconds);
-            })($delay);
+            $delay = $delays[min($attempt - 1, count($delays) - 1)];
+            $this->waitBeforeNextCheck($output, $version, $delay);
+        }
+    }
+
+    private function waitBeforeNextCheck(OutputInterface $output, ProjectReleaseVersion $version, int $delay): void
+    {
+        if ($this->sleeper !== null) {
+            ($this->sleeper)($delay);
+
+            return;
+        }
+
+        for ($remaining = $delay; $remaining > 0; --$remaining) {
+            if ($output->isDecorated()) {
+                $output->write(sprintf(
+                    "\rChecking Drupal.org release \"%s\"... next check in %ds",
+                    $version->value,
+                    $remaining,
+                ));
+            }
+            sleep(1);
+        }
+        if ($output->isDecorated()) {
+            $output->write("\r\033[2K");
+        }
+    }
+
+    private function writePollingStatus(
+        OutputInterface $output,
+        ProjectReleaseVersion $version,
+        int $attempt,
+    ): void {
+        if (!$output->isDecorated() && $attempt !== 1 && $attempt % 2 === 0) {
+            return;
+        }
+
+        $message = sprintf(
+            'Checking Drupal.org release "%s"... (attempt %d)',
+            $version->value,
+            $attempt,
+        );
+        if ($output->isDecorated()) {
+            $output->write("\r" . $message);
+        } else {
+            $output->writeln($message);
         }
     }
 }

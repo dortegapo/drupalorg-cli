@@ -103,9 +103,11 @@ performs read-only inspection and prints the resumable plan.
 
 `browser:setup` optionally configures the Browser Companion for project form
 prefill. The extension fills fields from generated metadata but never submits
-the form. If it is not configured, not published for the selected browser, or
-cannot be launched, `project:publish` uses the normal manual form. Project
-verification polls immediately and backs off to a maximum five-second interval;
+the form. Local/development installation is supported, but no browser-store
+distribution is published yet. If it is not configured, not published for the
+selected browser, or cannot be launched, `project:publish` uses the normal
+manual form. Project verification polls immediately and backs off to a maximum
+five-second interval;
 the command resumes automatically after Save without an Enter prompt.
 
 ```bash

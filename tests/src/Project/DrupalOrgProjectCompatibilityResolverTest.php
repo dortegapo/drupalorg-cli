@@ -41,6 +41,56 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
         self::assertSame('incompatible', $resolver->resolve('coffee', [11])['status']);
     }
 
+    public function testStableAndBetaEvidenceSupportingLocalMajorIsCompatible(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('1.0.0', '^10'),
+                self::package('2.0.0-beta1', '^11'),
+            ]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', [11])['status']);
+    }
+
+    public function testStableAndRcEvidenceSupportingLocalMajorIsCompatible(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('1.0.0', '^10'),
+                self::package('2.0.0-rc1', '^11'),
+            ]),
+        ]);
+
+        self::assertSame('compatible', $resolver->resolve('coffee', [11])['status']);
+    }
+
+    public function testCompatibleDevelopmentEvidenceDegradesIncompatibleToUnknown(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('1.0.0', '^10'),
+                self::package('2.0.x-dev', '^11'),
+            ]),
+        ]);
+
+        $result = $resolver->resolve('coffee', [11]);
+
+        self::assertSame('unknown', $result['status']);
+    }
+
+    public function testIncompatibleDevelopmentEvidenceDoesNotDegradeStableIncompatibility(): void
+    {
+        $resolver = $this->resolver([
+            self::metadataResponse([
+                self::package('1.0.0', '^10'),
+                self::package('2.0.x-dev', '^10'),
+            ]),
+        ]);
+
+        self::assertSame('incompatible', $resolver->resolve('coffee', [11])['status']);
+    }
+
     public function testTreatsPrereleaseVersionsAsCompatibilityEvidence(): void
     {
         $resolver = $this->resolver([
@@ -60,7 +110,10 @@ final class DrupalOrgProjectCompatibilityResolverTest extends TestCase
             self::metadataResponse([self::package('2.0.x-dev', '^11'), self::package('dev-main', '^10')]),
         ]);
 
-        self::assertSame('unknown', $resolver->resolve('coffee', [11])['status']);
+        $result = $resolver->resolve('coffee', [11]);
+
+        self::assertSame('unknown', $result['status']);
+        self::assertSame(['^11', '^10'], $result['declaredCompatibility']);
     }
 
     public function testCompatibilityUsesAnyLocalMajorIntersection(): void

@@ -111,6 +111,8 @@ release tag, manual release form, release verification, or Composer metadata.
   project form from generated metadata. The companion only fills the form; it
   never submits it. If it is not configured, unavailable, or cannot be opened,
   publication falls back to the normal manual form.
+- No browser-store distribution is published yet; local/development installation
+  is supported.
 - Git publishing needs SSH access to `git@git.drupal.org`. The command first
   respects the user's normal OpenSSH configuration and, when needed, can select
   a local SSH identity that successfully authenticates and reuse it for source

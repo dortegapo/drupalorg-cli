@@ -177,11 +177,12 @@ final class DrupalOrgProjectCompatibilityResolver
             $packages = MetadataMinifier::expand($packages);
         }
 
-        $supportedCoreMajors = [];
+        $releaseCoreMajors = [];
+        $developmentCoreMajors = [];
         $declaredCompatibility = [];
         $latestRelease = null;
         foreach ($packages as $package) {
-            if (!is_array($package) || !$this->isReleaseVersion($package['version'] ?? null)) {
+            if (!is_array($package) || !$this->isKnownVersion($package['version'] ?? null)) {
                 continue;
             }
 
@@ -197,29 +198,43 @@ final class DrupalOrgProjectCompatibilityResolver
             $constraint = trim($constraint);
             $declaredCompatibility[] = $constraint;
             $version = (string) $package['version'];
-            if ($latestRelease === null || version_compare($version, $latestRelease, '>')) {
+            $isDevelopment = $this->isDevelopmentVersion($version);
+            if (!$isDevelopment && ($latestRelease === null || version_compare($version, $latestRelease, '>'))) {
                 $latestRelease = $version;
             }
             try {
                 foreach (DrupalCoreVersionRequirement::supportedMajors($constraint) as $major) {
-                    $supportedCoreMajors[$major] = true;
+                    if ($isDevelopment) {
+                        $developmentCoreMajors[$major] = true;
+                    } else {
+                        $releaseCoreMajors[$major] = true;
+                    }
                 }
             } catch (\InvalidArgumentException) {
                 continue;
             }
         }
 
-        $supportedCoreMajors = array_map('intval', array_keys($supportedCoreMajors));
+        $supportedCoreMajors = array_map('intval', array_keys($releaseCoreMajors));
         sort($supportedCoreMajors);
+        $developmentCoreMajors = array_map('intval', array_keys($developmentCoreMajors));
+        sort($developmentCoreMajors);
         $declaredCompatibility = array_values(array_unique($declaredCompatibility));
         if ($supportedCoreMajors === []) {
-            return $this->unknown();
+            return [
+                'status' => 'unknown',
+                'supportedCoreMajors' => [],
+                'latestRelevantRelease' => null,
+                'declaredCompatibility' => $declaredCompatibility,
+            ];
         }
 
+        $status = array_intersect($localCoreMajors, $supportedCoreMajors) !== []
+            ? 'compatible'
+            : (array_intersect($localCoreMajors, $developmentCoreMajors) !== [] ? 'unknown' : 'incompatible');
+
         return [
-            'status' => array_intersect($localCoreMajors, $supportedCoreMajors) !== []
-                ? 'compatible'
-                : 'incompatible',
+            'status' => $status,
             'supportedCoreMajors' => $supportedCoreMajors,
             'latestRelevantRelease' => $latestRelease,
             'declaredCompatibility' => $declaredCompatibility,
@@ -251,14 +266,18 @@ final class DrupalOrgProjectCompatibilityResolver
     }
 
     /**
-     * Composer metadata includes stable, alpha, beta, and RC releases. They
-     * are all useful evidence of a project's declared core compatibility;
-     * development-only versions are deliberately treated as unknown.
+     * Composer metadata may include release and development versions. Both
+     * carry compatibility evidence, but only release evidence can prove a
+     * candidate compatible or incompatible.
      */
-    private function isReleaseVersion(mixed $version): bool
+    private function isKnownVersion(mixed $version): bool
     {
         return is_string($version)
-            && trim($version) !== ''
-            && preg_match('/dev/i', $version) !== 1;
+            && trim($version) !== '';
+    }
+
+    private function isDevelopmentVersion(string $version): bool
+    {
+        return preg_match('/dev/i', $version) === 1;
     }
 }

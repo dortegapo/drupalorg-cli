@@ -19,11 +19,11 @@ before pressing Save.
 
 ## End-user installation
 
-The companion is currently a manual development installation. Run
-`drupalorg browser:setup` after loading it through the browser's developer
-tools. Published browser-store distributions are not available yet, so
-`drupalorg project:publish` keeps the manual Drupal.org workflow until a
-listing is published.
+No published browser-store distributions exist yet. A locally/development-
+installed companion can be configured with `drupalorg browser:setup` after
+loading it through the browser's developer tools. Once configured,
+`drupalorg project:publish` uses it for automatic form prefilling. Without a
+configured companion, the normal manual Drupal.org form remains the fallback.
 
 The browser companion stores no Drupal.org credentials or form data. The CLI
 stores only the selected browser family in its local configuration so it does
@@ -55,8 +55,9 @@ The payload is carried in the URL fragment. After validating it and finding
 the creation form, the companion removes the fragment before it begins filling
 fields. The fragment is not sent in the HTTP request to Drupal.org.
 
-The companion fills only rows that the Drupal.org form already exposes. It
-does not click AJAX "Add another item" controls, so extra multi-value rows
-must be added manually when the form does not provide enough fields.
+The companion can use supported Drupal.org "Add another item" controls to
+create additional multi-value rows when needed. If a selector or add-more
+control cannot be found, it records a warning and continues filling the
+remaining fields. Drupal.org form changes may require updating selectors.
 
 The extension uses no Node.js, npm, bundler, or external runtime.
